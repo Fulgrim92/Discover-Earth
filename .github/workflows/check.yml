@@ -1,0 +1,34 @@
+name: check
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System packages
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev pkg-config mesa-vulkan-drivers ffmpeg
+      - name: Forge (private, read-only)
+        env:
+          FORGE_TOKEN: ${{ secrets.FORGE_TOKEN }}
+        run: |
+          if [ -z "$FORGE_TOKEN" ]; then
+            echo "::error::Add a FORGE_TOKEN secret with read access to Fulgrim92/cardcraft-eternal (docs/forge.md)"
+            exit 1
+          fi
+          FORGE_URL="https://x-access-token:${FORGE_TOKEN}@github.com/Fulgrim92/cardcraft-eternal" scripts/forge.sh
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: scripts/check.sh --shots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: check
+          path: |
+            out/check
+            out/shots

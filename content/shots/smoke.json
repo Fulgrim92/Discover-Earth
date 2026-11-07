@@ -1,0 +1,15 @@
+{
+  "island": "saksun",
+  "size": [1280, 720],
+  "steps": [
+    {"view": "overview"},
+    {"shot": "overview"},
+    {"view": "valley"},
+    {"shot": "valley"},
+    "state",
+    {"view": "lagoon"},
+    {"shot": "lagoon"},
+    {"view": "tjornuvik"},
+    {"shot": "tjornuvik"}
+  ]
+}

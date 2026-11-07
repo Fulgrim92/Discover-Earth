@@ -1,0 +1,9 @@
+{
+  "island": "saksun",
+  "size": [960, 540],
+  "steps": [
+    {"view": "overview"},
+    {"fly": {"name": "flyover", "to": "valley", "frames": 90}},
+    {"fly": {"name": "down-to-the-lagoon", "to": "lagoon", "frames": 90}}
+  ]
+}

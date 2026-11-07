@@ -1,0 +1,21 @@
+[package]
+name = "de_world"
+description = "Discover Earth island data: terrain manifests, heightfields, sampling. No renderer."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[package.metadata.forge]
+layer = "gameplay"
+
+[dependencies]
+forge_core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+png.workspace = true
+
+[lints]
+workspace = true

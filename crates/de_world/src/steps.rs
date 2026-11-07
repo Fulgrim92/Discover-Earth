@@ -1,0 +1,80 @@
+//! Step lists: what a headless capture does, frame by frame.
+//!
+//! `de-shot` (crates/de_client) plays one against the real 3D client at a fixed 60 frames a
+//! second of game time, so the same list gives the same pixels on every run on one machine.
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::island::Vec3;
+
+/// A capture script (`content/shots/*.json`).
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StepList {
+    /// Island id under `content/islands/`.
+    pub island: String,
+    /// Frame size in pixels.
+    #[serde(default = "default_size")]
+    pub size: [u32; 2],
+    pub steps: Vec<Step>,
+}
+
+fn default_size() -> [u32; 2] {
+    [1280, 720]
+}
+
+/// One step. Exactly one key per object, e.g. `{"view": "valley"}` or `{"shot": "valley"}`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum Step {
+    /// Jump the camera to a named view of the island.
+    View(String),
+    /// Jump the camera to a position, looking at a point.
+    Camera { pos: Vec3, look_at: Vec3 },
+    /// Let this many frames of game time pass.
+    Wait(u32),
+    /// Save the next frame as `<out>/<name>.png`.
+    Shot(String),
+    /// Fly from the current camera to a view over `frames` frames (smoothstep), saving each
+    /// frame and joining them into `<out>/<name>.mp4` at 30 fps (needs ffmpeg).
+    Fly { name: String, to: String, frames: u32 },
+    /// Print the camera and ground height under it as one JSON line on stdout.
+    State,
+}
+
+impl StepList {
+    /// Names of views the list uses that the island lacks.
+    pub fn missing_views(&self, island: &crate::Island) -> Vec<String> {
+        self.steps
+            .iter()
+            .filter_map(|s| match s {
+                Step::View(v) | Step::Fly { to: v, .. } => Some(v),
+                _ => None,
+            })
+            .filter(|v| island.view(v).is_none())
+            .cloned()
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_one_key_steps() {
+        let s: StepList = serde_json::from_str(
+            r#"{"island":"x","steps":[{"view":"a"},{"wait":3},{"shot":"a"},{"fly":{"name":"f","to":"b","frames":60}},"state"]}"#,
+        )
+        .unwrap();
+        assert_eq!(s.size, [1280, 720]);
+        assert_eq!(s.steps[1], Step::Wait(3));
+        assert_eq!(s.steps[4], Step::State);
+    }
+
+    #[test]
+    fn rejects_typos() {
+        assert!(serde_json::from_str::<Step>(r#"{"shoot":"a"}"#).is_err());
+    }
+}
