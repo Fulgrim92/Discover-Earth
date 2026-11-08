@@ -1,14 +1,14 @@
 //! `de`: Discover Earth's command line, the first thing an agent runs.
 //!
 //!   de capabilities [prefix] [--json]   what the engine and game can do
-//!   de schema terrain|steps             JSON schema for a content file
-//!   de validate                         check every island and step list
+//!   de schema terrain|steps|drone       JSON schema for a content file
+//!   de validate                         check every island, drone.json and step list
 //!   de islands                          list islands with size and views
 
 use std::{path::Path, process::ExitCode};
 
 use clap::{Parser, Subcommand, ValueEnum};
-use de_world::{Island, StepList, WorldModule};
+use de_world::{DroneConfig, Island, StepList, WorldModule};
 use forge_core::{ForgeApp, headless_app};
 
 #[derive(Parser)]
@@ -40,6 +40,8 @@ enum SchemaKind {
     Terrain,
     /// content/shots/*.json
     Steps,
+    /// content/drone.json
+    Drone,
 }
 
 fn app() -> ForgeApp {
@@ -68,6 +70,7 @@ fn main() -> ExitCode {
             let schema = match kind {
                 SchemaKind::Terrain => schemars::schema_for!(Island),
                 SchemaKind::Steps => schemars::schema_for!(StepList),
+                SchemaKind::Drone => schemars::schema_for!(DroneConfig),
             };
             println!("{}", serde_json::to_string_pretty(&schema).expect("serialises"));
             ExitCode::SUCCESS
@@ -126,6 +129,16 @@ fn validate(content: &Path) -> Vec<String> {
         }
         islands.insert(id.clone(), island);
     }
+    let drone = match DroneConfig::load(content) {
+        Ok(d) => {
+            out.extend(d.check());
+            Some(d)
+        }
+        Err(e) => {
+            out.push(e);
+            None
+        }
+    };
     let shots = content.join("shots");
     let mut files: Vec<_> = std::fs::read_dir(&shots).into_iter().flatten().flatten().map(|e| e.path()).collect();
     files.sort();
@@ -146,6 +159,12 @@ fn validate(content: &Path) -> Vec<String> {
             Some(island) => {
                 for v in list.missing_views(island) {
                     out.push(format!("{name}: island `{}` has no view `{v}`", list.island));
+                }
+                if let Some(d) = &drone {
+                    let have: Vec<_> = d.modes.iter().map(|m| m.name.as_str()).collect();
+                    for m in list.missing_modes(d) {
+                        out.push(format!("{name}: no flight mode `{m}` in drone.json (have: {})", have.join(", ")));
+                    }
                 }
             }
         }

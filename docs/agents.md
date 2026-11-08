@@ -19,7 +19,11 @@ the same list gives the same pixels on every run on one machine. Steps (`de sche
 | `{"wait": 30}` | let frames pass |
 | `{"shot": "name"}` | save `out/name.png` |
 | `{"fly": {"name": "clip", "to": "lagoon", "frames": 90}}` | fly to a view, saving every frame and `out/clip.mp4` |
-| `"state"` | print camera, ground height and altitude as one JSON line |
+| `{"drone": {"frames": 240, "mode": "cine", "sticks": {"pitch": 1, "yaw": -0.25}, "clip": "name"}}` | fly the drone with sticks held, like a pilot; `clip` saves frames and an mp4 |
+| `"state"` | print camera, drone (mode, speed, heading, gimbal), ground height and altitude as one JSON line |
+
+`content/shots/drone.json` flies the valley in cine and sport mode. To judge how flying feels, read the `state`
+lines (speed, braking, altitude) and watch the clips. The flight model is `de_world::drone`, tested without a GPU.
 
 On a software renderer a 1280x720 shot takes well under a second and a 90-frame clip about 40 s.
 

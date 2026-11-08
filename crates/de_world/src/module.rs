@@ -40,7 +40,24 @@ impl ForgeModule for WorldModule {
             c("world.steps.wait", Command, "Step: let frames of game time pass"),
             c("world.steps.shot", Command, "Step: save the next frame as a PNG"),
             c("world.steps.fly", Command, "Step: fly to a view, saving every frame and an mp4"),
-            c("world.steps.state", Command, "Step: print camera and ground height as JSON"),
+            c(
+                "world.steps.drone",
+                Command,
+                "Step: fly the drone with stick inputs held for some frames, optionally recording a clip",
+            ),
+            c("world.steps.state", Command, "Step: print camera, drone and ground height as JSON"),
+            c(
+                "world.drone.flight",
+                System,
+                "Mode-2 camera drone: stabilised velocity control, braking hover, expo, wind, ground clearance",
+            ),
+            c("world.drone.modes", Content, "Flight modes (cine, normal, sport) as data in content/drone.json"),
+            c(
+                "world.drone.gimbal",
+                System,
+                "Level-horizon gimbal with tilt control and a slight bank into sideways moves",
+            ),
+            c("world.schema.drone", Schema, "JSON schema for content/drone.json"),
         ]
     }
 }

@@ -1,5 +1,7 @@
 //! Discover Earth in a window. `discover-earth [island]` (default: the first island).
 //!
+//! You fly a camera drone: see `de_client::drone` for the controls.
+//!
 //! While it runs, the Bevy Remote Protocol listens on http://127.0.0.1:15702, so an agent can
 //! query and change the live world (`world.query`, `world.insert_components`, ...): see
 //! docs/agents.md.
@@ -8,7 +10,7 @@ use bevy::{
     prelude::*,
     remote::{RemotePlugin, http::RemoteHttpPlugin},
 };
-use de_client::{IslandSource, ScenePlugin, fly::FlyPlugin};
+use de_client::{IslandSource, ScenePlugin, drone::PilotPlugin};
 
 fn main() -> AppExit {
     let content = de_world::content_dir();
@@ -24,6 +26,6 @@ fn main() -> AppExit {
         }))
         .add_plugins((RemotePlugin::default(), RemoteHttpPlugin::default()))
         .insert_resource(IslandSource { content, id })
-        .add_plugins((ScenePlugin, FlyPlugin))
+        .add_plugins((ScenePlugin, PilotPlugin))
         .run()
 }

@@ -39,11 +39,34 @@ pub enum Step {
     /// Fly from the current camera to a view over `frames` frames (smoothstep), saving each
     /// frame and joining them into `<out>/<name>.mp4` at 30 fps (needs ffmpeg).
     Fly { name: String, to: String, frames: u32 },
-    /// Print the camera and ground height under it as one JSON line on stdout.
+    /// Fly the drone with these sticks held for `frames` frames (`de schema drone`), like a
+    /// pilot would. With `mode` it first switches flight mode; with `clip` it saves every frame
+    /// and `<out>/<clip>.mp4`. The camera starts from wherever the last step left it.
+    Drone {
+        frames: u32,
+        #[serde(default)]
+        sticks: crate::Sticks,
+        #[serde(default)]
+        mode: Option<String>,
+        #[serde(default)]
+        clip: Option<String>,
+    },
+    /// Print the camera, drone and ground height under it as one JSON line on stdout.
     State,
 }
 
 impl StepList {
+    /// Flight modes the list asks for that `drone.json` lacks.
+    pub fn missing_modes(&self, drone: &crate::DroneConfig) -> Vec<String> {
+        self.steps
+            .iter()
+            .filter_map(|s| match s {
+                Step::Drone { mode: Some(m), .. } if drone.mode(m).is_none() => Some(m.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Names of views the list uses that the island lacks.
     pub fn missing_views(&self, island: &crate::Island) -> Vec<String> {
         self.steps
@@ -65,12 +88,13 @@ mod tests {
     #[test]
     fn parses_one_key_steps() {
         let s: StepList = serde_json::from_str(
-            r#"{"island":"x","steps":[{"view":"a"},{"wait":3},{"shot":"a"},{"fly":{"name":"f","to":"b","frames":60}},"state"]}"#,
+            r#"{"island":"x","steps":[{"view":"a"},{"wait":3},{"shot":"a"},{"fly":{"name":"f","to":"b","frames":60}},"state",{"drone":{"frames":10,"sticks":{"pitch":1},"mode":"sport"}}]}"#,
         )
         .unwrap();
         assert_eq!(s.size, [1280, 720]);
         assert_eq!(s.steps[1], Step::Wait(3));
         assert_eq!(s.steps[4], Step::State);
+        assert!(matches!(&s.steps[5], Step::Drone { frames: 10, sticks, .. } if sticks.pitch == 1.0));
     }
 
     #[test]

@@ -13,6 +13,9 @@ Discover Earth is a game on **Forge** (the engine from Equilibrium: Eternal) wit
   `de validate`. Errors name the file, the field and the fix.
 - New island: `python3 scripts/terrain/fetch.py <N62> <W008>` then `scripts/terrain/import.py` (see its header), add
   views by hand, `de validate`, and a step list in `content/shots/`.
+- Flight feel is data in `content/drone.json` (`de schema drone`) and code in `crates/de_world/src/drone.rs`. Keep it
+  like a real stabilised camera drone (mode-2 sticks, braking hover, level gimbal); fly `content/shots/drone.json`
+  and read its `state` lines after changing it.
 - If you add a capability, register it in the crate's Forge module (`crates/de_world/src/module.rs` for now).
 
 ## Rules

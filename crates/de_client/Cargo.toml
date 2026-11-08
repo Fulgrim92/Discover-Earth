@@ -22,6 +22,10 @@ bevy = { workspace = true, features = [
   "bevy_winit",
   "x11",
   "bevy_remote",
+  "bevy_gilrs",
+  "bevy_ui",
+  "bevy_ui_render",
+  "default_font",
 ] }
 
 [[bin]]

@@ -18,7 +18,10 @@ use bevy::{
 };
 use de_world::{Step, StepList};
 
-use crate::scene::{CameraRig, Ground};
+use crate::{
+    drone::Drone,
+    scene::{CameraRig, Ground},
+};
 
 /// The capture being played.
 #[derive(Resource)]
@@ -29,12 +32,20 @@ pub struct Capture {
     next: usize,
     wait: u32,
     fly: Option<Fly>,
+    piloting: Option<Piloting>,
     /// Screenshots asked for but not yet written.
     pending: Arc<AtomicUsize>,
     /// Clips to join into mp4s once every frame is on disk: (name, frame count). Shared, so
     /// the caller can still read it after `App::run` has torn the world down.
     pub clips: Arc<std::sync::Mutex<Vec<(String, u32)>>>,
     pub frame: u64,
+}
+
+struct Piloting {
+    sticks: de_world::Sticks,
+    frames: u32,
+    at: u32,
+    clip: Option<String>,
 }
 
 struct Fly {
@@ -55,6 +66,7 @@ impl Capture {
             // Let shadows and exposure settle before the first step.
             wait: 3,
             fly: None,
+            piloting: None,
             pending: Arc::default(),
             clips: Arc::default(),
             frame: 0,
@@ -66,7 +78,7 @@ pub struct CapturePlugin;
 
 impl Plugin for CapturePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, play.run_if(resource_exists::<Ground>));
+        app.add_systems(Update, play.run_if(resource_exists::<Ground>).run_if(resource_exists::<Drone>));
     }
 }
 
@@ -84,6 +96,7 @@ fn play(
     mut commands: Commands,
     mut cap: ResMut<Capture>,
     ground: Res<Ground>,
+    mut drone: ResMut<Drone>,
     mut cams: Query<&mut Transform, With<CameraRig>>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -100,8 +113,26 @@ fn play(
         shoot(&mut commands, &cap, path);
         if fly.at >= fly.frames {
             cap.clips.lock().expect("clips lock").push((fly.name, fly.frames));
+            drone.place(&cam);
         } else {
             cap.fly = Some(fly);
+        }
+        return;
+    }
+    if let Some(mut p) = cap.piloting.take() {
+        p.at += 1;
+        let d = &mut *drone;
+        d.state.step(&d.cfg, Some(&ground.field), p.sticks, 1.0 / 60.0);
+        *cam = d.camera();
+        if let Some(clip) = &p.clip {
+            shoot(&mut commands, &cap, cap.out.join(clip).join(format!("frame_{:04}.png", p.at)));
+        }
+        if p.at >= p.frames {
+            if let Some(clip) = p.clip {
+                cap.clips.lock().expect("clips lock").push((clip, p.frames));
+            }
+        } else {
+            cap.piloting = Some(p);
         }
         return;
     }
@@ -122,8 +153,23 @@ fn play(
         crate::look(v.pos, v.look_at)
     };
     match step {
-        Step::View(name) => *cam = view(&name),
-        Step::Camera { pos, look_at } => *cam = crate::look(pos, look_at),
+        Step::View(name) => {
+            *cam = view(&name);
+            drone.place(&cam);
+        }
+        Step::Camera { pos, look_at } => {
+            *cam = crate::look(pos, look_at);
+            drone.place(&cam);
+        }
+        Step::Drone { frames, sticks, mode, clip } => {
+            if let Some(m) = mode {
+                drone.state.mode = drone.cfg.mode(&m).unwrap_or_else(|| panic!("no flight mode `{m}` in drone.json"));
+            }
+            if let Some(c) = &clip {
+                std::fs::create_dir_all(cap.out.join(c)).expect("create clip folder");
+            }
+            cap.piloting = Some(Piloting { sticks, frames: frames.max(1), at: 0, clip });
+        }
         Step::Wait(frames) => cap.wait = frames,
         Step::Shot(name) => {
             let path = cap.out.join(format!("{name}.png"));
@@ -147,6 +193,13 @@ fn play(
                     "ground_m": ground_m,
                     "altitude_m": p.y - ground_m,
                     "over_land": ground.field.contains(p.x, p.z) && ground_m > 0.5,
+                    "drone": {
+                        "mode": drone.cfg.modes[drone.state.mode].name,
+                        "speed_mps": drone.state.speed(),
+                        "vel": drone.state.vel,
+                        "heading_deg": drone.state.yaw.to_degrees(),
+                        "gimbal_deg": drone.state.gimbal.to_degrees(),
+                    },
                 })
             );
         }

@@ -18,7 +18,17 @@ scripts/forge.sh                                  # fetch the pinned Forge crate
 cargo run --release -p de_client --bin discover-earth
 ```
 
-Fly with WASD, Q and E for down and up, hold the right mouse button to look, Shift to go fast.
+You fly a camera drone the way real ones fly: mode-2 sticks, a stabilised hover when you let go, a level gimbal, and
+three flight modes (cine 5 m/s, normal 12 m/s, sport 21 m/s, tuned in `content/drone.json`).
+
+| | Gamepad (mode 2) | Keyboard and mouse |
+| --- | --- | --- |
+| Climb / descend | left stick up / down | Space / C |
+| Turn | left stick left / right | Q / E, or right-drag |
+| Forward / back | right stick up / down | W / S |
+| Sideways | right stick left / right | A / D |
+| Tilt camera | right trigger up, left trigger down | R / F, or right-drag |
+| Flight mode | bumpers | 1 cine, 2 normal, 3 sport |
 
 Linux needs `libasound2-dev libudev-dev pkg-config` to build; Windows needs nothing extra.
 
@@ -27,7 +37,7 @@ Linux needs `libasound2-dev libudev-dev pkg-config` to build; Windows needs noth
 ```
 scripts/check.sh [--shots [--ref <dir>]]          # the whole check; verdict in out/check/summary.json
 cargo run -q -p de_cli -- capabilities            # what exists
-cargo run -q -p de_cli -- schema terrain|steps    # how content is written
+cargo run -q -p de_cli -- schema terrain|steps|drone   # how content is written
 cargo run -q -p de_cli -- validate                # check all content
 cargo run -q -p de_client --bin de-shot -- content/shots/smoke.json out/shots   # screenshots and clips
 ```

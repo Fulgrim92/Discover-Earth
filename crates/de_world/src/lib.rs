@@ -2,11 +2,13 @@
 //! step lists that drive captures. Nothing here draws; the client and the CLI build on it,
 //! and every test runs without a GPU.
 
+pub mod drone;
 pub mod island;
 pub mod module;
 pub mod steps;
 pub mod terrain;
 
+pub use drone::{DroneConfig, DroneState, FlightMode, Sticks};
 pub use island::{Island, LoadError, Vec3, View};
 pub use module::WorldModule;
 pub use steps::{Step, StepList};

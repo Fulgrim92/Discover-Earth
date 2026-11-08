@@ -26,6 +26,16 @@ surface sits at 0.6 m. Ground the DEM marks as sea is pushed down to -25 m so th
   fog, ground and sea colours) are written by hand and survive re-imports.
 - `content/islands/<id>/height.png`: 16-bit greyscale, row 0 north, mapped linearly onto `height_range_m`.
 - `content/shots/*.json`: step lists for captures (`de schema steps`).
+- `content/drone.json`: the drone's flight modes, clearance, gimbal, dead zone and wind (`de schema drone`).
+
+## The drone
+
+The player is a camera drone flown like a consumer drone in its stabilised mode. `de_world::DroneState::step` turns
+mode-2 sticks into motion: velocity eases towards the stick target (with an expo curve for gentle small moves),
+centred sticks brake to a hover, wind gusts from `forge_core::Rng` push it slightly, and it never goes below
+`min_clearance_m` over ground or sea. The camera hangs on a gimbal that keeps the horizon level, with a slight bank
+into sideways moves. The window game, the `drone` capture step and the tests all fly this one function, so a
+captured flight is the flight a player gets. Real VR controllers would feed the same `Sticks`.
 
 ## Rendering
 
@@ -41,4 +51,5 @@ shadow camera).
 | Engine | UE5 + Cesium, Forge all the way, Forge + Bevy 3D | Forge + Bevy 3D | Agent-drivable end to end without writing terrain, lighting and PBR from scratch (C, 2026-11-07) |
 | Getting Forge | Cargo git dependency, copy, sparse pinned fetch | Sparse pinned fetch | cardcraft-eternal is ~9 GB at one commit; the sparse fetch is a few MB and still pins an exact commit |
 | Elevation | Google 3D Tiles, SRTM, Copernicus GLO-30 | Copernicus GLO-30 | Free with attribution, 30 m, good coastlines |
+| Player movement | free fly camera, FPV acro drone, stabilised camera drone | Stabilised camera drone (mode 2) | Calm, cinematic pacing for nature, and it matches real drone and VR thumbstick controls (C, 2026-11-08) |
 | Agent access to a live game | Custom socket, Bevy Remote Protocol | Bevy Remote Protocol | Built in; queries and edits any reflected component as JSON |

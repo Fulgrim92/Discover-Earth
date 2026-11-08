@@ -5,7 +5,7 @@
 //! moves the camera; it never touches the GPU directly.
 
 pub mod capture;
-pub mod fly;
+pub mod drone;
 pub mod scene;
 
 pub use scene::{CameraRig, Ground, IslandSource, ScenePlugin};

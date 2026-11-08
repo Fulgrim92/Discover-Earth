@@ -20,6 +20,7 @@ use bevy::{
 use de_client::{
     IslandSource, ScenePlugin,
     capture::{Capture, CapturePlugin},
+    drone::DronePlugin,
     scene::CameraTarget,
 };
 use de_world::StepList;
@@ -55,7 +56,7 @@ fn main() -> AppExit {
         .insert_resource(CameraTarget(Some(target.clone())));
     let capture = Capture::new(list, out.clone(), target);
     let clips = capture.clips.clone();
-    app.insert_resource(capture).add_plugins((ScenePlugin, CapturePlugin));
+    app.insert_resource(capture).add_plugins((ScenePlugin, DronePlugin, CapturePlugin));
     let exit = app.run();
 
     let clips = clips.lock().expect("clips lock").clone();
