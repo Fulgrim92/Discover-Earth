@@ -10,6 +10,8 @@
 #        scripts/forge.sh --check    exit 1 if vendor/forge is missing or not at FORGE_REV
 # Needs read access to the repo (GitHub login, or a token in CI; see docs/forge.md).
 set -euo pipefail
+# Git Bash on Windows would rewrite the sparse patterns (/Cargo.toml) into C:/Program Files/Git/...
+export MSYS_NO_PATHCONV=1
 root="$(cd "$(dirname "$0")/.." && pwd)"
 rev="$(tr -d '[:space:]' < "$root/FORGE_REV")"
 dir="$root/vendor/forge"
