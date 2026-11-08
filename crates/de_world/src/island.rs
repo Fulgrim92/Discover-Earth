@@ -82,11 +82,21 @@ pub struct Look {
     pub grass: Vec3,
     pub rock: Vec3,
     pub shore: Vec3,
+    pub moss: Vec3,
     /// Slope (0 flat .. 1 vertical, from the normal) above which ground turns to rock.
     pub rock_slope: f32,
     /// Sea colour, linear RGB, and how see-through it is (0..1).
     pub sea: Vec3,
     pub sea_alpha: f32,
+    /// Terrain mesh vertices per heightmap pixel along each side (1 = one per pixel). Finer
+    /// meshes follow the heightmap smoothly and carry `relief_m` of seeded small-scale relief.
+    pub subdivide: u32,
+    /// Height of the small-scale relief added between heightmap pixels, metres.
+    pub relief_m: f32,
+    /// Strength of the fine bumps the shader adds to the ground's lighting (0 for none).
+    pub detail_normals: f32,
+    /// Distance in metres at which the fine detail has faded out.
+    pub detail_fade_m: f32,
 }
 
 impl Default for Look {
@@ -97,12 +107,17 @@ impl Default for Look {
             sun_lux: 30_000.0,
             horizon: [0.62, 0.72, 0.82],
             fog_half_m: 30_000.0,
-            grass: [0.085, 0.15, 0.045],
-            rock: [0.10, 0.095, 0.085],
-            shore: [0.20, 0.18, 0.14],
-            rock_slope: 0.45,
+            grass: [0.11, 0.165, 0.05],
+            rock: [0.115, 0.105, 0.09],
+            shore: [0.17, 0.16, 0.14],
+            moss: [0.055, 0.08, 0.03],
+            rock_slope: 0.38,
             sea: [0.012, 0.045, 0.065],
             sea_alpha: 0.92,
+            subdivide: 2,
+            relief_m: 1.5,
+            detail_normals: 0.35,
+            detail_fade_m: 900.0,
         }
     }
 }
@@ -156,6 +171,9 @@ impl Island {
     /// Problems a person or agent should fix, as readable lines. Empty means valid.
     pub fn check(&self, h: &Heightfield) -> Vec<String> {
         let mut out = Vec::new();
+        if !(1..=4).contains(&self.look.subdivide) {
+            out.push(format!("look.subdivide must be 1..=4, is {}", self.look.subdivide));
+        }
         if self.views.is_empty() {
             out.push("no views: add at least one (the first is the spawn point)".into());
         }

@@ -15,6 +15,8 @@ use bevy::{
 use de_world::{Heightfield, Island, island::Look};
 use forge_core::Rng;
 
+use crate::ground::{GroundPlugin, TerrainMaterial, terrain_material};
+
 /// Which island to load, and from which `content/` folder.
 #[derive(Resource, Clone, Debug)]
 pub struct IslandSource {
@@ -43,7 +45,10 @@ pub struct ScenePlugin;
 
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<CameraRig>().init_resource::<CameraTarget>().add_systems(Startup, spawn_scene);
+        app.add_plugins(GroundPlugin)
+            .register_type::<CameraRig>()
+            .init_resource::<CameraTarget>()
+            .add_systems(Startup, spawn_scene);
     }
 }
 
@@ -59,6 +64,8 @@ fn spawn_scene(
     target: Res<CameraTarget>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let island = Island::load(&source.content, &source.id).unwrap_or_else(|e| panic!("{e}"));
     let field = island.heightfield(&source.content, &source.id).unwrap_or_else(|e| panic!("{e}"));
@@ -71,12 +78,7 @@ fn spawn_scene(
     commands.spawn((
         Name::new("terrain"),
         Mesh3d(meshes.add(terrain_mesh(&field, &look, &source.id))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            perceptual_roughness: 0.93,
-            reflectance: 0.3,
-            ..default()
-        })),
+        MeshMaterial3d(terrain_materials.add(terrain_material(&look, &source.content, &mut images))),
     ));
 
     // Sea: one large plane, slightly see-through so the seabed darkens it near the shore.
@@ -176,37 +178,46 @@ fn spawn_scene(
     commands.insert_resource(Ground { island, field });
 }
 
-/// The heightfield as one mesh: a vertex per pixel, coloured by height and slope, with a
-/// little seeded variation so slopes do not read as flat paint.
+/// The heightfield as one mesh, `look.subdivide` vertices per pixel along each side: heights
+/// follow the heightmap smoothly (Catmull-Rom) plus `look.relief_m` of seeded small relief.
+/// Vertex colours carry the ground layer weights (r grass, g rock, b shore, a moss) that the
+/// terrain shader blends.
 pub fn terrain_mesh(h: &Heightfield, look: &Look, seed_name: &str) -> Mesh {
-    let (w, d) = (h.width, h.depth);
-    let mut rng = Rng::new(seed_name.bytes().fold(2166136261u32, |a, b| (a ^ u32::from(b)).wrapping_mul(16777619)));
-    let mut positions = Vec::with_capacity(w * d);
-    let mut normals = Vec::with_capacity(w * d);
-    let mut colors = Vec::with_capacity(w * d);
-    let mix = |a: [f32; 3], b: [f32; 3], t: f32| -> [f32; 3] {
-        let t = t.clamp(0.0, 1.0);
-        [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
-    };
-    let top = h.max_height().max(1.0);
+    let sub = look.subdivide.clamp(1, 4) as usize;
+    let (w, d) = ((h.width - 1) * sub + 1, (h.depth - 1) * sub + 1);
+    let step = [h.spacing[0] / sub as f32, h.spacing[1] / sub as f32];
+    let seed = seed_name.bytes().fold(2166136261u32, |a, b| (a ^ u32::from(b)).wrapping_mul(16777619));
+    let relief = relief(w, d, seed);
+
+    let [ew, ed] = h.extent();
+    let mut heights = vec![0.0f32; w * d];
     for row in 0..d {
         for col in 0..w {
-            let [x, z] = h.world_xz(col, row);
-            let y0 = h.at(col, row);
-            let y = if y0 <= 0.5 { SEABED_M } else { y0 };
-            let n = h.normal(col, row);
-            positions.push([x, y, z]);
-            normals.push(n);
-            let slope = 1.0 - n[1]; // 0 flat .. 1 vertical
-            let rockiness = ((slope - look.rock_slope * 0.35) / (look.rock_slope * 0.65)).clamp(0.0, 1.0);
-            // Higher ground is browner and thinner.
-            let grass = mix(look.grass, [look.grass[0] * 1.5, look.grass[1] * 1.05, look.grass[2] * 1.2], y0 / top);
-            let mut c = mix(grass, look.rock, rockiness.powf(0.8));
-            if y0 < 6.0 {
-                c = mix(look.shore, c, y0 / 6.0);
-            }
-            let v = 0.88 + rng.next_f64() as f32 * 0.24;
-            colors.push([c[0] * v, c[1] * v, c[2] * v, 1.0]);
+            let (fx, fz) = (col as f32 / sub as f32, row as f32 / sub as f32);
+            let y0 = bicubic(h, fx, fz);
+            // Relief only on land, fading in above the shoreline.
+            let r = relief[row * w + col] * look.relief_m * (y0 / 8.0).clamp(0.0, 1.0);
+            heights[row * w + col] = y0 + r;
+        }
+    }
+    let at = |c: usize, r: usize| heights[r.min(d - 1) * w + c.min(w - 1)];
+    let top = h.max_height().max(1.0);
+
+    let mut positions = Vec::with_capacity(w * d);
+    let mut normals = Vec::with_capacity(w * d);
+    let mut weights = Vec::with_capacity(w * d);
+    for row in 0..d {
+        for col in 0..w {
+            let y0 = at(col, row);
+            let (x, z) = (col as f32 * step[0] - ew / 2.0, row as f32 * step[1] - ed / 2.0);
+            let n = {
+                let (l, r) = (at(col.saturating_sub(1), row), at(col + 1, row));
+                let (u, dn) = (at(col, row.saturating_sub(1)), at(col, row + 1));
+                Vec3::new((l - r) / (2.0 * step[0]), 1.0, (u - dn) / (2.0 * step[1])).normalize()
+            };
+            positions.push([x, if y0 <= 0.5 { SEABED_M } else { y0 }, z]);
+            normals.push(n.to_array());
+            weights.push(layer_weights(y0, 1.0 - n.y, top, look));
         }
     }
     let mut indices = Vec::with_capacity((w - 1) * (d - 1) * 6);
@@ -220,8 +231,58 @@ pub fn terrain_mesh(h: &Heightfield, look: &Look, seed_name: &str) -> Mesh {
     Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, weights)
         .with_inserted_indices(Indices::U32(indices))
+}
+
+/// Ground layer weights (grass, rock, shore, moss) from height and slope (0 flat .. 1 vertical).
+pub fn layer_weights(y: f32, slope: f32, top: f32, look: &Look) -> [f32; 4] {
+    let smooth = |a: f32, b: f32, x: f32| {
+        let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    let rock = smooth(look.rock_slope * 0.35, look.rock_slope, slope);
+    let shore = if y < 8.0 { 1.0 - (y / 8.0).max(0.0) } else { 0.0 };
+    let moss = (1.0 - rock) * (0.55 * smooth(0.06, 0.3, slope) + 0.45 * (y / top).clamp(0.0, 1.0));
+    let grass = ((1.0 - rock) * (1.0 - shore) - moss).max(0.0);
+    let sum = (grass + rock + shore + moss).max(1e-4);
+    [grass / sum, rock / sum, shore / sum, moss / sum]
+}
+
+/// Height at fractional pixel (fx, fz), Catmull-Rom in both directions.
+fn bicubic(h: &Heightfield, fx: f32, fz: f32) -> f32 {
+    let (c, r) = (fx.floor() as isize, fz.floor() as isize);
+    let (tx, tz) = (fx - c as f32, fz - r as f32);
+    let px = |c: isize, r: isize| h.at(c.max(0) as usize, r.max(0) as usize);
+    let cr = |p0: f32, p1: f32, p2: f32, p3: f32, t: f32| {
+        p1 + 0.5 * t * (p2 - p0 + t * (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3 + t * (3.0 * (p1 - p2) + p3 - p0)))
+    };
+    let rows: Vec<f32> =
+        (-1..=2).map(|dr| cr(px(c - 1, r + dr), px(c, r + dr), px(c + 1, r + dr), px(c + 2, r + dr), tx)).collect();
+    cr(rows[0], rows[1], rows[2], rows[3], tz)
+}
+
+/// Smooth seeded relief in -1..1 on a w x d grid: random values blurred twice.
+fn relief(w: usize, d: usize, seed: u32) -> Vec<f32> {
+    let mut rng = Rng::new(seed);
+    let mut v: Vec<f32> = (0..w * d).map(|_| rng.next_f64() as f32 * 2.0 - 1.0).collect();
+    for _ in 0..2 {
+        let src = v.clone();
+        for r in 0..d {
+            for c in 0..w {
+                let mut sum = 0.0;
+                for (dc, dr) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (0, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
+                    let cc = (c as isize + dc).clamp(0, w as isize - 1) as usize;
+                    let rr = (r as isize + dr).clamp(0, d as isize - 1) as usize;
+                    sum += src[rr * w + cc];
+                }
+                v[r * w + c] = sum / 9.0;
+            }
+        }
+    }
+    // Blurring shrinks the range; stretch it back to roughly -1..1.
+    let max = v.iter().fold(0.0f32, |m, x| m.max(x.abs())).max(1e-6);
+    v.iter().map(|x| x / max).collect()
 }
 
 /// A hemisphere-and-a-bit, seen from inside, coloured from the horizon up to the zenith.
@@ -248,28 +309,47 @@ fn sky_mesh(radius: f32, look: &Look) -> Mesh {
 mod tests {
     use super::*;
 
+    fn flat_look(sub: u32) -> Look {
+        Look { subdivide: sub, relief_m: 0.0, ..Look::default() }
+    }
+
     #[test]
-    fn terrain_mesh_has_a_vertex_per_pixel_and_drops_the_seabed() {
+    fn mesh_has_subdivided_vertices_and_drops_the_seabed() {
         let heights = vec![0.0, 10.0, 20.0, 0.0, 30.0, 40.0, 0.0, 50.0, 60.0];
         let h = Heightfield { width: 3, depth: 3, spacing: [10.0, 10.0], heights };
-        let mesh = terrain_mesh(&h, &Look::default(), "t");
-        assert_eq!(mesh.count_vertices(), 9);
-        assert_eq!(mesh.indices().map(|i| i.len()), Some(2 * 2 * 6));
+        assert_eq!(terrain_mesh(&h, &flat_look(1), "t").count_vertices(), 9);
+        let mesh = terrain_mesh(&h, &flat_look(2), "t");
+        assert_eq!(mesh.count_vertices(), 25);
         let Some(bevy::mesh::VertexAttributeValues::Float32x3(p)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else {
             panic!("positions")
         };
         assert_eq!(p[0][1], SEABED_M, "sea pixels sink below the water");
-        assert_eq!(p[1][1], 10.0);
+        assert!((p[2][1] - 10.0).abs() < 1e-4, "original pixels keep their height: {}", p[2][1]);
+        assert!((p[2][0] - 0.0).abs() < 1e-4, "half-step spacing");
     }
 
     #[test]
-    fn terrain_colours_are_seeded() {
-        let h = Heightfield { width: 2, depth: 2, spacing: [1.0, 1.0], heights: vec![5.0; 4] };
-        let colors = |seed| match terrain_mesh(&h, &Look::default(), seed).attribute(Mesh::ATTRIBUTE_COLOR) {
-            Some(bevy::mesh::VertexAttributeValues::Float32x4(c)) => c.clone(),
-            _ => panic!("colours"),
+    fn relief_is_seeded() {
+        let h = Heightfield { width: 4, depth: 4, spacing: [10.0, 10.0], heights: vec![50.0; 16] };
+        let look = Look { relief_m: 2.0, ..Look::default() };
+        let pos = |seed| match terrain_mesh(&h, &look, seed).attribute(Mesh::ATTRIBUTE_POSITION) {
+            Some(bevy::mesh::VertexAttributeValues::Float32x3(p)) => p.clone(),
+            _ => panic!("positions"),
         };
-        assert_eq!(colors("a"), colors("a"));
-        assert_ne!(colors("a"), colors("b"));
+        assert_eq!(pos("a"), pos("a"));
+        assert_ne!(pos("a"), pos("b"));
+        assert!(pos("a").iter().all(|p| (p[1] - 50.0).abs() <= 2.0 + 1e-4));
+    }
+
+    #[test]
+    fn layer_weights_sum_to_one_and_follow_the_ground() {
+        let look = Look::default();
+        for (y, slope) in [(2.0, 0.0), (100.0, 0.0), (300.0, 0.6), (500.0, 0.2)] {
+            let w = layer_weights(y, slope, 700.0, &look);
+            assert!((w.iter().sum::<f32>() - 1.0).abs() < 1e-4, "{w:?}");
+        }
+        assert!(layer_weights(2.0, 0.0, 700.0, &look)[2] > 0.5, "low and flat is shore");
+        assert!(layer_weights(300.0, 0.8, 700.0, &look)[1] > 0.9, "steep is rock");
+        assert!(layer_weights(100.0, 0.0, 700.0, &look)[0] > 0.5, "low flat inland is grass");
     }
 }

@@ -39,7 +39,11 @@ captured flight is the flight a player gets. Real VR controllers would feed the 
 
 ## Rendering
 
-One terrain mesh per island (a vertex per DEM pixel, colours from height and slope with seeded variation), a large
+One terrain mesh per island, `look.subdivide` vertices per DEM pixel (Catmull-Rom between pixels plus `relief_m`
+of seeded small relief). Vertex colours carry ground layer weights (grass, rock, shore, moss) from height and slope;
+`terrain.wesl` extends Bevy's PBR to blend the layers, from scanned CC0 textures in `content/materials/` when they
+exist (triplanar, at two scales) and from seeded noise otherwise, with basalt banding on rock, patches of browner
+grass, and fine detail normals that fade with distance. Then a large
 sea plane, an unlit sky dome, a sun with cascaded shadows, exponential distance fog and Bevy's PBR. The same
 `ScenePlugin` runs in the window and offscreen. The sky dome and sea never cast shadows (the dome encloses the sun's
 shadow camera).
