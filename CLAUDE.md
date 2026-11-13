@@ -15,6 +15,8 @@ Discover Earth is a Rust game with **Bevy 0.20** drawing in 3D; it builds from t
   `docs/taste.jsonl` before changing the look, and record every pick with `de taste`.
 - Ground colour: check it against the real place with `de truth <island>` (satellite albedo and land cover; see
   `docs/agents.md`) rather than by eye. Shots of an island with truth data get `<shot>.truth.png`.
+- Sky, light, haze and water: check them against real photos with `de photo match` (see `docs/agents.md`); try a
+  change with `--set` and `--ref` before writing it to `terrain.json`.
 - Fast loop: `de-shot <steps> <out> --tier sketch` (320x180, no shadows) for layout; `hero` for PR images.
 - Content is JSON in `content/` with schemas from the Rust types (`de schema terrain|steps`). Edit it directly, then
   `de validate`. Errors name the file, the field and the fix.

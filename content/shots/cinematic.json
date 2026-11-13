@@ -1,0 +1,19 @@
+{
+  "island": "saksun",
+  "size": [1280, 720],
+  "steps": [
+    {"view": "valley"},
+    {"wait": 2},
+    {"shot": "valley"},
+    {"view": "lagoon"},
+    {"wait": 2},
+    {"shot": "lagoon"},
+    {"view": "tjornuvik"},
+    {"wait": 2},
+    {"shot": "tjornuvik"},
+    {"view": "valley"},
+    {"drone": {"frames": 30, "sticks": {"gimbal": -0.4}}},
+    {"drone": {"frames": 240, "mode": "cine", "sticks": {"pitch": 1.0, "yaw": -0.2}, "clip": "golden-valley"}},
+    "state"
+  ]
+}

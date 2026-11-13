@@ -58,7 +58,7 @@ impl Plugin for WaterPlugin {
 }
 
 /// The water material, or the mist material when `mist` is set.
-pub fn material(look: &Look, zenith: [f32; 3], mist: bool) -> WaterMaterial {
+pub fn material(look: &Look, mist: bool) -> WaterMaterial {
     let v = |c: [f32; 3]| Vec4::new(c[0], c[1], c[2], 1.0);
     WaterMaterial {
         base: StandardMaterial {
@@ -75,8 +75,15 @@ pub fn material(look: &Look, zenith: [f32; 3], mist: bool) -> WaterMaterial {
                 deep: v(look.stream),
                 foam: v(look.foam),
                 horizon: v(look.horizon),
-                zenith: v(zenith),
-                flags: Vec4::new(if mist { 1.0 } else { 0.0 }, 1.0, 1.0, 0.0),
+                zenith: v(look.zenith),
+                // With the physical atmosphere the environment map already puts the sky in the
+                // water; the hand-made reflection is for the plain sky dome.
+                flags: Vec4::new(
+                    if mist { 1.0 } else { 0.0 },
+                    if look.cinema.atmosphere { 0.0 } else { 1.0 },
+                    1.0,
+                    0.0,
+                ),
             },
         },
     }

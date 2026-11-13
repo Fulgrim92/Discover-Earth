@@ -42,6 +42,7 @@ cargo run -q -p de_client --bin de-shot -- content/shots/smoke.json out/shots   
 cargo run -q -p de_cli -- sweep valley --set look.fog_half_m=4000,12000,30000      # options as one sheet
 cargo run -q -p de_cli -- compare <before-dir> <after-dir>                         # FLIP difference per shot
 cargo run -q -p de_cli -- water saksun                                             # streams, falls, lakes, map
+cargo run -q -p de_cli -- photo match --ref out/photo/before                        # renders vs real photos
 ```
 
 ## Credits
@@ -57,6 +58,15 @@ processed by the ESA WorldCover consortium, CC BY 4.0.
 Water is found with published methods, implemented here: priority-flood depression filling (Barnes, Lehman and
 Mulla, "Priority-flood: An optimal depression-filling and watershed-labeling algorithm", 2014) and D8 flow routing
 (O'Callaghan and Mark, 1984).
+Reference photos (`content/references/`), from Wikimedia Commons, each credited with author and licence in its
+`references.json` and on every sheet that shows it:
+- "Saksun overview" by briantoronto, CC BY-SA 4.0
+- "Saksun, Blue lagoon" by Drega05, CC BY-SA 4.0
+- "Saksun 2019 2" by kallerna, CC BY-SA 4.0
+- "Faroe Islands Føroyar Færøerne Wyspy Owcze 2019 (50)" by Mirek237, CC BY-SA 4.0
+- "Tjørnuvík - Siegfried Rabanser" by Sigfried Rabanser, CC BY 2.0
+
+The photos are stored resized to 1280 pixels wide; the CC BY-SA ones stay under CC BY-SA 4.0.
 
 Elevation: Copernicus DEM GLO-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under
 COPERNICUS by the European Union and ESA.

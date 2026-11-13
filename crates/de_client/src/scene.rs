@@ -5,12 +5,19 @@ use std::path::PathBuf;
 use bevy::{
     asset::RenderAssetUsages,
     camera::{Exposure, RenderTarget},
+    core_pipeline::tonemapping::Tonemapping,
+    light::{
+        Atmosphere, AtmosphereEnvironmentMapLight, FogVolume, VolumetricFog, VolumetricLight,
+        atmosphere::ScatteringMedium,
+    },
     light::{
         CascadeShadowConfigBuilder, DirectionalLightShadowMap, GlobalAmbientLight, NotShadowCaster, NotShadowReceiver,
     },
     mesh::{Indices, PrimitiveTopology},
-    pbr::{DistanceFog, FogFalloff},
+    pbr::{AtmosphereSettings, DistanceFog, FogFalloff},
+    post_process::bloom::Bloom,
     prelude::*,
+    render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection},
 };
 use de_world::Rng;
 pub use de_world::island::layer_weights;
@@ -60,8 +67,6 @@ impl Plugin for ScenePlugin {
 /// Ground below sea level is pushed down this far, so the coast drops away under the water
 /// instead of z-fighting with it (the DEM stores the sea as 0 m).
 const SEABED_M: f32 = -25.0;
-/// Sky colour overhead, linear RGB (the horizon colour is `look.horizon`).
-pub const SKY_ZENITH: [f32; 3] = [0.10, 0.24, 0.52];
 /// Vertical field of view of the camera, degrees.
 pub const FOV_Y_DEG: f32 = 55.0;
 
@@ -78,7 +83,7 @@ fn spawn_scene(
         ResMut<Assets<TerrainMaterial>>,
         ResMut<Assets<crate::water::WaterMaterial>>,
     ),
-    mut images: ResMut<Assets<Image>>,
+    (mut images, mut media): (ResMut<Assets<Image>>, ResMut<Assets<ScatteringMedium>>),
 ) {
     let island = Island::load(&source.content, &source.id).unwrap_or_else(|e| panic!("{e}"));
     let field = island.heightfield(&source.content, &source.id).unwrap_or_else(|e| panic!("{e}"));
@@ -100,8 +105,8 @@ fn spawn_scene(
     ));
 
     let wm = crate::water::meshes(&water, &field, &surface);
-    let water_mat = water_materials.add(crate::water::material(&look, SKY_ZENITH, false));
-    let mist_mat = water_materials.add(crate::water::material(&look, SKY_ZENITH, true));
+    let water_mat = water_materials.add(crate::water::material(&look, false));
+    let mist_mat = water_materials.add(crate::water::material(&look, true));
     for (name, b, mat) in
         [("streams", wm.streams, water_mat.clone()), ("lakes", wm.lakes, water_mat), ("mist", wm.mist, mist_mat)]
     {
@@ -126,30 +131,45 @@ fn spawn_scene(
         Transform::from_xyz(0.0, SEA_LEVEL_M, 0.0),
     ));
 
-    // Sky: an unlit dome, horizon colour at the bottom fading to a deeper blue overhead.
-    commands.spawn((
-        Name::new("sky"),
-        // The dome surrounds the sun's shadow camera; casting would put the world in shade.
-        NotShadowCaster,
-        NotShadowReceiver,
-        Mesh3d(meshes.add(sky_mesh(sea_reach * 0.45, &look))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            unlit: true,
-            fog_enabled: false,
-            cull_mode: None,
-            ..default()
-        })),
-    ));
+    // Sky: an unlit dome, horizon colour at the bottom fading to a deeper blue overhead; or, with
+    // `cinema.atmosphere`, a physically based atmosphere (the dome would read as far terrain).
+    let cine = &look.cinema;
+    if cine.atmosphere {
+        commands.spawn((Name::new("atmosphere"), Atmosphere::earth(media.add(ScatteringMedium::default()))));
+    } else {
+        commands.spawn((
+            Name::new("sky"),
+            // The dome surrounds the sun's shadow camera; casting would put the world in shade.
+            NotShadowCaster,
+            NotShadowReceiver,
+            Mesh3d(meshes.add(sky_mesh(sea_reach * 0.45, &look))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                unlit: true,
+                fog_enabled: false,
+                cull_mode: None,
+                ..default()
+            })),
+        ));
+    }
+
+    // Low mist over the island, for sun shafts through the valleys.
+    if cine.mist > 0.0 {
+        commands.spawn((
+            Name::new("mist"),
+            FogVolume { density_factor: cine.mist, absorption: 0.05, scattering: 0.6, ..default() },
+            Transform::from_xyz(0.0, cine.mist_top_m * 0.5, 0.0).with_scale(Vec3::new(w, cine.mist_top_m, d)),
+        ));
+    }
 
     // Sun.
     let (el, az) = (look.sun_elevation_deg.to_radians(), look.sun_azimuth_deg.to_radians());
     // Direction *to* the sun: azimuth from north (−Z) clockwise towards east (+X).
     let to_sun = Vec3::new(az.sin() * el.cos(), el.sin(), -az.cos() * el.cos());
-    commands.spawn((
+    let mut sun = commands.spawn((
         Name::new("sun"),
         DirectionalLight {
-            illuminance: look.sun_lux,
+            illuminance: if cine.atmosphere { cine.sun_lux } else { look.sun_lux },
             color: Color::srgb(1.0, 0.95, 0.86),
             shadow_maps_enabled: sketch.is_none(),
             // Metres-scale terrain seen from hundreds of metres away: a larger normal bias
@@ -166,10 +186,13 @@ fn spawn_scene(
         }
         .build(),
     ));
+    if cine.mist > 0.0 {
+        sun.insert(VolumetricLight);
+    }
     commands.insert_resource(DirectionalLightShadowMap { size: 4096 });
     commands.insert_resource(GlobalAmbientLight {
         color: Color::linear_rgb(look.horizon[0], look.horizon[1], look.horizon[2]),
-        brightness: 500.0,
+        brightness: look.sky_light,
         ..default()
     });
 
@@ -191,7 +214,12 @@ fn spawn_scene(
             far: sea_reach,
             ..default()
         }),
-        Exposure { ev100: 12.0 },
+        Exposure { ev100: cine.exposure_ev100 },
+        tonemapper(&cine.tonemapper),
+        ColorGrading::with_identical_sections(
+            ColorGradingGlobal { temperature: cine.temperature, ..default() },
+            ColorGradingSection { saturation: cine.saturation, contrast: cine.contrast, ..default() },
+        ),
         DistanceFog {
             color: horizon,
             directional_light_color: Color::srgba(1.0, 0.92, 0.75, 0.35),
@@ -202,6 +230,20 @@ fn spawn_scene(
     ));
     if let Some(image) = &target.0 {
         camera.insert(RenderTarget::Image(image.clone().into()));
+    }
+    if cine.atmosphere {
+        camera.insert((
+            AtmosphereSettings { aerial_view_lut_max_distance: 60_000.0, ..default() },
+            AtmosphereEnvironmentMapLight::default(),
+        ));
+    }
+    if cine.bloom > 0.0 {
+        camera.insert(Bloom { intensity: cine.bloom, ..Bloom::NATURAL });
+    }
+    if cine.mist > 0.0 {
+        // Mist in the shade is lit by the sky: a small constant glow in the horizon colour, in
+        // display units (the shader doesn't expose it).
+        camera.insert(VolumetricFog { ambient_color: horizon, ambient_intensity: 0.15, step_count: 48, ..default() });
     }
 
     commands.insert_resource(Ground { island, field });
@@ -218,6 +260,17 @@ pub struct Surface {
     pub extent: [f32; 2],
     /// Height per vertex before the seabed drop.
     pub heights: Vec<f32>,
+}
+/// The tonemapper named in `look.cinema.tonemapper` (checked by `Island::check`).
+fn tonemapper(name: &str) -> Tonemapping {
+    match name {
+        "agx" => Tonemapping::AgX,
+        "aces" => Tonemapping::AcesFitted,
+        "filmic" => Tonemapping::BlenderFilmic,
+        "reinhard" => Tonemapping::ReinhardLuminance,
+        "none" => Tonemapping::None,
+        _ => Tonemapping::TonyMcMapface,
+    }
 }
 
 impl Surface {
@@ -354,7 +407,7 @@ fn relief(w: usize, d: usize, seed: u32) -> Vec<f32> {
 /// A hemisphere-and-a-bit, seen from inside, coloured from the horizon up to the zenith.
 fn sky_mesh(radius: f32, look: &Look) -> Mesh {
     let mut mesh = Sphere::new(radius).mesh().uv(48, 24);
-    let zenith = SKY_ZENITH;
+    let zenith = look.zenith;
     let positions: Vec<[f32; 3]> = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
         Some(bevy::mesh::VertexAttributeValues::Float32x3(p)) => p.clone(),
         _ => unreachable!("sphere meshes have Float32x3 positions"),

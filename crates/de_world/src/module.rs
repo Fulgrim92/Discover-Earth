@@ -73,7 +73,11 @@ impl WorldModule {
             c("world.schema.terrain", Schema, "JSON schema for content/islands/<id>/terrain.json"),
             c("world.schema.steps", Schema, "JSON schema for capture step lists (content/shots/*.json)"),
             c("world.steps.view", Command, "Step: jump the camera to a named view"),
-            c("world.steps.camera", Command, "Step: place the camera at a position looking at a point"),
+            c(
+                "world.steps.camera",
+                Command,
+                "Step: place the camera at a position looking at a point, optionally with fov and roll",
+            ),
             c("world.steps.wait", Command, "Step: let frames of game time pass"),
             c("world.steps.shot", Command, "Step: save the next frame as a PNG"),
             c("world.steps.fly", Command, "Step: fly to a view, saving every frame and an mp4"),
@@ -131,6 +135,22 @@ impl WorldModule {
             ),
             c("world.schema.rules", Schema, "JSON schema for content/islands/<id>/rules.json"),
             c("tool.water", Command, "de water: water report, map vs WorldCover water, a shot list per waterfall"),
+            c(
+                "world.truth.photos",
+                Content,
+                "Per island: CC-licensed reference photos with credit and solved cameras (content/references/)",
+            ),
+            c("tool.photo.solve", Command, "de photo solve: find a photo's camera by fitting its skyline to the DEM"),
+            c(
+                "tool.photo.match",
+                Command,
+                "de photo match: render each photo's camera; colour, lightness and palette gap vs the photo",
+            ),
+            c(
+                "world.look.cinema",
+                Content,
+                "Film look per island: physical atmosphere, tonemapper, bloom, grade, volumetric mist (look.cinema)",
+            ),
             c("tool.taste", Command, "de taste: record a look decision in docs/taste.jsonl"),
         ]
     }
