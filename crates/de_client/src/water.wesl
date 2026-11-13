@@ -87,11 +87,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         let up = in.uv.y;
         let n = fbm(vec3(in.uv.x * 5.0, up * 3.0 - t * 0.5, t * 0.15), 1.0);
         let a = pow(across, 1.4) * pow(1.0 - up, 1.3) * smoothstep(0.25, 0.7, n) * 0.85;
-        pbr_input.material.base_color = vec4(water.foam.rgb, 1.0);
-        pbr_input.material.perceptual_roughness = 1.0;
-        pbr_input.N = V;
-        out.color = apply_pbr_lighting(pbr_input);
-        out.color = vec4(out.color.rgb + water.horizon.rgb * 0.25, a);
+        // Unlit: spray glows with the light around it rather than being shaded like a surface,
+        // and an unlit sheet can't pick up the lighting's per-pixel noise.
+        let c = mix(water.horizon.rgb, water.foam.rgb, 0.4) * 1.1;
+        out.color = vec4(c, clamp(a, 0.0, 1.0));
         out.color = main_pass_post_lighting_processing(pbr_input, out.color);
         return out;
     }
