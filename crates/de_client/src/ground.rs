@@ -19,6 +19,8 @@ use bevy::{
 };
 use de_world::island::Look;
 
+use crate::clouds::CloudParams;
+
 /// Ground layer names, in the order of the vertex weights (r, g, b, a) and the texture array.
 pub const LAYERS: [&str; 4] = ["grass", "rock", "shore", "moss"];
 
@@ -34,6 +36,12 @@ pub struct TerrainExt {
     #[texture(103, dimension = "2d_array")]
     #[sampler(104)]
     pub normal: Handle<Image>,
+    /// The cloud layer, for cloud shadows (cover 0: none).
+    #[uniform(105)]
+    pub clouds: CloudParams,
+    #[texture(106, dimension = "3d")]
+    #[sampler(107)]
+    pub cloud_noise: Handle<Image>,
 }
 
 #[derive(ShaderType, Clone, Copy, Debug)]
@@ -63,7 +71,13 @@ impl Plugin for GroundPlugin {
 
 /// The terrain material for an island's look, with scanned textures if `content/materials`
 /// has all four layers.
-pub fn terrain_material(look: &Look, content: &Path, images: &mut Assets<Image>) -> TerrainMaterial {
+pub fn terrain_material(
+    look: &Look,
+    content: &Path,
+    images: &mut Assets<Image>,
+    clouds: CloudParams,
+    cloud_noise: Handle<Image>,
+) -> TerrainMaterial {
     let v = |c: [f32; 3]| Vec4::new(c[0], c[1], c[2], 1.0);
     let scanned = load_layers(content, "albedo.jpg", true).zip(load_layers(content, "normal.jpg", false));
     let has = scanned.is_some();
@@ -84,6 +98,8 @@ pub fn terrain_material(look: &Look, content: &Path, images: &mut Assets<Image>)
             },
             albedo,
             normal,
+            clouds,
+            cloud_noise,
         },
     }
 }
@@ -201,7 +217,13 @@ mod tests {
     #[test]
     fn no_textures_means_noise_layers() {
         let mut images = Assets::<Image>::default();
-        let m = terrain_material(&Look::default(), Path::new("/nonexistent"), &mut images);
+        let m = terrain_material(
+            &Look::default(),
+            Path::new("/nonexistent"),
+            &mut images,
+            CloudParams::default(),
+            Handle::default(),
+        );
         assert_eq!(m.extension.params.flags.x, 0.0);
     }
 }

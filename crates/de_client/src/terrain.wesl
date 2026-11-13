@@ -6,7 +6,7 @@ import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
-    mesh_view_bindings::view,
+    mesh_view_bindings::{view, globals},
 };
 
 struct TerrainParams {
@@ -26,6 +26,54 @@ struct TerrainParams {
 @group(constants::MATERIAL_BIND_GROUP) @binding(102) var albedo_smp: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(103) var normal_tex: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(104) var normal_smp: sampler;
+
+// The cloud layer (`clouds.wesl` documents the fields).
+struct CloudParams {
+    layer: vec4<f32>,
+    shape: vec4<f32>,
+    sun_dir: vec4<f32>,
+    sun: vec4<f32>,
+    sky_top: vec4<f32>,
+    sky_bottom: vec4<f32>,
+}
+@group(constants::MATERIAL_BIND_GROUP) @binding(105) var<uniform> clouds: CloudParams;
+@group(constants::MATERIAL_BIND_GROUP) @binding(106) var cloud_tex: texture_3d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(107) var cloud_smp: sampler;
+
+// Cloud density without the edge erosion, as `density(p, t, false)` in `clouds.wesl`.
+fn cloud_density(p: vec3<f32>, t: f32) -> f32 {
+    let h = (p.y - clouds.layer.x) / (clouds.layer.y - clouds.layer.x);
+    if h < 0.0 || h > 1.0 {
+        return 0.0;
+    }
+    let q = vec3(p.x - clouds.shape.z * t, p.y, p.z - clouds.shape.w * t) / clouds.layer.z;
+    let weather = textureSampleLevel(cloud_tex, cloud_smp, vec3(q.x * 0.25, 0.5, q.z * 0.25), 0.0).b;
+    let cover = clamp(clouds.shape.x * (0.55 + 0.9 * weather), 0.0, 1.0);
+    let profile = smoothstep(0.0, 0.1, h) * (1.0 - smoothstep(0.35 + 0.6 * cover, 1.0, h));
+    let s = textureSampleLevel(cloud_tex, cloud_smp, q, 0.0).r;
+    return max((s * profile - (1.0 - cover)) / max(cover, 1e-6), 0.0) * clouds.layer.w;
+}
+
+// How much sunlight gets through the clouds to `p` (1 clear .. 0 fully shaded).
+fn cloud_shadow(p: vec3<f32>) -> f32 {
+    let l = clouds.sun_dir.xyz;
+    if clouds.shape.x <= 0.0 || l.y <= 0.01 {
+        return 1.0;
+    }
+    let ta = max((clouds.layer.x - p.y) / l.y, 0.0);
+    let tb = (clouds.layer.y - p.y) / l.y;
+    if tb <= ta {
+        return 1.0;
+    }
+    // Long grazing paths are capped: beyond a few km the shadow is already as dark as it gets.
+    let len = min(tb - ta, 4000.0);
+    let ds = len / 6.0;
+    var od = 0.0;
+    for (var i = 0; i < 6; i++) {
+        od += cloud_density(p + l * (ta + (f32(i) + 0.5) * ds), globals.time) * ds;
+    }
+    return exp(-od);
+}
 
 fn hash3(p: vec3<f32>) -> f32 {
     let q = fract(p * 0.3183099 + vec3(0.71, 0.113, 0.419));
@@ -131,6 +179,17 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr_input);
+    // Cloud shadows dim only the direct sun: estimate its share of this pixel's light (sun on
+    // the slope against the sky's light) and take the shaded part of that away, less the part
+    // the cloud lets through as diffuse light (about 40% for stratocumulus).
+    let shade = 1.0 - cloud_shadow(p);
+    if shade > 0.0 {
+        let sun_lum = dot(clouds.sun.rgb, vec3(0.2126, 0.7152, 0.0722));
+        let sky_lum = dot(clouds.sky_top.rgb, vec3(0.2126, 0.7152, 0.0722));
+        let direct = sun_lum * max(dot(pbr_input.N, clouds.sun_dir.xyz), 0.0) / 3.14159;
+        let share = direct / max(direct + sky_lum, 1e-3);
+        out.color = vec4(out.color.rgb * (1.0 - clouds.sky_bottom.w * share * shade * 0.6), out.color.a);
+    }
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     return out;
 }

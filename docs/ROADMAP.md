@@ -32,6 +32,11 @@ verdict.
 - **Game:** a physically based sky and volumetric clouds and fog banks rolling over the ridges, at any time of day.
 - **Tool:** time-of-day and weather sheets; `look` gets a weather block (cloud cover, fog height, wind).
 - **Proof:** a six-time-of-day sheet and an overcast sheet against the photo references.
+- **Status:** clouds first: `look.clouds`, a ray-marched layer of seeded Perlin-Worley cloud with wind and shadows on
+  the ground, stopping at the land so it can sit on the ridges. It brings every reference photo closer: mean photo gap
+  16.8 to 15.8 with the evening look, and 19.1 to 16.6 at the photos' own time of day (`docs/shots/clouds/`).
+  Left: fog banks below the ridges, a weather block that drives several values at once, and time-of-day sheets as a
+  command.
 
 ## Step 4: Water from the land's own data
 

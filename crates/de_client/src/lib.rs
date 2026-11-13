@@ -5,6 +5,7 @@
 //! moves the camera; it never touches the GPU directly.
 
 pub mod capture;
+pub mod clouds;
 pub mod drone;
 pub mod ground;
 pub mod scene;
