@@ -1,0 +1,52 @@
+{
+  "island": "saksun",
+  "size": [
+    1280,
+    720
+  ],
+  "steps": [
+    {
+      "view": "overview"
+    },
+    {
+      "shot": "overview"
+    },
+    {
+      "view": "valley"
+    },
+    {
+      "shot": "valley"
+    },
+    "state",
+    {
+      "view": "lagoon"
+    },
+    {
+      "shot": "lagoon"
+    },
+    {
+      "view": "tjornuvik"
+    },
+    {
+      "shot": "tjornuvik"
+    },
+    {
+      "view": "lagoon"
+    },
+    {
+      "drone": {
+        "frames": 120,
+        "mode": "normal",
+        "sticks": {
+          "pitch": 1.0,
+          "roll": 0.3,
+          "gimbal": -0.5
+        }
+      }
+    },
+    {
+      "shot": "lagoon-after-flying"
+    },
+    "state"
+  ]
+}
