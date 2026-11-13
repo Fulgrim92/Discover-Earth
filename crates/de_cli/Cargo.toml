@@ -17,9 +17,11 @@ path = "src/main.rs"
 [dependencies]
 de_world.workspace = true
 forge_core.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
 clap.workspace = true
+nv-flip.workspace = true
 
 [lints]
 workspace = true

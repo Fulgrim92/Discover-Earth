@@ -99,6 +99,20 @@ pub struct Look {
     pub detail_fade_m: f32,
 }
 
+/// Ground layer weights (grass, rock, shore, moss) from height and slope (0 flat .. 1 vertical).
+pub fn layer_weights(y: f32, slope: f32, top: f32, look: &Look) -> [f32; 4] {
+    let smooth = |a: f32, b: f32, x: f32| {
+        let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    let rock = smooth(look.rock_slope * 0.35, look.rock_slope, slope);
+    let shore = if y < 8.0 { 1.0 - (y / 8.0).max(0.0) } else { 0.0 };
+    let moss = (1.0 - rock) * (0.55 * smooth(0.06, 0.3, slope) + 0.45 * (y / top).clamp(0.0, 1.0));
+    let grass = ((1.0 - rock) * (1.0 - shore) - moss).max(0.0);
+    let sum = (grass + rock + shore + moss).max(1e-4);
+    [grass / sum, rock / sum, shore / sum, moss / sum]
+}
+
 impl Default for Look {
     fn default() -> Self {
         Self {
@@ -142,9 +156,14 @@ impl std::fmt::Display for LoadError {
 impl std::error::Error for LoadError {}
 
 impl Island {
-    /// Reads `content/islands/<id>/terrain.json`.
+    /// Reads `content/islands/<id>/terrain.json`, or the same path under `$DE_OVERLAY` when that
+    /// folder has one (how `de sweep` tries variants without touching `content/`).
     pub fn load(content: &Path, id: &str) -> Result<Self, LoadError> {
-        let path = content.join("islands").join(id).join("terrain.json");
+        let rel = Path::new("islands").join(id).join("terrain.json");
+        let path = std::env::var_os("DE_OVERLAY")
+            .map(|o| PathBuf::from(o).join(&rel))
+            .filter(|p| p.is_file())
+            .unwrap_or_else(|| content.join(&rel));
         let text = std::fs::read_to_string(&path).map_err(|e| LoadError::Io(path.clone(), e))?;
         serde_json::from_str(&text).map_err(|e| LoadError::Json(path, e))
     }

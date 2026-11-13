@@ -7,8 +7,13 @@ Discover Earth is a game on **Forge** (the engine from Equilibrium: Eternal) wit
 
 - Before adding a feature, check what exists: `cargo run -q -p de_cli -- capabilities`.
 - After any change: `scripts/check.sh`. On failure read `out/check/summary.json` and the step's log in `out/check/`.
-- Visual changes: `scripts/check.sh --shots` writes `out/shots/*.png`; look at them. Keep a copy of the shots from
-  `main` and pass `--ref <that dir>` to see which ones changed (same pixels every run on one machine).
+- Visual changes: `scripts/check.sh --shots` writes `out/shots/*.png` and a sensor pack per shot. Read
+  `out/shots/sense.md` first, then look at the images. Keep a copy of the shots from `main` and pass `--ref <that dir>`:
+  `de compare` scores each shot with FLIP and writes before|after|heatmap sheets to `out/compare/`.
+- Clips: look at `<clip>.sheet.png` and read `<clip>.motion.json` (flicker, jumps), never only the mp4.
+- Look decisions: compare options with `de sweep <view> --set <path>=a,b,c` instead of guessing one value. Read
+  `docs/taste.jsonl` before changing the look, and record every pick with `de taste`.
+- Fast loop: `de-shot <steps> <out> --tier sketch` (320x180, no shadows) for layout; `hero` for PR images.
 - Content is JSON in `content/` with schemas from the Rust types (`de schema terrain|steps`). Edit it directly, then
   `de validate`. Errors name the file, the field and the fix.
 - New island: `python3 scripts/terrain/fetch.py <N62> <W008>` then `scripts/terrain/import.py` (see its header), add

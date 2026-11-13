@@ -39,10 +39,14 @@ scripts/check.sh [--shots [--ref <dir>]]          # the whole check; verdict in 
 cargo run -q -p de_cli -- capabilities            # what exists
 cargo run -q -p de_cli -- schema terrain|steps|drone   # how content is written
 cargo run -q -p de_cli -- validate                # check all content
-cargo run -q -p de_client --bin de-shot -- content/shots/smoke.json out/shots   # screenshots and clips
+cargo run -q -p de_client --bin de-shot -- content/shots/smoke.json out/shots   # screenshots, clips, sense.md
+cargo run -q -p de_cli -- sweep valley --set look.fog_half_m=4000,12000,30000      # options as one sheet
+cargo run -q -p de_cli -- compare <before-dir> <after-dir>                         # FLIP difference per shot
 ```
 
 ## Credits
+
+Image comparison: [NVIDIA FLIP](https://github.com/NVlabs/flip) (BSD-3-Clause) through the `nv-flip` crate.
 
 Ground materials, when downloaded with `scripts/materials/fetch.py`: [ambientCG](https://ambientcg.com), CC0 1.0.
 

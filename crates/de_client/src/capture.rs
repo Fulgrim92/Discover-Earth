@@ -16,7 +16,7 @@ use bevy::{
     prelude::*,
     render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk},
 };
-use de_world::{Step, StepList};
+use de_world::{Step, StepList, sense::CameraShot};
 
 use crate::{
     drone::Drone,
@@ -38,6 +38,9 @@ pub struct Capture {
     /// Clips to join into mp4s once every frame is on disk: (name, frame count). Shared, so
     /// the caller can still read it after `App::run` has torn the world down.
     pub clips: Arc<std::sync::Mutex<Vec<(String, u32)>>>,
+    /// Where the camera was for every saved image, in order; `de-shot` writes it to
+    /// `shots.json` and builds sensor packs and clip reports from it.
+    pub cameras: Arc<std::sync::Mutex<Vec<CameraShot>>>,
     pub frame: u64,
 }
 
@@ -69,6 +72,7 @@ impl Capture {
             piloting: None,
             pending: Arc::default(),
             clips: Arc::default(),
+            cameras: Arc::default(),
             frame: 0,
         }
     }
@@ -82,7 +86,20 @@ impl Plugin for CapturePlugin {
     }
 }
 
-fn shoot(commands: &mut Commands, cap: &Capture, path: PathBuf) {
+/// Save the next frame as `<out>/<name>.png` and record where the camera was.
+fn shoot(commands: &mut Commands, cap: &Capture, name: String, cam: &Transform) {
+    let path = cap.out.join(format!("{name}.png"));
+    let (f, u, r) = (cam.forward(), cam.up(), cam.right());
+    cap.cameras.lock().expect("cameras lock").push(CameraShot {
+        name,
+        frame: cap.frame,
+        pos: cam.translation.to_array(),
+        forward: f.to_array(),
+        up: u.to_array(),
+        right: r.to_array(),
+        fov_y_deg: crate::scene::FOV_Y_DEG,
+        size: cap.steps.size,
+    });
     cap.pending.fetch_add(1, Ordering::SeqCst);
     let pending = cap.pending.clone();
     commands.spawn(Screenshot::image(cap.target.clone())).observe(save_to_disk(path)).observe(
@@ -109,8 +126,7 @@ fn play(
         let s = t * t * (3.0 - 2.0 * t);
         cam.translation = fly.from.translation.lerp(fly.to.translation, s);
         cam.rotation = fly.from.rotation.slerp(fly.to.rotation, s);
-        let path = cap.out.join(&fly.name).join(format!("frame_{:04}.png", fly.at));
-        shoot(&mut commands, &cap, path);
+        shoot(&mut commands, &cap, format!("{}/frame_{:04}", fly.name, fly.at), &cam);
         if fly.at >= fly.frames {
             cap.clips.lock().expect("clips lock").push((fly.name, fly.frames));
             drone.place(&cam);
@@ -125,7 +141,7 @@ fn play(
         d.state.step(&d.cfg, Some(&ground.field), p.sticks, 1.0 / 60.0);
         *cam = d.camera();
         if let Some(clip) = &p.clip {
-            shoot(&mut commands, &cap, cap.out.join(clip).join(format!("frame_{:04}.png", p.at)));
+            shoot(&mut commands, &cap, format!("{clip}/frame_{:04}", p.at), &cam);
         }
         if p.at >= p.frames {
             if let Some(clip) = p.clip {
@@ -172,8 +188,7 @@ fn play(
         }
         Step::Wait(frames) => cap.wait = frames,
         Step::Shot(name) => {
-            let path = cap.out.join(format!("{name}.png"));
-            shoot(&mut commands, &cap, path);
+            shoot(&mut commands, &cap, name, &cam);
             // One frame for the shot to be taken before the camera moves again.
             cap.wait = 1;
         }

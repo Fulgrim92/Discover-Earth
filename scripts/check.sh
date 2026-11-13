@@ -5,7 +5,9 @@
 #   scripts/check.sh                 forge pin, fmt, clippy, tests, content validation
 #   scripts/check.sh --shots         also capture content/shots/smoke.json into out/shots
 #   scripts/check.sh --shots --ref <dir>
-#                                    and compare every shot with <dir>/<name>.png
+#                                    and compare every shot with <dir>/<name>.png (FLIP; heatmaps
+#                                    and before|after sheets in out/compare/)
+# --shots also writes a sensor pack per shot; read out/shots/sense.md first.
 set -uo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
@@ -36,13 +38,9 @@ step() {
 }
 
 compare() {
-  local bad=0
-  for f in "$root/out/shots"/*.png; do
-    local name; name="$(basename "$f")"
-    if [[ ! -f "$ref/$name" ]]; then echo "new shot $name"; continue; fi
-    if cmp -s "$f" "$ref/$name"; then echo "same $name"; else echo "CHANGED $name"; bad=1; fi
-  done
-  return $bad
+  # Perceptual compare (NVIDIA FLIP), so it holds across GPUs and drivers. Heatmaps and
+  # before|after sheets for every shot go to out/compare/; changed shots fail this step.
+  cargo run -q -p de_cli -- compare "$ref" "$root/out/shots" --out "$root/out/compare"
 }
 
 [[ -d vendor/forge ]] || scripts/forge.sh > "$log/forge-fetch.log" 2>&1

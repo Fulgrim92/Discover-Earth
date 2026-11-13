@@ -27,6 +27,68 @@ lines (speed, braking, altitude) and watch the clips. The flight model is `de_wo
 
 On a software renderer a 1280x720 shot takes well under a second and a 90-frame clip about 40 s.
 
+## Reading a capture (sensor packs)
+
+You see one still image at a time and judge "is the fog 10% too strong" badly, so every `de-shot` run also writes
+what each shot shows as files. **Read `out/<dir>/sense.md` first**: one paragraph per shot and per clip.
+
+Per shot `<name>`:
+
+| File | What |
+| --- | --- |
+| `<name>.sense.json` | coverage per class (sky, sea, grass, rock, shore, moss, land, `land_in_shadow`), 3x3 composition grid, land and sea distances, skyline height, camera heading, pitch and altitude, sun side and angle, fog left at 1 km and at the median land distance, and from the PNG: brightness histogram, clipping, mean colour and brightness per class, land brightness in sun vs shadow. `text` says it in sentences. |
+| `<name>.labels.png` | class per pixel (sky light blue, sea dark blue, grass green, rock brown, shore sand, moss dark green; land in the sun's shadow at half brightness) |
+| `<name>.depth.png` | distance, nearer is brighter (log scale 10 m to 50 km) |
+| `<name>.normal.png` | surface direction as colour |
+
+They come from casting a ray per pixel against the heightfield and the sea with the shot's exact camera
+(`de_world::sense`), on the CPU, so they need no GPU and match the island data. They see the heightfield, not the
+mesh's sub-pixel relief, so silhouettes can be a pixel or two off. `shots.json` records every saved image's camera.
+
+Per clip `<clip>`:
+
+| File | What |
+| --- | --- |
+| `<clip>.sheet.png` | 12 keyframes, labelled with frame, time and altitude: look at this instead of the mp4 |
+| `<clip>.motion.json` | flicker score (share of pixels whose brightness goes up then down by over 10/255 across three frames; under 0.5% reads as stable), worst frame, sudden jumps (cuts, pops), camera speed and altitude, per-frame stats |
+| `<clip>.flicker.png` | where it flickers: red to yellow over a faint copy of the middle frame |
+
+`de sense <dir> [--island id]` rebuilds them for a folder without rendering again.
+
+## Tiers
+
+`de-shot <steps> <out> --tier sketch|check|hero` overrides the step list's size: `sketch` is 320x180 without
+shadows (layout, "is it there", about 10 s a run), `check` 1280x720, `hero` 1920x1080 for PR images and look decisions.
+
+## Deciding by comparing: sweeps and taste
+
+```
+de sweep valley --set look.fog_half_m=2500,8000,30000 --set look.sun_elevation_deg=8,24,45 [--tier sketch]
+```
+
+renders the view once per combination (each with the changed `terrain.json` in an overlay folder, `DE_OVERLAY`, so
+`content/` is untouched) and writes `out/sweep/sheet.png` (first `--set` across, second down) and `out/sweep/sweep.md`
+with each cell's brightness, shadow contrast and fog. A typo in the path is an error listing the keys that exist.
+Show the sheet to C, or pick yourself, then copy the chosen values into `terrain.json`.
+
+Record every look decision, C's or yours, so later sessions don't undo it:
+
+```
+de taste --sheet out/sweep/sheet.png --pick "#5 fog_half_m=8000 sun_elevation_deg=24" --reject "#1" --why "..." [--by C]
+```
+
+appends a line to `docs/taste.jsonl`. **Read `docs/taste.jsonl` before changing the look.**
+
+## Did it change? (FLIP)
+
+```
+de compare <reference-dir> <test-dir> [--out out/compare] [--report]
+```
+
+scores every shot in both folders with NVIDIA FLIP (how different they look to a person, 0..1), and writes
+`<name>.flip.png` heatmaps, `<name>.compare.png` (before | after | heatmap) and `compare.json`. A mean under 0.005 is
+`same`. It exits 1 when anything changed unless `--report`. `scripts/check.sh --shots --ref <dir>` runs it.
+
 ## The live game (Bevy Remote Protocol)
 
 `discover-earth` listens on `http://127.0.0.1:15702` (JSON-RPC). Find the camera and read where it is:

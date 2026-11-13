@@ -27,6 +27,7 @@ serde_json = { version = "1.0", features = ["float_roundtrip"] }
 schemars = "1.2"
 clap = { version = "4.6", features = ["derive"] }
 png = "0.18"
+nv-flip = "0.1.2"
 
 forge_core = { path = "vendor/forge/crates/forge_core" }
 de_world = { path = "crates/de_world" }

@@ -3,8 +3,12 @@
 //! and every test runs without a GPU.
 
 pub mod drone;
+pub mod image;
 pub mod island;
 pub mod module;
+pub mod motion;
+pub mod pack;
+pub mod sense;
 pub mod steps;
 pub mod terrain;
 

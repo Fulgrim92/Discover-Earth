@@ -12,6 +12,7 @@ use bevy::{
     pbr::{DistanceFog, FogFalloff},
     prelude::*,
 };
+pub use de_world::island::layer_weights;
 use de_world::{Heightfield, Island, island::Look};
 use forge_core::Rng;
 
@@ -27,6 +28,10 @@ pub struct IslandSource {
 /// Where the camera draws: the window, or an offscreen image (captures).
 #[derive(Resource, Clone, Debug, Default)]
 pub struct CameraTarget(pub Option<Handle<Image>>);
+
+/// Present for `sketch` captures: no shadows, for quick layout checks.
+#[derive(Resource, Clone, Copy, Debug, Default)]
+pub struct Sketch;
 
 /// The loaded island and its ground, for systems that need heights (camera, captures).
 #[derive(Resource, Clone, Debug)]
@@ -55,13 +60,16 @@ impl Plugin for ScenePlugin {
 /// Ground below sea level is pushed down this far, so the coast drops away under the water
 /// instead of z-fighting with it (the DEM stores the sea as 0 m).
 const SEABED_M: f32 = -25.0;
+/// Vertical field of view of the camera, degrees.
+pub const FOV_Y_DEG: f32 = 55.0;
+
 /// Height of the sea surface in metres.
-pub const SEA_LEVEL_M: f32 = 0.6;
+pub const SEA_LEVEL_M: f32 = de_world::sense::SEA_LEVEL_M;
 
 fn spawn_scene(
     mut commands: Commands,
     source: Res<IslandSource>,
-    target: Res<CameraTarget>,
+    (target, sketch): (Res<CameraTarget>, Option<Res<Sketch>>),
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
@@ -122,7 +130,7 @@ fn spawn_scene(
         DirectionalLight {
             illuminance: look.sun_lux,
             color: Color::srgb(1.0, 0.95, 0.86),
-            shadow_maps_enabled: true,
+            shadow_maps_enabled: sketch.is_none(),
             // Metres-scale terrain seen from hundreds of metres away: a larger normal bias
             // keeps broad slopes from shading themselves in blotches.
             shadow_normal_bias: 4.0,
@@ -157,7 +165,7 @@ fn spawn_scene(
         Camera3d::default(),
         Camera { clear_color: ClearColorConfig::Custom(horizon), ..default() },
         Projection::Perspective(PerspectiveProjection {
-            fov: 55f32.to_radians(),
+            fov: FOV_Y_DEG.to_radians(),
             near: 0.5,
             far: sea_reach,
             ..default()
@@ -233,20 +241,6 @@ pub fn terrain_mesh(h: &Heightfield, look: &Look, seed_name: &str) -> Mesh {
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
         .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, weights)
         .with_inserted_indices(Indices::U32(indices))
-}
-
-/// Ground layer weights (grass, rock, shore, moss) from height and slope (0 flat .. 1 vertical).
-pub fn layer_weights(y: f32, slope: f32, top: f32, look: &Look) -> [f32; 4] {
-    let smooth = |a: f32, b: f32, x: f32| {
-        let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
-        t * t * (3.0 - 2.0 * t)
-    };
-    let rock = smooth(look.rock_slope * 0.35, look.rock_slope, slope);
-    let shore = if y < 8.0 { 1.0 - (y / 8.0).max(0.0) } else { 0.0 };
-    let moss = (1.0 - rock) * (0.55 * smooth(0.06, 0.3, slope) + 0.45 * (y / top).clamp(0.0, 1.0));
-    let grass = ((1.0 - rock) * (1.0 - shore) - moss).max(0.0);
-    let sum = (grass + rock + shore + moss).max(1e-4);
-    [grass / sum, rock / sum, shore / sum, moss / sum]
 }
 
 /// Height at fractional pixel (fx, fz), Catmull-Rom in both directions.
