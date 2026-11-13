@@ -8,6 +8,7 @@ pub mod island;
 pub mod module;
 pub mod motion;
 pub mod pack;
+pub mod photo;
 pub mod rng;
 pub mod sense;
 pub mod steps;

@@ -23,6 +23,8 @@ surface sits at 0.6 m. Ground the DEM marks as sea is pushed down to -25 m so th
   generated half from a Copernicus GLO-30 tile; `views` (named cameras, the first is the spawn) and `look` (sun,
   fog, ground and sea colours) are written by hand and survive re-imports.
 - `content/islands/<id>/height.png`: 16-bit greyscale, row 0 north, mapped linearly onto `height_range_m`.
+- `content/references/<id>/`: CC-licensed reference photos with credit, a hand-written guess of where each was taken
+  and the camera `de photo solve` found (`de schema references`).
 - `content/shots/*.json`: step lists for captures (`de schema steps`).
 - `content/drone.json`: the drone's flight modes, clearance, gimbal, dead zone and wind (`de schema drone`).
 

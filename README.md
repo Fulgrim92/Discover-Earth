@@ -41,6 +41,7 @@ cargo run -q -p de_cli -- validate                # check all content
 cargo run -q -p de_client --bin de-shot -- content/shots/smoke.json out/shots   # screenshots, clips, sense.md
 cargo run -q -p de_cli -- sweep valley --set look.fog_half_m=4000,12000,30000      # options as one sheet
 cargo run -q -p de_cli -- compare <before-dir> <after-dir>                         # FLIP difference per shot
+cargo run -q -p de_cli -- photo match --ref out/photo/before                        # renders vs real photos
 ```
 
 ## Credits
@@ -52,6 +53,16 @@ Ground materials, when downloaded with `scripts/materials/fetch.py`: [ambientCG]
 Ground truth (`content/islands/*/satellite.png`, `landcover.png`): contains modified Copernicus Sentinel data
 2023-2025; ESA WorldCover 10 m 2021 v200 © ESA WorldCover project, contains modified Copernicus Sentinel data (2021)
 processed by the ESA WorldCover consortium, CC BY 4.0.
+
+Reference photos (`content/references/`), from Wikimedia Commons, each credited with author and licence in its
+`references.json` and on every sheet that shows it:
+- "Saksun overview" by briantoronto, CC BY-SA 4.0
+- "Saksun, Blue lagoon" by Drega05, CC BY-SA 4.0
+- "Saksun 2019 2" by kallerna, CC BY-SA 4.0
+- "Faroe Islands Føroyar Færøerne Wyspy Owcze 2019 (50)" by Mirek237, CC BY-SA 4.0
+- "Tjørnuvík - Siegfried Rabanser" by Sigfried Rabanser, CC BY 2.0
+
+The photos are stored resized to 1280 pixels wide; the CC BY-SA ones stay under CC BY-SA 4.0.
 
 Elevation: Copernicus DEM GLO-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under
 COPERNICUS by the European Union and ESA.

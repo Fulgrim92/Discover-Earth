@@ -148,7 +148,7 @@ fn spawn_scene(
     commands.insert_resource(DirectionalLightShadowMap { size: 4096 });
     commands.insert_resource(GlobalAmbientLight {
         color: Color::linear_rgb(look.horizon[0], look.horizon[1], look.horizon[2]),
-        brightness: 500.0,
+        brightness: look.sky_light,
         ..default()
     });
 
@@ -282,7 +282,7 @@ fn relief(w: usize, d: usize, seed: u32) -> Vec<f32> {
 /// A hemisphere-and-a-bit, seen from inside, coloured from the horizon up to the zenith.
 fn sky_mesh(radius: f32, look: &Look) -> Mesh {
     let mut mesh = Sphere::new(radius).mesh().uv(48, 24);
-    let zenith = [0.10, 0.24, 0.52];
+    let zenith = look.zenith;
     let positions: Vec<[f32; 3]> = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
         Some(bevy::mesh::VertexAttributeValues::Float32x3(p)) => p.clone(),
         _ => unreachable!("sphere meshes have Float32x3 positions"),

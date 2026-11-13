@@ -76,6 +76,11 @@ pub struct Look {
     pub sun_lux: f32,
     /// Sky and fog colour near the horizon, linear RGB 0..1.
     pub horizon: Vec3,
+    /// Sky colour straight up, linear RGB 0..1; the sky dome fades from `horizon` to this.
+    pub zenith: Vec3,
+    /// Brightness of the light from the whole sky (ambient, tinted `horizon`), cd/m². Raises
+    /// shadows: overcast days light the land mostly from the sky.
+    pub sky_light: f32,
     /// Distance in metres at which fog hides half the scene.
     pub fog_half_m: f32,
     /// Ground colours by height and slope, linear RGB.
@@ -120,6 +125,8 @@ impl Default for Look {
             sun_azimuth_deg: 220.0,
             sun_lux: 30_000.0,
             horizon: [0.62, 0.72, 0.82],
+            zenith: [0.10, 0.24, 0.52],
+            sky_light: 500.0,
             fog_half_m: 30_000.0,
             grass: [0.11, 0.165, 0.05],
             rock: [0.115, 0.105, 0.09],

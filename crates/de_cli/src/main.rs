@@ -1,15 +1,17 @@
 //! `de`: Discover Earth's command line, the first thing an agent runs.
 //!
 //!   de capabilities [prefix] [--json]   what the engine and game can do
-//!   de schema terrain|steps|drone       JSON schema for a content file
+//!   de schema terrain|steps|drone|references      JSON schema for a content file
 //!   de validate                         check every island, drone.json and step list
 //!   de islands                          list islands with size and views
 //!   de sense <dir>                      rebuild sensor packs and clip reports for a capture
 //!   de sweep <view> --set a.b=1,2,3     render a view over values and lay them out as one sheet
 //!   de compare <ref-dir> <dir>          perceptual difference (FLIP) per shot, with heatmaps
 //!   de taste --sheet .. --pick ..       record a look decision in docs/taste.jsonl
+//!   de photo solve|match                cameras of real photos from their skylines; render vs photo
 
 mod compare;
+mod photo;
 mod sweep;
 
 use std::{
@@ -86,6 +88,12 @@ enum Cmd {
         #[arg(long, default_value = "out/truth")]
         out: PathBuf,
     },
+    /// Real photos of the island (content/references/<island>/): solve their cameras from the
+    /// skyline, then measure renders from those cameras against them.
+    Photo {
+        #[command(subcommand)]
+        cmd: PhotoCmd,
+    },
     /// Append a look decision to docs/taste.jsonl, so later sessions know what was liked and why.
     Taste {
         /// The sheet the choice was made from.
@@ -106,6 +114,38 @@ enum Cmd {
     },
 }
 
+#[derive(Subcommand)]
+enum PhotoCmd {
+    /// Find each photo's camera by fitting its skyline to the heightfield's; writes `camera`
+    /// into references.json and skyline overlays (photo red, heightfield green) to --out.
+    Solve {
+        /// Only these photo ids (default: all).
+        ids: Vec<String>,
+        #[arg(long, default_value = "saksun")]
+        island: String,
+        #[arg(long, default_value = "out/photo/solve")]
+        out: PathBuf,
+    },
+    /// Render every solved photo's camera and measure it against the photo (colour, lightness,
+    /// palette per sky/sea/land region). Writes <id>.match.png, sheet.png, match.json, match.md.
+    /// Example: de photo match --set look.fog_half_m=6000 --ref out/photo/before --out out/photo/after
+    Match {
+        #[arg(long, default_value = "saksun")]
+        island: String,
+        /// `path=value` into terrain.json, rendered through an overlay (content/ is untouched).
+        #[arg(long = "set")]
+        sets: Vec<String>,
+        /// Render width in pixels (height follows the photo).
+        #[arg(long, default_value_t = 960)]
+        width: u32,
+        #[arg(long, default_value = "out/photo/match")]
+        out: PathBuf,
+        /// An earlier `de photo match --out` folder: adds its renders as "before" and the change in gap.
+        #[arg(long = "ref")]
+        reference: Option<PathBuf>,
+    },
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum SchemaKind {
     /// content/islands/<id>/terrain.json
@@ -114,6 +154,8 @@ enum SchemaKind {
     Steps,
     /// content/drone.json
     Drone,
+    /// content/references/<island>/references.json
+    References,
 }
 
 /// Every module and capability, sorted by id.
@@ -144,6 +186,7 @@ fn main() -> ExitCode {
                 SchemaKind::Terrain => schemars::schema_for!(Island),
                 SchemaKind::Steps => schemars::schema_for!(StepList),
                 SchemaKind::Drone => schemars::schema_for!(DroneConfig),
+                SchemaKind::References => schemars::schema_for!(de_world::photo::References),
             };
             println!("{}", serde_json::to_string_pretty(&schema).expect("serialises"));
             ExitCode::SUCCESS
@@ -219,6 +262,24 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Cmd::Photo { cmd } => {
+            let res = match cmd {
+                PhotoCmd::Solve { ids, island, out } => photo::solve(&content, &island, &ids, &out),
+                PhotoCmd::Match { island, sets, width, out, reference } => {
+                    photo::run(&content, &photo::MatchArgs { island, sets, width, out, reference })
+                }
+            };
+            match res {
+                Ok(text) => {
+                    print!("{text}");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Cmd::Taste { sheet, pick, reject, why, by } => {
             let line = serde_json::json!({
                 "date": today(),
@@ -369,6 +430,11 @@ fn validate(content: &Path) -> Vec<String> {
         match island.heightfield(content, id) {
             Ok(h) => out.extend(island.check(&h).into_iter().map(|p| format!("islands/{id}: {p}"))),
             Err(e) => out.push(e.to_string()),
+        }
+        match de_world::photo::References::load(content, id) {
+            Ok(Some(r)) => out.extend(r.check(content, &island)),
+            Ok(None) => {}
+            Err(e) => out.push(e),
         }
         islands.insert(id.clone(), island);
     }
