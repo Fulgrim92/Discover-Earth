@@ -26,7 +26,9 @@ pub fn write(out: &Path, content: &Path, island_id: &str) -> Result<String, Stri
     let cams: Vec<CameraShot> = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", manifest.display()))?;
     let island = Island::load(content, island_id).map_err(|e| e.to_string())?;
     let field = island.heightfield(content, island_id).map_err(|e| e.to_string())?;
-    let world = World::new(&island, &field);
+    let rules = crate::water::Rules::load(content, island_id)?;
+    let water = crate::water::Water::find(&field, &rules.water);
+    let world = World::new(&island, &field).with_water(&water);
     let truth = crate::truth::Truth::load(content, island_id, &island)?;
 
     let mut md = format!("# Capture: {} ({island_id})\n\n", island.name);

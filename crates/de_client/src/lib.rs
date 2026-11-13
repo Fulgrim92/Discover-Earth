@@ -9,6 +9,7 @@ pub mod clouds;
 pub mod drone;
 pub mod ground;
 pub mod scene;
+pub mod water;
 
 pub use scene::{CameraRig, Ground, IslandSource, ScenePlugin};
 

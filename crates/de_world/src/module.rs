@@ -124,6 +124,18 @@ impl WorldModule {
             ),
             c("tool.truth", Command, "de truth: fit ground layer albedos to the satellite; maps and agreement"),
             c(
+                "world.water.find",
+                System,
+                "Streams, waterfalls and lakes from the terrain: priority-flood fill, D8 flow, catchment area",
+            ),
+            c(
+                "world.water.rules",
+                Content,
+                "content/islands/<id>/rules.json: water thresholds and overrides (remove/add streams, drop lakes)",
+            ),
+            c("world.schema.rules", Schema, "JSON schema for content/islands/<id>/rules.json"),
+            c("tool.water", Command, "de water: water report, map vs WorldCover water, a shot list per waterfall"),
+            c(
                 "world.truth.photos",
                 Content,
                 "Per island: CC-licensed reference photos with credit and solved cameras (content/references/)",

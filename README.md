@@ -41,6 +41,7 @@ cargo run -q -p de_cli -- validate                # check all content
 cargo run -q -p de_client --bin de-shot -- content/shots/smoke.json out/shots   # screenshots, clips, sense.md
 cargo run -q -p de_cli -- sweep valley --set look.fog_half_m=4000,12000,30000      # options as one sheet
 cargo run -q -p de_cli -- compare <before-dir> <after-dir>                         # FLIP difference per shot
+cargo run -q -p de_cli -- water saksun                                             # streams, falls, lakes, map
 cargo run -q -p de_cli -- photo match --ref out/photo/before                        # renders vs real photos
 ```
 
@@ -54,6 +55,9 @@ Ground truth (`content/islands/*/satellite.png`, `landcover.png`): contains modi
 2023-2025; ESA WorldCover 10 m 2021 v200 © ESA WorldCover project, contains modified Copernicus Sentinel data (2021)
 processed by the ESA WorldCover consortium, CC BY 4.0.
 
+Water is found with published methods, implemented here: priority-flood depression filling (Barnes, Lehman and
+Mulla, "Priority-flood: An optimal depression-filling and watershed-labeling algorithm", 2014) and D8 flow routing
+(O'Callaghan and Mark, 1984).
 Reference photos (`content/references/`), from Wikimedia Commons, each credited with author and licence in its
 `references.json` and on every sheet that shows it:
 - "Saksun overview" by briantoronto, CC BY-SA 4.0

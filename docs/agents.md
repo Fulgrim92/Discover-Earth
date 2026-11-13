@@ -137,6 +137,28 @@ satellite colour, brightness matched to the render) and `<shot>.truth.png` (rend
 Caveats: the satellite sees the ground lit by a late-morning sun, so steep shaded slopes read darker than their
 albedo, and WorldCover often calls shaded cliffs "tree".
 
+## Water (streams, waterfalls, lakes)
+
+Water is found in the terrain, not drawn: the heightmap is filled so every cell drains (priority-flood), each cell
+sends its water to its steepest downhill neighbour (D8), and the land draining through each cell is summed. Enough
+catchment makes a stream; a long steep drop along one makes a waterfall; a hollow or a DEM-levelled flat big enough
+makes a lake. The game cuts the channels and lake beds into the ground mesh and lays water on them.
+
+```
+de water saksun          # out/water/saksun/: water.md, water.json, map.png, falls.steps.json
+de-shot out/water/saksun/falls.steps.json out/falls --tier check   # one shot per waterfall
+```
+
+The water is drawn by `crates/de_client/src/water.wesl`: ripples and foam scroll downstream at a speed set by the
+slope, steep stretches turn white, the sky is reflected with a Fresnel term (there is no environment map), and every
+waterfall gets mist where it lands. Colours are `look.stream` and `look.foam`. It moves with game time, so record a
+clip (a `drone` step with `clip`) and read its `motion.json` for flicker after changing it.
+
+Thresholds live in `content/islands/<id>/rules.json` (`de schema rules`), under `water`. When the data is wrong,
+fix it there with `overrides`: `{"remove_streams": {"at": [x, z], "radius_m": r}}`, `{"remove_lake": {"at": [x, z]}}`
+or `{"add_stream": {"path": [[x, z], ...], "catchment_km2": a}}` (world metres, x east, z south). `map.png` draws our
+streams and lakes in deep blue over WorldCover's water in pale blue, waterfalls as numbered red rings, and
+`water.md` says how much of WorldCover's inland water we cover and lists the biggest blobs we miss.
 ## Ground truth (real photos)
 
 The satellite says what colour the ground is; photos say what the place looks like from the ground: sky, haze, light,
