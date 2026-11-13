@@ -63,7 +63,11 @@ impl ForgeModule for WorldModule {
                 System,
                 "Per shot: class, depth, normal and sun-shadow buffers, stats JSON and a text description (sense.md)",
             ),
-            c("world.sense.motion", System, "Per clip: keyframe sheet, flicker score and map, jumps, speed and altitude"),
+            c(
+                "world.sense.motion",
+                System,
+                "Per clip: keyframe sheet, flicker score and map, jumps, speed and altitude",
+            ),
             c("world.sense.tiers", Command, "de-shot --tier sketch|check|hero: 320x180 without shadows, 720p, 1080p"),
             c("tool.sweep", Command, "de sweep: render a view over terrain.json values as one labelled sheet"),
             c("tool.compare", Command, "de compare: perceptual (FLIP) difference per shot with heatmaps"),
