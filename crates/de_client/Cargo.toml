@@ -26,6 +26,7 @@ bevy = { workspace = true, features = [
   "bevy_ui",
   "bevy_ui_render",
   "default_font",
+  "jpeg",
 ] }
 
 [[bin]]

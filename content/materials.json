@@ -1,0 +1,10 @@
+{
+  "source": "ambientCG (https://ambientcg.com), CC0 1.0",
+  "resolution": "1K-JPG",
+  "layers": {
+    "grass": "Grass004",
+    "rock": "Rock035",
+    "shore": "Gravel022",
+    "moss": "Moss002"
+  }
+}

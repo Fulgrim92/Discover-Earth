@@ -6,6 +6,7 @@
 
 pub mod capture;
 pub mod drone;
+pub mod ground;
 pub mod scene;
 
 pub use scene::{CameraRig, Ground, IslandSource, ScenePlugin};

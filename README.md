@@ -44,5 +44,7 @@ cargo run -q -p de_client --bin de-shot -- content/shots/smoke.json out/shots   
 
 ## Credits
 
+Ground materials, when downloaded with `scripts/materials/fetch.py`: [ambientCG](https://ambientcg.com), CC0 1.0.
+
 Elevation: Copernicus DEM GLO-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under
 COPERNICUS by the European Union and ESA.
