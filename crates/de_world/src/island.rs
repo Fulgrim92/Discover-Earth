@@ -105,6 +105,8 @@ pub struct Look {
     /// Film-look rendering: physical sky, light shafts, tonemapping, bloom and grade. All off by
     /// default, so a look without it renders as before.
     pub cinema: Cinema,
+    /// A layer of volumetric cloud, with its shadows on the ground. Off (`cover` 0) by default.
+    pub clouds: crate::clouds::Clouds,
 }
 
 /// How the camera films the island. Every field has a default (off / neutral).
@@ -190,6 +192,7 @@ impl Default for Look {
             detail_normals: 0.35,
             detail_fade_m: 900.0,
             cinema: Cinema::default(),
+            clouds: Default::default(),
         }
     }
 }
@@ -256,6 +259,7 @@ impl Island {
                 TONEMAPPERS.join(", ")
             ));
         }
+        out.extend(self.look.clouds.problems());
         if !(1..=4).contains(&self.look.subdivide) {
             out.push(format!("look.subdivide must be 1..=4, is {}", self.look.subdivide));
         }

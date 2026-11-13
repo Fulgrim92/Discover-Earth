@@ -50,7 +50,10 @@ sea plane, an unlit sky dome, a sun with cascaded shadows, exponential distance 
 the sky's colour, the haze over far ridges and the sky light on the land (an environment map generated from the
 atmosphere) all follow the sun. Then the tonemapper (TonyMcMapface by default, now with its LUTs), bloom, and a grade
 (white balance, saturation, contrast). `mist` adds a volumetric fog box over the island for sun shafts; it is off,
-since on the software renderer it still shows banding where the box meets the ground. The same
+since on the software renderer it still shows banding where the box meets the ground. `look.clouds` adds a layer of
+volumetric cloud: a box that follows the camera ray-marches seeded Perlin-Worley noise (`de_world::clouds`, the same
+density on the CPU for tests), stopping each ray at the land read from the depth prepass, so clouds can sit on the
+ridges; the terrain shader samples the same noise along the sun for cloud shadows. The same
 `ScenePlugin` runs in the window and offscreen. The sky dome and sea never cast shadows (the dome encloses the sun's
 shadow camera).
 
