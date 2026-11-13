@@ -125,6 +125,11 @@ de water saksun          # out/water/saksun/: water.md, water.json, map.png, fal
 de-shot out/water/saksun/falls.steps.json out/falls --tier check   # one shot per waterfall
 ```
 
+The water is drawn by `crates/de_client/src/water.wesl`: ripples and foam scroll downstream at a speed set by the
+slope, steep stretches turn white, the sky is reflected with a Fresnel term (there is no environment map), and every
+waterfall gets mist where it lands. Colours are `look.stream` and `look.foam`. It moves with game time, so record a
+clip (a `drone` step with `clip`) and read its `motion.json` for flicker after changing it.
+
 Thresholds live in `content/islands/<id>/rules.json` (`de schema rules`), under `water`. When the data is wrong,
 fix it there with `overrides`: `{"remove_streams": {"at": [x, z], "radius_m": r}}`, `{"remove_lake": {"at": [x, z]}}`
 or `{"add_stream": {"path": [[x, z], ...], "catchment_km2": a}}` (world metres, x east, z south). `map.png` draws our

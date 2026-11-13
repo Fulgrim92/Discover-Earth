@@ -46,6 +46,12 @@
       "shot": "river-low"
     },
     {
+      "drone": {
+        "frames": 60,
+        "clip": "river-flow"
+      }
+    },
+    {
       "camera": {
         "pos": [
           -616,
@@ -144,6 +150,12 @@
     },
     {
       "shot": "fall2"
+    },
+    {
+      "drone": {
+        "frames": 60,
+        "clip": "fall2-flow"
+      }
     }
   ]
 }

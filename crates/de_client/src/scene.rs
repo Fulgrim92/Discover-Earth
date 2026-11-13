@@ -50,7 +50,7 @@ pub struct ScenePlugin;
 
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(GroundPlugin)
+        app.add_plugins((GroundPlugin, crate::water::WaterPlugin))
             .register_type::<CameraRig>()
             .init_resource::<CameraTarget>()
             .add_systems(Startup, spawn_scene);
@@ -60,6 +60,8 @@ impl Plugin for ScenePlugin {
 /// Ground below sea level is pushed down this far, so the coast drops away under the water
 /// instead of z-fighting with it (the DEM stores the sea as 0 m).
 const SEABED_M: f32 = -25.0;
+/// Sky colour overhead, linear RGB (the horizon colour is `look.horizon`).
+pub const SKY_ZENITH: [f32; 3] = [0.10, 0.24, 0.52];
 /// Vertical field of view of the camera, degrees.
 pub const FOV_Y_DEG: f32 = 55.0;
 
@@ -72,7 +74,10 @@ fn spawn_scene(
     (target, sketch): (Res<CameraTarget>, Option<Res<Sketch>>),
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
+    (mut terrain_materials, mut water_materials): (
+        ResMut<Assets<TerrainMaterial>>,
+        ResMut<Assets<crate::water::WaterMaterial>>,
+    ),
     mut images: ResMut<Assets<Image>>,
 ) {
     let island = Island::load(&source.content, &source.id).unwrap_or_else(|e| panic!("{e}"));
@@ -95,16 +100,10 @@ fn spawn_scene(
     ));
 
     let wm = crate::water::meshes(&water, &field, &surface);
-    let lin = |c: [f32; 3]| Color::linear_rgb(c[0], c[1], c[2]);
-    let calm = materials.add(StandardMaterial {
-        base_color: lin(look.stream),
-        perceptual_roughness: 0.08,
-        reflectance: 0.5,
-        ..default()
-    });
-    let white = materials.add(StandardMaterial { base_color: lin(look.foam), perceptual_roughness: 0.55, ..default() });
+    let water_mat = water_materials.add(crate::water::material(&look, SKY_ZENITH, false));
+    let mist_mat = water_materials.add(crate::water::material(&look, SKY_ZENITH, true));
     for (name, b, mat) in
-        [("streams", wm.calm, calm.clone()), ("white water", wm.white, white), ("lakes", wm.lakes, calm)]
+        [("streams", wm.streams, water_mat.clone()), ("lakes", wm.lakes, water_mat), ("mist", wm.mist, mist_mat)]
     {
         if !b.is_empty() {
             commands.spawn((Name::new(name), NotShadowCaster, Mesh3d(meshes.add(b.mesh())), MeshMaterial3d(mat)));
@@ -355,7 +354,7 @@ fn relief(w: usize, d: usize, seed: u32) -> Vec<f32> {
 /// A hemisphere-and-a-bit, seen from inside, coloured from the horizon up to the zenith.
 fn sky_mesh(radius: f32, look: &Look) -> Mesh {
     let mut mesh = Sphere::new(radius).mesh().uv(48, 24);
-    let zenith = [0.10, 0.24, 0.52];
+    let zenith = SKY_ZENITH;
     let positions: Vec<[f32; 3]> = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
         Some(bevy::mesh::VertexAttributeValues::Float32x3(p)) => p.clone(),
         _ => unreachable!("sphere meshes have Float32x3 positions"),
