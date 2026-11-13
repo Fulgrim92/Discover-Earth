@@ -762,6 +762,24 @@ pub fn shore_distance(field: &Heightfield, tide_m: f32) -> Vec<f32> {
         .collect()
 }
 
+/// Give the sea floor a slope. Elevation models flatten the sea to 0 m, so a falling tide
+/// would bare a flat plain out to the horizon; instead each sea cell (at or below
+/// [`SEA_CELL_M`]) sinks [`SEABED_SLOPE`] metres per metre from the coast, down to
+/// [`SEABED_MAX_M`], and a low tide uncovers a strip of beach.
+pub fn shape_seabed(field: &mut Heightfield) {
+    let to_land = chamfer(field, |i| field.heights[i] > SEA_CELL_M);
+    for (h, d) in field.heights.iter_mut().zip(to_land) {
+        if *h <= SEA_CELL_M && d.is_finite() {
+            *h = h.min(-(0.3 + SEABED_SLOPE * d).min(SEABED_MAX_M));
+        }
+    }
+}
+
+/// How fast the sea floor falls away from the coast (a sandy beach is about 1:30 to 1:50).
+pub const SEABED_SLOPE: f32 = 0.025;
+/// The deepest the shaped sea floor goes, metres below sea level.
+pub const SEABED_MAX_M: f32 = 40.0;
+
 /// Metres from each cell to the nearest cell where `seed` holds (0 there; infinite with no seed).
 fn chamfer(field: &Heightfield, seed: impl Fn(usize) -> bool) -> Vec<f32> {
     let (w, d) = (field.width, field.depth);
@@ -1042,6 +1060,22 @@ mod tests {
         // A high tide floods the lowest land, so the sea reaches further.
         let high = shore_distance(&f, 7.0);
         assert!(high[57 * f.width + 21] > 0.0);
+    }
+
+    #[test]
+    fn seabed_falls_away_from_the_coast() {
+        // A coast: land 10 m high in the first 5 rows, then a sea the DEM left flat at 0 m.
+        let (w, d) = (20, 30);
+        let heights = (0..w * d).map(|i| if i / w < 5 { 10.0 } else { 0.0 }).collect();
+        let mut f = Heightfield { width: w, depth: d, spacing: [30.0, 30.0], heights };
+        shape_seabed(&mut f);
+        let near = f.heights[5 * w + 10];
+        let far = f.heights[25 * w + 10];
+        assert!(near < 0.0 && far < near, "near {near}, far {far}");
+        assert_eq!(f.heights[4 * w + 10], 10.0, "land is untouched");
+        // A low tide now bares the cells nearest the coast, and only those.
+        let low = shore_distance(&f, -2.0);
+        assert!(low[5 * w + 10] < 0.0 && low[10 * w + 10] > 0.0, "{} {}", low[5 * w + 10], low[10 * w + 10]);
     }
 
     #[test]
