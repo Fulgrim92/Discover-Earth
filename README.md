@@ -29,7 +29,9 @@ three flight modes (cine 5 m/s, normal 12 m/s, sport 21 m/s, tuned in `content/d
 | Tilt camera | right trigger up, left trigger down | R / F, or right-drag |
 | Flight mode | bumpers | 1 cine, 2 normal, 3 sport |
 
-Linux needs `libasound2-dev libudev-dev pkg-config` to build; Windows needs nothing extra.
+Linux needs `libasound2-dev libudev-dev pkg-config` to build; Windows needs nothing extra. On Windows the game draws with
+DirectX 12: after the first build run `python scripts/dxc/fetch.py` once, which puts Microsoft's DXC shader compiler
+next to the game. Without it the island can take a minute to appear (the game says which compiler it uses).
 
 ## For agents and scripts
 
@@ -46,6 +48,9 @@ cargo run -q -p de_cli -- compare <before-dir> <after-dir>                      
 ## Credits
 
 Image comparison: [NVIDIA FLIP](https://github.com/NVlabs/flip) (BSD-3-Clause) through the `nv-flip` crate.
+
+Windows shader compiler, when downloaded with `scripts/dxc/fetch.py`: [DirectXShaderCompiler](https://github.com/microsoft/DirectXShaderCompiler)
+(University of Illinois/NCSA Open Source License and MIT).
 
 Ground materials, when downloaded with `scripts/materials/fetch.py`: [ambientCG](https://ambientcg.com), CC0 1.0.
 
