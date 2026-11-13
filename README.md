@@ -48,3 +48,8 @@ Ground materials, when downloaded with `scripts/materials/fetch.py`: [ambientCG]
 
 Elevation: Copernicus DEM GLO-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under
 COPERNICUS by the European Union and ESA.
+
+## Where this is going
+
+The long-term goal is an LLM-first toolchain for building the game: see [docs/NORTH_STAR.md](docs/NORTH_STAR.md),
+[docs/STUDY.md](docs/STUDY.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
