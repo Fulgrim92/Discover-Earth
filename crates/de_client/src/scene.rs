@@ -14,7 +14,7 @@ use bevy::{
 };
 use de_world::Rng;
 pub use de_world::island::layer_weights;
-use de_world::{Heightfield, Island, island::Look};
+use de_world::{Heightfield, Island, island::Look, water::Water};
 
 use crate::ground::{GroundPlugin, TerrainMaterial, terrain_material};
 
@@ -82,12 +82,34 @@ fn spawn_scene(
     // The sea runs on to the horizon; fog hides where it ends.
     let sea_reach = 400_000.0;
 
+    // Streams, waterfalls and lakes, found in the terrain under the island's rules.
+    let rules = de_world::water::Rules::load(&source.content, &source.id).unwrap_or_else(|e| panic!("{e}"));
+    let water = Water::find(&field, &rules.water);
+    let surface = Surface::new(&field, &look, &source.id, Some((&water, rules.water.channel_depth_m)));
+
     // Terrain.
     commands.spawn((
         Name::new("terrain"),
-        Mesh3d(meshes.add(terrain_mesh(&field, &look, &source.id))),
+        Mesh3d(meshes.add(surface_mesh(&field, &look, &surface))),
         MeshMaterial3d(terrain_materials.add(terrain_material(&look, &source.content, &mut images))),
     ));
+
+    let wm = crate::water::meshes(&water, &field, &surface);
+    let lin = |c: [f32; 3]| Color::linear_rgb(c[0], c[1], c[2]);
+    let calm = materials.add(StandardMaterial {
+        base_color: lin(look.stream),
+        perceptual_roughness: 0.08,
+        reflectance: 0.5,
+        ..default()
+    });
+    let white = materials.add(StandardMaterial { base_color: lin(look.foam), perceptual_roughness: 0.55, ..default() });
+    for (name, b, mat) in
+        [("streams", wm.calm, calm.clone()), ("white water", wm.white, white), ("lakes", wm.lakes, calm)]
+    {
+        if !b.is_empty() {
+            commands.spawn((Name::new(name), NotShadowCaster, Mesh3d(meshes.add(b.mesh())), MeshMaterial3d(mat)));
+        }
+    }
 
     // Sea: one large plane, slightly see-through so the seabed darkens it near the shore.
     let sea = Color::linear_rgba(look.sea[0], look.sea[1], look.sea[2], look.sea_alpha);
@@ -186,31 +208,82 @@ fn spawn_scene(
     commands.insert_resource(Ground { island, field });
 }
 
-/// The heightfield as one mesh, `look.subdivide` vertices per pixel along each side: heights
-/// follow the heightmap smoothly (Catmull-Rom) plus `look.relief_m` of seeded small relief.
-/// Vertex colours carry the ground layer weights (r grass, g rock, b shore, a moss) that the
-/// terrain shader blends.
-pub fn terrain_mesh(h: &Heightfield, look: &Look, seed_name: &str) -> Mesh {
-    let sub = look.subdivide.clamp(1, 4) as usize;
-    let (w, d) = ((h.width - 1) * sub + 1, (h.depth - 1) * sub + 1);
-    let step = [h.spacing[0] / sub as f32, h.spacing[1] / sub as f32];
-    let seed = seed_name.bytes().fold(2166136261u32, |a, b| (a ^ u32::from(b)).wrapping_mul(16777619));
-    let relief = relief(w, d, seed);
+/// The ground's height on the render mesh's grid: the heightmap followed smoothly
+/// (Catmull-Rom) plus `look.relief_m` of seeded small relief, with stream channels and lake
+/// beds cut in when water is given. [`Surface::height`] matches the mesh's triangles exactly,
+/// so water can sit on it.
+pub struct Surface {
+    pub w: usize,
+    pub d: usize,
+    pub step: [f32; 2],
+    pub extent: [f32; 2],
+    /// Height per vertex before the seabed drop.
+    pub heights: Vec<f32>,
+}
 
-    let [ew, ed] = h.extent();
-    let mut heights = vec![0.0f32; w * d];
-    for row in 0..d {
-        for col in 0..w {
-            let (fx, fz) = (col as f32 / sub as f32, row as f32 / sub as f32);
-            let y0 = bicubic(h, fx, fz);
-            // Relief only on land, fading in above the shoreline.
-            let r = relief[row * w + col] * look.relief_m * (y0 / 8.0).clamp(0.0, 1.0);
-            heights[row * w + col] = y0 + r;
+impl Surface {
+    pub fn new(h: &Heightfield, look: &Look, seed_name: &str, water: Option<(&Water, f32)>) -> Self {
+        let sub = look.subdivide.clamp(1, 4) as usize;
+        let (w, d) = ((h.width - 1) * sub + 1, (h.depth - 1) * sub + 1);
+        let step = [h.spacing[0] / sub as f32, h.spacing[1] / sub as f32];
+        let seed = seed_name.bytes().fold(2166136261u32, |a, b| (a ^ u32::from(b)).wrapping_mul(16777619));
+        let relief = relief(w, d, seed);
+        let extent = h.extent();
+        let bank = step[0].max(step[1]) * 1.2;
+        let mut heights = vec![0.0f32; w * d];
+        for row in 0..d {
+            for col in 0..w {
+                let (fx, fz) = (col as f32 / sub as f32, row as f32 / sub as f32);
+                let y0 = bicubic(h, fx, fz);
+                let (x, z) = (col as f32 * step[0] - extent[0] / 2.0, row as f32 * step[1] - extent[1] / 2.0);
+                // Relief only on land, fading in above the shoreline, and none in or by water.
+                let mut r = relief[row * w + col] * look.relief_m * (y0 / 8.0).clamp(0.0, 1.0);
+                let mut y = y0;
+                if let Some((water, depth)) = water {
+                    let carved = water.carve(x, z, y0, depth, bank);
+                    if carved < y0 {
+                        r = 0.0;
+                        y = carved;
+                    }
+                }
+                heights[row * w + col] = y + r;
+            }
+        }
+        Self { w, d, step, extent, heights }
+    }
+
+    fn at(&self, c: usize, r: usize) -> f32 {
+        self.heights[r.min(self.d - 1) * self.w + c.min(self.w - 1)]
+    }
+
+    /// Height of the mesh's surface at world x, z (on its triangles, as drawn).
+    pub fn height(&self, x: f32, z: f32) -> f32 {
+        let fx = ((x + self.extent[0] / 2.0) / self.step[0]).clamp(0.0, (self.w - 1) as f32 - 1e-3);
+        let fz = ((z + self.extent[1] / 2.0) / self.step[1]).clamp(0.0, (self.d - 1) as f32 - 1e-3);
+        let (c, r) = (fx.floor() as usize, fz.floor() as usize);
+        let (tx, tz) = (fx - c as f32, fz - r as f32);
+        let (i, rt, b, br) = (self.at(c, r), self.at(c + 1, r), self.at(c, r + 1), self.at(c + 1, r + 1));
+        // Triangles (i, b, rt) and (rt, b, br), split along rt-b.
+        if tx + tz <= 1.0 {
+            i + (rt - i) * tx + (b - i) * tz
+        } else {
+            br + (b - br) * (1.0 - tx) + (rt - br) * (1.0 - tz)
         }
     }
-    let at = |c: usize, r: usize| heights[r.min(d - 1) * w + c.min(w - 1)];
-    let top = h.max_height().max(1.0);
+}
 
+/// The heightfield as one mesh, `look.subdivide` vertices per pixel along each side (see
+/// [`Surface`]). Vertex colours carry the ground layer weights (r grass, g rock, b shore, a moss)
+/// that the terrain shader blends.
+pub fn terrain_mesh(h: &Heightfield, look: &Look, seed_name: &str) -> Mesh {
+    surface_mesh(h, look, &Surface::new(h, look, seed_name, None))
+}
+
+pub fn surface_mesh(h: &Heightfield, look: &Look, s: &Surface) -> Mesh {
+    let (w, d, step) = (s.w, s.d, s.step);
+    let [ew, ed] = s.extent;
+    let at = |c: usize, r: usize| s.at(c, r);
+    let top = h.max_height().max(1.0);
     let mut positions = Vec::with_capacity(w * d);
     let mut normals = Vec::with_capacity(w * d);
     let mut weights = Vec::with_capacity(w * d);

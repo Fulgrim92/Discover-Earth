@@ -52,10 +52,13 @@ pub enum Class {
     Rock,
     Shore,
     Moss,
+    /// Streams and lakes (see [`crate::water`]).
+    Water,
 }
 
 impl Class {
-    pub const ALL: [Class; 6] = [Class::Sky, Class::Sea, Class::Grass, Class::Rock, Class::Shore, Class::Moss];
+    pub const ALL: [Class; 7] =
+        [Class::Sky, Class::Sea, Class::Grass, Class::Rock, Class::Shore, Class::Moss, Class::Water];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -65,6 +68,7 @@ impl Class {
             Class::Rock => "rock",
             Class::Shore => "shore",
             Class::Moss => "moss",
+            Class::Water => "water",
         }
     }
 
@@ -77,11 +81,12 @@ impl Class {
             Class::Rock => [140, 110, 90, 255],
             Class::Shore => [230, 210, 130, 255],
             Class::Moss => [30, 100, 40, 255],
+            Class::Water => [0, 200, 255, 255],
         }
     }
 
     pub fn is_land(self) -> bool {
-        matches!(self, Class::Grass | Class::Rock | Class::Shore | Class::Moss)
+        matches!(self, Class::Grass | Class::Rock | Class::Shore | Class::Moss | Class::Water)
     }
 }
 
@@ -103,12 +108,19 @@ pub struct Buffers {
 pub struct World<'a> {
     pub island: &'a Island,
     pub field: &'a Heightfield,
+    pub water: Option<&'a crate::water::Water>,
     top: f32,
 }
 
 impl<'a> World<'a> {
     pub fn new(island: &'a Island, field: &'a Heightfield) -> Self {
-        Self { island, field, top: field.max_height().max(1.0) }
+        Self { island, field, water: None, top: field.max_height().max(1.0) }
+    }
+
+    /// Also see streams and lakes: ground under them is [`Class::Water`].
+    pub fn with_water(mut self, water: &'a crate::water::Water) -> Self {
+        self.water = Some(water);
+        self
     }
 
     fn look(&self) -> &Look {
@@ -178,6 +190,9 @@ impl<'a> World<'a> {
 
     /// The dominant ground layer at a point, by the same weights the terrain shader blends.
     fn ground_class(&self, p: Vec3) -> Class {
+        if self.water.is_some_and(|w| w.channel(p[0], p[2], 0.0).is_some()) {
+            return Class::Water;
+        }
         let n = self.normal(p);
         let w = layer_weights(p[1], 1.0 - n[1], self.top, self.look());
         let i = (0..4).max_by(|&a, &b| w[a].total_cmp(&w[b])).unwrap_or(0);

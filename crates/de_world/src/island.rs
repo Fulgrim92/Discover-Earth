@@ -88,6 +88,9 @@ pub struct Look {
     /// Sea colour, linear RGB, and how see-through it is (0..1).
     pub sea: Vec3,
     pub sea_alpha: f32,
+    /// Stream and lake water, and white water where streams fall steeply, linear RGB.
+    pub stream: Vec3,
+    pub foam: Vec3,
     /// Terrain mesh vertices per heightmap pixel along each side (1 = one per pixel). Finer
     /// meshes follow the heightmap smoothly and carry `relief_m` of seeded small-scale relief.
     pub subdivide: u32,
@@ -128,6 +131,8 @@ impl Default for Look {
             rock_slope: 0.38,
             sea: [0.012, 0.045, 0.065],
             sea_alpha: 0.92,
+            stream: [0.02, 0.045, 0.05],
+            foam: [0.55, 0.6, 0.62],
             subdivide: 2,
             relief_m: 1.5,
             detail_normals: 0.35,

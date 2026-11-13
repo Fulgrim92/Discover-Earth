@@ -8,6 +8,7 @@
 //!   de sweep <view> --set a.b=1,2,3     render a view over values and lay them out as one sheet
 //!   de compare <ref-dir> <dir>          perceptual difference (FLIP) per shot, with heatmaps
 //!   de taste --sheet .. --pick ..       record a look decision in docs/taste.jsonl
+//!   de water [island]                   streams, waterfalls and lakes from the terrain, with a map
 
 mod compare;
 mod sweep;
@@ -86,6 +87,18 @@ enum Cmd {
         #[arg(long, default_value = "out/truth")]
         out: PathBuf,
     },
+    /// Find an island's streams, waterfalls and lakes from its terrain under rules.json; writes
+    /// water.json, map.png (against WorldCover's water when truth data exists), water.md and
+    /// falls.steps.json (a step list with one shot per waterfall) to out/water/<island>/.
+    Water {
+        #[arg(default_value = "saksun")]
+        island: String,
+        #[arg(long, default_value = "out/water")]
+        out: PathBuf,
+        /// A folder where de-shot rendered falls.steps.json: lay its shots out as falls.sheet.png.
+        #[arg(long)]
+        shots: Option<PathBuf>,
+    },
     /// Append a look decision to docs/taste.jsonl, so later sessions know what was liked and why.
     Taste {
         /// The sheet the choice was made from.
@@ -114,6 +127,8 @@ enum SchemaKind {
     Steps,
     /// content/drone.json
     Drone,
+    /// content/islands/<id>/rules.json
+    Rules,
 }
 
 /// Every module and capability, sorted by id.
@@ -144,6 +159,7 @@ fn main() -> ExitCode {
                 SchemaKind::Terrain => schemars::schema_for!(Island),
                 SchemaKind::Steps => schemars::schema_for!(StepList),
                 SchemaKind::Drone => schemars::schema_for!(DroneConfig),
+                SchemaKind::Rules => schemars::schema_for!(de_world::water::Rules),
             };
             println!("{}", serde_json::to_string_pretty(&schema).expect("serialises"));
             ExitCode::SUCCESS
@@ -210,6 +226,16 @@ fn main() -> ExitCode {
             }
         },
         Cmd::Truth { island, apply, out } => match truth(&content, &island, apply, &out.join(&island)) {
+            Ok(text) => {
+                print!("{text}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::FAILURE
+            }
+        },
+        Cmd::Water { island, out, shots } => match water(&content, &island, &out.join(&island), shots.as_deref()) {
             Ok(text) => {
                 print!("{text}");
                 ExitCode::SUCCESS
@@ -334,6 +360,70 @@ fn truth(content: &Path, id: &str, apply: bool, out: &Path) -> Result<String, St
     Ok(text)
 }
 
+fn water(content: &Path, id: &str, out: &Path, shots: Option<&Path>) -> Result<String, String> {
+    use de_world::water::{Rules, Water};
+    let island = Island::load(content, id).map_err(|e| e.to_string())?;
+    let field = island.heightfield(content, id).map_err(|e| e.to_string())?;
+    let rules = Rules::load(content, id)?;
+    let water = Water::find(&field, &rules.water);
+    let truth = de_world::truth::Truth::load(content, id, &island)?;
+    std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
+    water.map(&field, truth.as_ref(), 2).save(&out.join("map.png"))?;
+    let check = truth.as_ref().map(|t| water.cover_check(&field, t));
+    let report = serde_json::json!({ "water": water, "cover_check": check });
+    std::fs::write(out.join("water.json"), serde_json::to_string_pretty(&report).expect("serialises"))
+        .map_err(|e| e.to_string())?;
+
+    // One shot per waterfall, for de-shot.
+    let views = water.fall_views(&field);
+    let mut steps = vec![];
+    for v in &views {
+        steps.push(serde_json::json!({ "camera": { "pos": v.pos, "look_at": v.look_at } }));
+        steps.push(serde_json::json!({ "wait": 2 }));
+        steps.push(serde_json::json!({ "shot": v.name }));
+    }
+    let list = serde_json::json!({ "island": id, "size": [960, 540], "steps": steps });
+    std::fs::write(out.join("falls.steps.json"), serde_json::to_string_pretty(&list).expect("serialises"))
+        .map_err(|e| e.to_string())?;
+
+    let mut text = format!("# Water of {}\n\n{}\n\n", island.name, water.text);
+    text.push_str(&format!("Streams end in: {:?}.\n", water.ends()));
+    if let Some(c) = &check {
+        text.push_str(&format!(
+            "WorldCover sees {:.0} m² of inland water; {:.0}% of it lies in our lakes or streams, and {:.0}% of our lake area is water there too.\n",
+            c.cover_water_m2,
+            c.ours_found * 100.0,
+            c.lakes_confirmed * 100.0
+        ));
+        for (at, area) in c.missed.iter().take(5) {
+            text.push_str(&format!("- missed: {area:.0} m² of water around ({:.0}, {:.0})\n", at[0], at[1]));
+        }
+    }
+    text.push_str(&format!(
+        "\nMap: {}\nWaterfall shots: cargo run -q -p de_client --bin de-shot -- {} out/falls\n",
+        out.join("map.png").display(),
+        out.join("falls.steps.json").display()
+    ));
+    if let Some(dir) = shots {
+        let mut cells = Vec::new();
+        for f in &water.falls {
+            let png = dir.join(format!("fall{}.png", f.id));
+            if let Ok(image) = de_world::image::Rgba::load(&png) {
+                let label = format!("FALL {} {:.0}M{}", f.id, f.drop_m, if f.into_sea { " INTO SEA" } else { "" });
+                cells.push(de_world::image::Cell { image, label });
+            }
+        }
+        if cells.is_empty() {
+            return Err(format!("no fall<N>.png in {}: render falls.steps.json there first", dir.display()));
+        }
+        let sheet = out.join("falls.sheet.png");
+        de_world::image::sheet(&format!("{id}: every waterfall the terrain makes"), &cells, 3, 480).save(&sheet)?;
+        text.push_str(&format!("Waterfall sheet: {}\n", sheet.display()));
+    }
+    std::fs::write(out.join("water.md"), &text).map_err(|e| e.to_string())?;
+    Ok(text)
+}
+
 /// Today's UTC date as YYYY-MM-DD.
 fn today() -> String {
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
@@ -369,6 +459,9 @@ fn validate(content: &Path) -> Vec<String> {
         match island.heightfield(content, id) {
             Ok(h) => out.extend(island.check(&h).into_iter().map(|p| format!("islands/{id}: {p}"))),
             Err(e) => out.push(e.to_string()),
+        }
+        if let Err(e) = de_world::water::Rules::load(content, id) {
+            out.push(format!("{e} (see `de schema rules`)"));
         }
         islands.insert(id.clone(), island);
     }

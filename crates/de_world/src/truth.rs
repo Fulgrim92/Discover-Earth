@@ -111,6 +111,7 @@ pub fn agrees(ours: Class, cover: u8) -> bool {
         Class::Rock => matches!(cover, 60),
         Class::Shore => matches!(cover, 60 | 80 | 90 | 30),
         Class::Sea => cover == 80 || cover == 0,
+        Class::Water => cover == 80,
         Class::Sky => true,
     }
 }
@@ -369,6 +370,7 @@ pub fn shot(island: &Island, field: &Heightfield, truth: &Truth, buf: &Buffers) 
                 Class::Grass => look.grass,
                 Class::Rock => look.rock,
                 Class::Shore => look.shore,
+                Class::Water => look.stream,
                 _ => look.moss,
             };
             (c.name().to_string(), ShotLayer { ours, satellite: sat, delta_e: delta_e(ours, sat) })

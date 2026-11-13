@@ -23,6 +23,8 @@ Discover Earth is a Rust game with **Bevy 0.20** drawing in 3D; it builds from t
 - Ground look: layer colours, relief and detail are `look` in `terrain.json`; blending is `crates/de_client/src/terrain.wesl`.
   Scanned textures come from `python3 scripts/materials/fetch.py` (ids in `content/materials.json`); without them the
   shader draws each layer from noise, so check both if you change it.
+- Water (streams, waterfalls, lakes) is found in the terrain by `crates/de_world/src/water.rs` under
+  `content/islands/<id>/rules.json`; fix wrong water with its `overrides`, not by hand-drawing. Check with `de water`.
 - Flight feel is data in `content/drone.json` (`de schema drone`) and code in `crates/de_world/src/drone.rs`. Keep it
   like a real stabilised camera drone (mode-2 sticks, braking hover, level gimbal); fly `content/shots/drone.json`
   and read its `state` lines after changing it.

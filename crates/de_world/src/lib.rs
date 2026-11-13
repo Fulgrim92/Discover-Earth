@@ -13,6 +13,7 @@ pub mod sense;
 pub mod steps;
 pub mod terrain;
 pub mod truth;
+pub mod water;
 
 pub use drone::{DroneConfig, DroneState, FlightMode, Sticks};
 pub use island::{Island, LoadError, Vec3, View};
