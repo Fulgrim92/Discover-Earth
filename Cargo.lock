@@ -2385,6 +2385,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "zune-jpeg",
 ]
 
 [[package]]

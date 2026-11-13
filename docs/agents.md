@@ -15,7 +15,7 @@ the same list gives the same pixels on every run on one machine. Steps (`de sche
 | Step | Does |
 | --- | --- |
 | `{"view": "valley"}` | jump to a named view of the island |
-| `{"camera": {"pos": [x,y,z], "look_at": [x,y,z]}}` | place the camera anywhere |
+| `{"camera": {"pos": [x,y,z], "look_at": [x,y,z]}}` | place the camera anywhere; optional `fov_y_deg` (lens) and `roll_deg` |
 | `{"wait": 30}` | let frames pass |
 | `{"shot": "name"}` | save `out/name.png` |
 | `{"fly": {"name": "clip", "to": "lagoon", "frames": 90}}` | fly to a view, saving every frame and `out/clip.mp4` |
@@ -59,6 +59,16 @@ Per clip `<clip>`:
 
 `de-shot <steps> <out> --tier sketch|check|hero` overrides the step list's size: `sketch` is 320x180 without
 shadows (layout, "is it there", about 10 s a run), `check` 1280x720, `hero` 1920x1080 for PR images and look decisions.
+
+## The film look (`look.cinema`)
+
+`de schema terrain` lists it: `atmosphere`, `sun_lux` (above the atmosphere), `exposure_ev100`, `tonemapper`,
+`bloom`, `mist`/`mist_top_m`, `temperature`, `saturation`, `contrast`. Sweep it like any look value, e.g.
+`de sweep valley --set look.sun_azimuth_deg=230,280,320 --set look.sun_elevation_deg=5,12,30`.
+`content/shots/cinematic.json` renders the hero views and a cine-mode clip down the valley (`golden-valley`).
+Notes from tuning: Bevy's `contrast` is strong (1.15 already crushes shadows); mist density is per metre, so 0.001 is
+already a visible haze; the atmosphere is a clear sky, so it moves renders away from the overcast reference photos
+(`de photo match` says how far).
 
 ## Deciding by comparing: sweeps and taste
 
@@ -112,6 +122,36 @@ view, agreement, per-layer colour gap), a sentence in `sense.md`, `<shot>.satell
 satellite colour, brightness matched to the render) and `<shot>.truth.png` (render | satellite colour | land cover).
 Caveats: the satellite sees the ground lit by a late-morning sun, so steep shaded slopes read darker than their
 albedo, and WorldCover often calls shaded cliffs "tree".
+
+## Ground truth (real photos)
+
+The satellite says what colour the ground is; photos say what the place looks like from the ground: sky, haze, light,
+water. `content/references/<island>/references.json` (`de schema references`) lists CC-licensed Wikimedia Commons
+photos, each with a rough `guess` of where it was taken (heading, how far off the geotag may be).
+
+```
+python3 scripts/truth/photos.py saksun     # download photos and record author, licence, geotag, focal length
+de photo solve [ids]                        # camera of each photo from its skyline -> references.json `camera`
+de photo match [--set look.x=v] [--ref <dir>] [--out <dir>]   # render each camera, measure against the photo
+```
+
+`solve` finds the sky in the photo (colour clusters from the top rows plus "sky is brighter than what is under it",
+by dynamic programming per column), then searches positions around the geotag and heading, pitch, roll and field of
+view so the heightfield's skyline (with Earth curvature) lies on the photo's. Check `out/photo/solve/<id>.solve.png`:
+red is the photo's skyline, green the solved camera's. A median error under about 0.2° and most columns within 0.5°
+means the camera is right. If the sky detection follows a cloud or a house, add `ignore_columns`; if the solve hits
+a limit (roll near ±8°, fov at 10° or 100°), widen `guess.within_m` or `heading_within_deg`, or give `fov_y_deg`.
+
+`match` renders every solved camera (the `camera` step takes `fov_y_deg` and `roll_deg`), splits the view into sky,
+sea, land near (<1.5 km) and land far by the sensor's ray cast, and compares each region's mean colour (ΔE), its
+lightness distribution (L* earth mover's distance) and the images' six-colour palettes. The **gap** is the mean of
+those three; lower is closer to the real place. It writes `<id>.match.png` (photo | before | render, region swatches,
+L* 10/50/90th percentiles, palettes), `sheet.png`, `match.json` and `match.md`. `--set` renders through an overlay like
+`de sweep`, so a look change can be scored against the photos before it touches `terrain.json`; `--ref` adds an
+earlier run as "before" and counts on how many photos the gap went down.
+
+Caveats: each photo has its own weather and hour, and the render has one look, so a gap never reaches zero; judge the
+mean and how many photos move. Houses, people and fences are in the photos and not in the island.
 
 ## The live game (Bevy Remote Protocol)
 

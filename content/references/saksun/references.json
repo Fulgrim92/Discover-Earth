@@ -1,0 +1,220 @@
+{
+  "island": "saksun",
+  "photos": [
+    {
+      "id": "saksun-church",
+      "commons": "File:Saksun overview.jpg",
+      "source": {
+        "page": "https://commons.wikimedia.org/wiki/File:Saksun_overview.jpg",
+        "author": "briantoronto",
+        "licence": "CC BY-SA 4.0",
+        "licence_url": "https://creativecommons.org/licenses/by-sa/4.0",
+        "date": "Taken on 17 September 2017",
+        "gps": [
+          62.246398,
+          -7.178088
+        ],
+        "focal_35mm": null,
+        "original_size": [
+          2560,
+          1440
+        ],
+        "credit": "Saksun overview.jpg by briantoronto, CC BY-SA 4.0, via Wikimedia Commons"
+      },
+      "guess": {
+        "lat_lon": null,
+        "within_m": 120.0,
+        "above_ground_m": 1.7,
+        "heading_deg": 285.0,
+        "heading_within_deg": 30.0,
+        "fov_y_deg": null
+      },
+      "ignore_columns": [],
+      "camera": {
+        "pos": [
+          -776.2,
+          62.9,
+          1779.9
+        ],
+        "heading_deg": 283.5,
+        "pitch_deg": 2.0,
+        "roll_deg": 0.89,
+        "fov_y_deg": 34.83,
+        "median_error_deg": 0.074,
+        "inliers": 0.975
+      }
+    },
+    {
+      "id": "saksun-lagoon-sun",
+      "commons": "File:Saksun, Blue lagoon.jpg",
+      "source": {
+        "page": "https://commons.wikimedia.org/wiki/File:Saksun,_Blue_lagoon.jpg",
+        "author": "Drega05",
+        "licence": "CC BY-SA 4.0",
+        "licence_url": "https://creativecommons.org/licenses/by-sa/4.0",
+        "date": "2017-04-14 11:47:40",
+        "gps": [
+          62.248536,
+          -7.180392
+        ],
+        "focal_35mm": 28.0,
+        "original_size": [
+          4032,
+          3024
+        ],
+        "credit": "Saksun, Blue lagoon.jpg by Drega05, CC BY-SA 4.0, via Wikimedia Commons"
+      },
+      "guess": {
+        "lat_lon": null,
+        "within_m": 120.0,
+        "above_ground_m": 1.7,
+        "heading_deg": 280.0,
+        "heading_within_deg": 40.0,
+        "fov_y_deg": null
+      },
+      "ignore_columns": [],
+      "camera": {
+        "pos": [
+          -876.8,
+          63.9,
+          1509.4
+        ],
+        "heading_deg": 243.22,
+        "pitch_deg": 1.28,
+        "roll_deg": -0.9,
+        "fov_y_deg": 46.4,
+        "median_error_deg": 0.101,
+        "inliers": 0.75
+      }
+    },
+    {
+      "id": "saksun-outlet",
+      "commons": "File:Saksun 2019 2.jpg",
+      "source": {
+        "page": "https://commons.wikimedia.org/wiki/File:Saksun_2019_2.jpg",
+        "author": "kallerna",
+        "licence": "CC BY-SA 4.0",
+        "licence_url": "https://creativecommons.org/licenses/by-sa/4.0",
+        "date": "Taken on 20 May 2019, 17:54:07",
+        "gps": [
+          62.25115,
+          -7.18607
+        ],
+        "focal_35mm": 33.0,
+        "original_size": [
+          3900,
+          2600
+        ],
+        "credit": "Saksun 2019 2.jpg by kallerna, CC BY-SA 4.0, via Wikimedia Commons"
+      },
+      "guess": {
+        "lat_lon": null,
+        "within_m": 600.0,
+        "above_ground_m": 1.7,
+        "heading_deg": 330.0,
+        "heading_within_deg": 60.0,
+        "fov_y_deg": null
+      },
+      "ignore_columns": [],
+      "camera": {
+        "pos": [
+          -750.1,
+          96.0,
+          1487.7
+        ],
+        "heading_deg": 268.77,
+        "pitch_deg": -2.62,
+        "roll_deg": 1.34,
+        "fov_y_deg": 39.97,
+        "median_error_deg": 0.186,
+        "inliers": 0.656
+      }
+    },
+    {
+      "id": "saksun-valley-east",
+      "commons": "File:Faroe Islands Føroyar Færøerne Wyspy Owcze 2019 (50).jpg",
+      "source": {
+        "page": "https://commons.wikimedia.org/wiki/File:Faroe_Islands_F%C3%B8royar_F%C3%A6r%C3%B8erne_Wyspy_Owcze_2019_(50).jpg",
+        "author": "Mirek237",
+        "licence": "CC BY-SA 4.0",
+        "licence_url": "https://creativecommons.org/licenses/by-sa/4.0",
+        "date": "Taken on 23 May 2019",
+        "gps": [
+          62.24748,
+          -7.19343
+        ],
+        "focal_35mm": null,
+        "original_size": [
+          1500,
+          844
+        ],
+        "credit": "Faroe Islands Føroyar Færøerne Wyspy Owcze 2019 (50).jpg by Mirek237, CC BY-SA 4.0, via Wikimedia Commons"
+      },
+      "guess": {
+        "lat_lon": null,
+        "within_m": 120.0,
+        "above_ground_m": 1.7,
+        "heading_deg": 100.0,
+        "heading_within_deg": 40.0,
+        "fov_y_deg": null
+      },
+      "ignore_columns": [],
+      "camera": {
+        "pos": [
+          -1626.3,
+          2.9,
+          1637.2
+        ],
+        "heading_deg": 102.07,
+        "pitch_deg": 2.56,
+        "roll_deg": -0.13,
+        "fov_y_deg": 27.43,
+        "median_error_deg": 0.044,
+        "inliers": 0.969
+      }
+    },
+    {
+      "id": "tjornuvik-village",
+      "commons": "File:Tjørnuvík - Siegfried Rabanser.jpg",
+      "source": {
+        "page": "https://commons.wikimedia.org/wiki/File:Tj%C3%B8rnuv%C3%ADk_-_Siegfried_Rabanser.jpg",
+        "author": "Sigfried Rabanser",
+        "licence": "CC BY 2.0",
+        "licence_url": "https://creativecommons.org/licenses/by/2.0",
+        "date": "Taken on 12 August 2016, 12:56:13",
+        "gps": [
+          62.28659,
+          -7.152645
+        ],
+        "focal_35mm": 52.0,
+        "original_size": [
+          7360,
+          4912
+        ],
+        "credit": "Tjørnuvík - Siegfried Rabanser.jpg by Sigfried Rabanser, CC BY 2.0, via Wikimedia Commons"
+      },
+      "guess": {
+        "lat_lon": null,
+        "within_m": 150.0,
+        "above_ground_m": 1.7,
+        "heading_deg": 20.0,
+        "heading_within_deg": 35.0,
+        "fov_y_deg": null
+      },
+      "ignore_columns": [],
+      "camera": {
+        "pos": [
+          597.2,
+          47.2,
+          -2865.5
+        ],
+        "heading_deg": 34.5,
+        "pitch_deg": -7.35,
+        "roll_deg": 0.82,
+        "fov_y_deg": 25.99,
+        "median_error_deg": 0.126,
+        "inliers": 0.825
+      }
+    }
+  ]
+}

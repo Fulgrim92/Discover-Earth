@@ -22,6 +22,10 @@ verdict.
   with palette and luminance metrics; Sentinel-2 ground colour as a check for distant terrain; `de probe`.
 - **Proof:** photo-match sheet before and after, with the metric going down on at least four of five photos.
 - **Cut if:** no usable CC photos can be matched; fall back to Sentinel-2 colour alone.
+- **Status:** satellite half in PR #6. Photo half: five Commons photos in `content/references/saksun/`, cameras
+  solved from their skylines (median error 0.04 to 0.19 degrees), `de photo match`; a fitted overcast look took the
+  mean photo gap from 19.2 to 14.4, closer on 5 of 5 (`docs/shots/photo/`). Left: `de probe`; the sky dome still
+  renders flatter and darker than the photos' skies, which is step 3's job.
 
 ## Step 3: Sky and weather
 
