@@ -12,7 +12,7 @@ This page says what "designed for an LLM" means. [STUDY.md](STUDY.md) lists what
 
 1. **Study, then recombine.** For each hard problem, read the two or three best open implementations, the papers
    behind them and the conference talks from the studios that shipped them. Write down the core idea, its cost and
-   why it works (template in [STUDY.md](STUDY.md)). Then reimplement the idea cleanly on Forge + Bevy, so everything
+   why it works (template in [STUDY.md](STUDY.md)). Then reimplement the idea cleanly in our Rust + Bevy code, so everything
    shares one data model instead of being glued-together libraries.
 2. **Ideas, not code, from closed products.** Closed engines and tools are studied through their public docs, talks
    and papers. Nothing is decompiled: decompiled code can't legally ship, and the best techniques are published
