@@ -2362,7 +2362,6 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "de_world",
- "forge_core",
  "nv-flip",
  "schemars",
  "serde",
@@ -2375,7 +2374,6 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "de_world",
- "forge_core",
  "serde_json",
 ]
 
@@ -2383,7 +2381,6 @@ dependencies = [
 name = "de_world"
 version = "0.1.0"
 dependencies = [
- "forge_core",
  "png",
  "schemars",
  "serde",
@@ -2693,17 +2690,6 @@ name = "foreign-types-shared"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
-
-[[package]]
-name = "forge_core"
-version = "0.1.0"
-dependencies = [
- "bevy_app",
- "bevy_ecs",
- "schemars",
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "funty"

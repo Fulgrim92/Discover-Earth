@@ -3,7 +3,7 @@
 A dreamlike island explorer: real islands, real weather and light, and moments where the land melts into a dream.
 No goals, only awe. The first island is the Saksun valley and Tjørnuvík on Streymoy, Faroe Islands, built from open elevation data.
 
-It runs on **Forge**, the Rust engine from Equilibrium: Eternal, with **Bevy** drawing the 3D world. Everything an
+It's written in Rust, with **Bevy** drawing the 3D world. Everything an
 agent needs is data, a command line, and captures it can look at: see [CLAUDE.md](CLAUDE.md).
 
 | Overview | Down the valley |
@@ -14,7 +14,6 @@ agent needs is data, a command line, and captures it can look at: see [CLAUDE.md
 ## Run it
 
 ```
-scripts/forge.sh                                  # fetch the pinned Forge crates (needs access, see docs/forge.md)
 cargo run --release -p de_client --bin discover-earth
 ```
 

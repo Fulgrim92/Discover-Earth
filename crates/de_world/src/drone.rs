@@ -5,10 +5,10 @@
 //! sideways. Let go and the drone brakes and holds its position, as GPS-assisted drones do.
 //! The camera hangs on a gimbal that keeps the horizon level; a separate input tilts it.
 //!
-//! Everything here is plain arithmetic on a fixed time step with wind from `forge_core::Rng`,
+//! Everything here is plain arithmetic on a fixed time step with wind from `crate::Rng`,
 //! so the same inputs give the same flight, in tests, in captures and in the game.
 
-use forge_core::Rng;
+use crate::Rng;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

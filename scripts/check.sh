@@ -2,7 +2,7 @@
 # The one check: run it after every change. Each step logs to out/check/<step>.log and
 # out/check/summary.json says which step failed, so a failure can be read from files.
 #
-#   scripts/check.sh                 forge pin, fmt, clippy, tests, content validation
+#   scripts/check.sh                 fmt, clippy, tests, content validation
 #   scripts/check.sh --shots         also capture content/shots/smoke.json into out/shots
 #   scripts/check.sh --shots --ref <dir>
 #                                    and compare every shot with <dir>/<name>.png (FLIP; heatmaps
@@ -43,8 +43,6 @@ compare() {
   cargo run -q -p de_cli -- compare "$ref" "$root/out/shots" --out "$root/out/compare"
 }
 
-[[ -d vendor/forge ]] || scripts/forge.sh > "$log/forge-fetch.log" 2>&1
-step forge   scripts/forge.sh --check
 step fmt     cargo fmt --check
 step clippy  cargo clippy --workspace --all-targets -- -D warnings
 step test    cargo test --workspace

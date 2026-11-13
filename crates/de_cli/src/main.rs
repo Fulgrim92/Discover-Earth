@@ -19,7 +19,6 @@ use std::{
 
 use clap::{Parser, Subcommand, ValueEnum};
 use de_world::{DroneConfig, Island, StepList, WorldModule};
-use forge_core::{ForgeApp, headless_app};
 
 #[derive(Parser)]
 #[command(name = "de", about = "Discover Earth: the command line for people and agents")]
@@ -106,20 +105,21 @@ enum SchemaKind {
     Drone,
 }
 
-fn app() -> ForgeApp {
-    let mut app = headless_app();
-    app.add_module(&WorldModule).expect("world module builds");
-    app
+/// Every module and capability, sorted by id.
+fn catalogue() -> (Vec<de_world::Module>, Vec<de_world::Capability>) {
+    let mut caps = WorldModule.capabilities();
+    caps.sort_by(|a, b| a.id.cmp(&b.id));
+    (vec![WorldModule.manifest()], caps)
 }
 
 fn main() -> ExitCode {
     let content = de_world::content_dir();
     match Cli::parse().cmd {
         Cmd::Capabilities { prefix, json } => {
-            let app = app();
-            let caps: Vec<_> = app.capabilities().with_prefix(prefix.as_deref().unwrap_or("")).collect();
+            let (modules, all) = catalogue();
+            let caps: Vec<_> = all.iter().filter(|c| c.id.starts_with(prefix.as_deref().unwrap_or(""))).collect();
             if json {
-                let doc = serde_json::json!({ "modules": app.modules().modules, "capabilities": caps });
+                let doc = serde_json::json!({ "modules": modules, "capabilities": caps });
                 println!("{}", serde_json::to_string_pretty(&doc).expect("serialises"));
             } else {
                 for c in caps {
@@ -335,8 +335,10 @@ mod tests {
 
     #[test]
     fn capability_ids_are_unique_and_registered() {
-        let app = super::app();
-        assert!(app.capabilities().contains("module.de_world"));
-        assert!(app.capabilities().contains("world.steps.fly"));
+        let (_, caps) = super::catalogue();
+        let ids: std::collections::BTreeSet<_> = caps.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids.len(), caps.len(), "duplicate capability ids");
+        assert!(ids.contains("module.de_world"));
+        assert!(ids.contains("world.steps.fly"));
     }
 }

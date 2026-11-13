@@ -8,13 +8,15 @@ pub mod island;
 pub mod module;
 pub mod motion;
 pub mod pack;
+pub mod rng;
 pub mod sense;
 pub mod steps;
 pub mod terrain;
 
 pub use drone::{DroneConfig, DroneState, FlightMode, Sticks};
 pub use island::{Island, LoadError, Vec3, View};
-pub use module::WorldModule;
+pub use module::{Capability, CapabilityKind, Module, WorldModule};
+pub use rng::Rng;
 pub use steps::{Step, StepList};
 pub use terrain::Heightfield;
 

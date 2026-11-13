@@ -12,9 +12,9 @@ use bevy::{
     pbr::{DistanceFog, FogFalloff},
     prelude::*,
 };
+use de_world::Rng;
 pub use de_world::island::layer_weights;
 use de_world::{Heightfield, Island, island::Look};
-use forge_core::Rng;
 
 use crate::ground::{GroundPlugin, TerrainMaterial, terrain_material};
 

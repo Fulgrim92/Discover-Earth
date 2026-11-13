@@ -1,18 +1,16 @@
 # Architecture
 
 ```
-              de_cli (tool)          the `de` command line: capabilities, schemas, validate, islands
+              de_cli (tool)          the `de` command line: capabilities, schemas, validate, sweep, compare, taste
                   |
               de_client (game)       Bevy 3D: terrain mesh, sea, sky, sun, fog, fly camera, captures
                   |
-              de_world (gameplay)    islands as data: terrain manifests, heightfields, views, looks, step lists
-                  |
-              forge_core (core)      Forge: Rng, module manifests, capability registry, layer rules
+              de_world (gameplay)    islands as data: terrain manifests, heightfields, views, looks, step lists,
+                                     drone, seeded Rng, sensors, the capability list
 ```
 
-`forge_core` comes from Forge in `Fulgrim92/cardcraft-eternal`, pinned by `FORGE_REV` and fetched by
-`scripts/forge.sh` (see `docs/forge.md`). `de_world` registers its features as a Forge module, so `de capabilities`
-lists engine and game together.
+Everything builds from this repository alone. `de_world::Rng` (SplitMix64) is the one source of randomness, and
+`crates/de_world/src/module.rs` is the capability list `de capabilities` prints.
 
 ## World space
 
@@ -32,7 +30,7 @@ surface sits at 0.6 m. Ground the DEM marks as sea is pushed down to -25 m so th
 
 The player is a camera drone flown like a consumer drone in its stabilised mode. `de_world::DroneState::step` turns
 mode-2 sticks into motion: velocity eases towards the stick target (with an expo curve for gentle small moves),
-centred sticks brake to a hover, wind gusts from `forge_core::Rng` push it slightly, and it never goes below
+centred sticks brake to a hover, wind gusts from `de_world::Rng` push it slightly, and it never goes below
 `min_clearance_m` over ground or sea. The camera hangs on a gimbal that keeps the horizon level, with a slight bank
 into sideways moves. The window game, the `drone` capture step and the tests all fly this one function, so a
 captured flight is the flight a player gets. Real VR controllers would feed the same `Sticks`.
@@ -53,7 +51,7 @@ shadow camera).
 | Area | Options weighed | Chosen | Why |
 | --- | --- | --- | --- |
 | Engine | UE5 + Cesium, Forge all the way, Forge + Bevy 3D | Forge + Bevy 3D | Agent-drivable end to end without writing terrain, lighting and PBR from scratch (C, 2026-11-07) |
-| Getting Forge | Cargo git dependency, copy, sparse pinned fetch | Sparse pinned fetch | cardcraft-eternal is ~9 GB at one commit; the sparse fetch is a few MB and still pins an exact commit |
+| Forge dependency | keep the pinned fetch from cardcraft-eternal, copy it in, own small replacements | Own replacements | The game only used Forge's Rng and capability list; now it builds anywhere, with no token or second repository (C, 2026-11-13) |
 | Elevation | Google 3D Tiles, SRTM, Copernicus GLO-30 | Copernicus GLO-30 | Free with attribution, 30 m, good coastlines |
 | Player movement | free fly camera, FPV acro drone, stabilised camera drone | Stabilised camera drone (mode 2) | Calm, cinematic pacing for nature, and it matches real drone and VR thumbstick controls (C, 2026-11-08) |
 | Agent access to a live game | Custom socket, Bevy Remote Protocol | Bevy Remote Protocol | Built in; queries and edits any reflected component as JSON |
