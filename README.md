@@ -49,6 +49,10 @@ Image comparison: [NVIDIA FLIP](https://github.com/NVlabs/flip) (BSD-3-Clause) t
 
 Ground materials, when downloaded with `scripts/materials/fetch.py`: [ambientCG](https://ambientcg.com), CC0 1.0.
 
+Ground truth (`content/islands/*/satellite.png`, `landcover.png`): contains modified Copernicus Sentinel data
+2023-2025; ESA WorldCover 10 m 2021 v200 © ESA WorldCover project, contains modified Copernicus Sentinel data (2021)
+processed by the ESA WorldCover consortium, CC BY 4.0.
+
 Elevation: Copernicus DEM GLO-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under
 COPERNICUS by the European Union and ESA.
 

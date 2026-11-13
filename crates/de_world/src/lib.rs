@@ -12,6 +12,7 @@ pub mod rng;
 pub mod sense;
 pub mod steps;
 pub mod terrain;
+pub mod truth;
 
 pub use drone::{DroneConfig, DroneState, FlightMode, Sticks};
 pub use island::{Island, LoadError, Vec3, View};
