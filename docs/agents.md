@@ -70,6 +70,20 @@ Notes from tuning: Bevy's `contrast` is strong (1.15 already crushes shadows); m
 already a visible haze; the atmosphere is a clear sky, so it moves renders away from the overcast reference photos
 (`de photo match` says how far).
 
+## Clouds (`look.clouds`)
+
+One layer of volumetric cloud between `base_m` and `top_m`, ray-marched per pixel
+(`crates/de_client/src/clouds.wesl`) through a seeded Perlin-Worley noise volume (`de_world::clouds`), drifting with
+`wind`, with shadows on the ground. `cover` 0 is a clear sky; 0.3 broken, 0.55 (Saksun) mostly cloudy, 1 overcast.
+Rays stop at the land, so a base below the ridges puts the hilltops in cloud. `de schema terrain` lists every field.
+
+- Sweep cover and height: `de sweep lagoon --set look.clouds.cover=0.3,0.55,0.8 --set look.clouds.base_m=600,750`.
+- Check against the photos at their time of day, since they were taken around noon and the default look is
+  evening: `de photo match --set look.sun_elevation_deg=40 --set look.sun_azimuth_deg=200 --set
+  look.cinema.exposure_ev100=14` with and without `--set look.clouds.cover=0`.
+- `de_world::clouds::Clouds::density_at` is the shader's density on the CPU, for tests and tools. Keep the two in step.
+- Cost: the clouds roughly double the frame time on the software renderer; `steps` trades smoothness for speed.
+
 ## Deciding by comparing: sweeps and taste
 
 ```

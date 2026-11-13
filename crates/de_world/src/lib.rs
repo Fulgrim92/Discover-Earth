@@ -2,6 +2,7 @@
 //! step lists that drive captures. Nothing here draws; the client and the CLI build on it,
 //! and every test runs without a GPU.
 
+pub mod clouds;
 pub mod drone;
 pub mod image;
 pub mod island;

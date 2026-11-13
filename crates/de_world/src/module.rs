@@ -151,6 +151,11 @@ impl WorldModule {
                 Content,
                 "Film look per island: physical atmosphere, tonemapper, bloom, grade, volumetric mist (look.cinema)",
             ),
+            c(
+                "world.look.clouds",
+                Content,
+                "Volumetric cloud layer per island: cover, base/top height, wind, light, shadows on the ground (look.clouds)",
+            ),
             c("tool.taste", Command, "de taste: record a look decision in docs/taste.jsonl"),
         ]
     }

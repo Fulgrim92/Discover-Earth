@@ -23,6 +23,7 @@ use de_world::Rng;
 pub use de_world::island::layer_weights;
 use de_world::{Heightfield, Island, island::Look, water::Water};
 
+use crate::clouds::{CloudMaterial, CloudParams, CloudsPlugin};
 use crate::ground::{GroundPlugin, TerrainMaterial, terrain_material};
 
 /// Which island to load, and from which `content/` folder.
@@ -57,7 +58,7 @@ pub struct ScenePlugin;
 
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((GroundPlugin, crate::water::WaterPlugin))
+        app.add_plugins((GroundPlugin, CloudsPlugin, crate::water::WaterPlugin))
             .register_type::<CameraRig>()
             .init_resource::<CameraTarget>()
             .add_systems(Startup, spawn_scene);
@@ -73,16 +74,20 @@ pub const FOV_Y_DEG: f32 = 55.0;
 /// Height of the sea surface in metres.
 pub const SEA_LEVEL_M: f32 = de_world::sense::SEA_LEVEL_M;
 
+/// The scene's material stores, grouped to keep `spawn_scene` within Bevy's parameter limit.
+type Materials<'w> = (
+    ResMut<'w, Assets<StandardMaterial>>,
+    ResMut<'w, Assets<TerrainMaterial>>,
+    ResMut<'w, Assets<CloudMaterial>>,
+    ResMut<'w, Assets<crate::water::WaterMaterial>>,
+);
+
 fn spawn_scene(
     mut commands: Commands,
     source: Res<IslandSource>,
     (target, sketch): (Res<CameraTarget>, Option<Res<Sketch>>),
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    (mut terrain_materials, mut water_materials): (
-        ResMut<Assets<TerrainMaterial>>,
-        ResMut<Assets<crate::water::WaterMaterial>>,
-    ),
+    (mut materials, mut terrain_materials, mut cloud_materials, mut water_materials): Materials,
     (mut images, mut media): (ResMut<Assets<Image>>, ResMut<Assets<ScatteringMedium>>),
 ) {
     let island = Island::load(&source.content, &source.id).unwrap_or_else(|e| panic!("{e}"));
@@ -91,6 +96,17 @@ fn spawn_scene(
     let [w, d] = field.extent();
     // The sea runs on to the horizon; fog hides where it ends.
     let sea_reach = 400_000.0;
+
+    // Clouds: the seeded noise volume, shared by the cloud layer and the terrain's shadows.
+    let clouds = CloudParams::new(&look);
+    let noise = images.add(if look.clouds.on() {
+        crate::clouds::noise_image(&de_world::clouds::Noise::new(de_world::clouds::seed(&source.id)))
+    } else {
+        crate::clouds::empty_noise_image()
+    });
+    if look.clouds.on() {
+        crate::clouds::spawn(&mut commands, &mut meshes, &mut cloud_materials, clouds, noise.clone());
+    }
 
     // Streams, waterfalls and lakes, found in the terrain under the island's rules.
     let rules = de_world::water::Rules::load(&source.content, &source.id).unwrap_or_else(|e| panic!("{e}"));
@@ -101,7 +117,7 @@ fn spawn_scene(
     commands.spawn((
         Name::new("terrain"),
         Mesh3d(meshes.add(surface_mesh(&field, &look, &surface))),
-        MeshMaterial3d(terrain_materials.add(terrain_material(&look, &source.content, &mut images))),
+        MeshMaterial3d(terrain_materials.add(terrain_material(&look, &source.content, &mut images, clouds, noise))),
     ));
 
     let wm = crate::water::meshes(&water, &field, &surface);
@@ -236,6 +252,10 @@ fn spawn_scene(
             AtmosphereSettings { aerial_view_lut_max_distance: 60_000.0, ..default() },
             AtmosphereEnvironmentMapLight::default(),
         ));
+    }
+    if look.clouds.on() {
+        // The clouds stop their rays at the land, which they read from the depth prepass.
+        camera.insert(bevy::core_pipeline::prepass::DepthPrepass);
     }
     if cine.bloom > 0.0 {
         camera.insert(Bloom { intensity: cine.bloom, ..Bloom::NATURAL });
