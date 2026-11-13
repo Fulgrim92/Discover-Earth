@@ -1,0 +1,15 @@
+{
+  "island": "saksun",
+  "size": [960, 540],
+  "steps": [
+    {"view": "valley"},
+    {"drone": {"frames": 30, "sticks": {"gimbal": -0.6}}},
+    "state",
+    {"drone": {"frames": 240, "mode": "cine", "sticks": {"pitch": 1.0, "yaw": -0.25}, "clip": "cine-down-the-valley"}},
+    "state",
+    {"drone": {"frames": 60, "sticks": {}}},
+    "state",
+    {"drone": {"frames": 180, "mode": "sport", "sticks": {"pitch": 1.0, "throttle": 0.6, "gimbal": 0.3}, "clip": "sport-climb-out"}},
+    "state"
+  ]
+}

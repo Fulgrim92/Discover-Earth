@@ -1,0 +1,80 @@
+{
+  "name": "Saksun and Tjørnuvík, Streymoy",
+  "heightmap": "height.png",
+  "size_px": [
+    512,
+    512
+  ],
+  "metres_per_px": [
+    28.784,
+    30.922
+  ],
+  "height_range_m": [
+    0.0,
+    781.0
+  ],
+  "origin": {
+    "north_lat": 62.333056,
+    "west_lon": -7.305
+  },
+  "source": {
+    "dataset": "Copernicus DEM GLO-30",
+    "tile": "Copernicus_DSM_COG_10_N62_00_W008_00_DEM.tif",
+    "attribution": "Copernicus DEM GLO-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under COPERNICUS by the European Union and ESA"
+  },
+  "views": [
+    {
+      "name": "valley",
+      "pos": [
+        3584,
+        420,
+        5706
+      ],
+      "look_at": [
+        -1597,
+        40,
+        1531
+      ]
+    },
+    {
+      "name": "lagoon",
+      "pos": [
+        130,
+        160,
+        2005
+      ],
+      "look_at": [
+        -4000,
+        0,
+        1200
+      ]
+    },
+    {
+      "name": "overview",
+      "pos": [
+        0,
+        3200,
+        7600
+      ],
+      "look_at": [
+        0,
+        0,
+        -600
+      ]
+    },
+    {
+      "name": "tjornuvik",
+      "pos": [
+        1022,
+        520,
+        -1900
+      ],
+      "look_at": [
+        900,
+        0,
+        -6500
+      ]
+    }
+  ],
+  "look": {}
+}

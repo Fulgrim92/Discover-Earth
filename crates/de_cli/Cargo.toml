@@ -1,0 +1,25 @@
+[package]
+name = "de_cli"
+description = "The `de` command line: what the game can do, its schemas, and content validation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[package.metadata.forge]
+layer = "tool"
+
+[[bin]]
+name = "de"
+path = "src/main.rs"
+
+[dependencies]
+de_world.workspace = true
+forge_core.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+clap.workspace = true
+
+[lints]
+workspace = true
