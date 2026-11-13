@@ -745,6 +745,56 @@ impl Water {
     }
 }
 
+/// Signed metres from each heightmap cell to the shore line: positive out at sea (where the
+/// water is shallow and waves break near zero), negative inland. The shore is taken half a cell
+/// from the last land cell, so the field crosses zero between land and sea and a texture of it,
+/// sampled bilinearly, finds the water's edge between cells. Two-pass chamfer distance
+/// (Borgefors 1986), exact to a few percent. Cells of `h` at or below [`SEA_CELL_M`] plus
+/// `tide_m` are sea.
+pub fn shore_distance(field: &Heightfield, tide_m: f32) -> Vec<f32> {
+    let land: Vec<bool> = field.heights.iter().map(|&h| h > SEA_CELL_M + tide_m).collect();
+    let to_land = chamfer(field, |i| land[i]);
+    let to_sea = chamfer(field, |i| !land[i]);
+    let half = 0.5 * field.spacing[0].min(field.spacing[1]);
+    land.iter()
+        .enumerate()
+        .map(|(i, &l)| if l { -(to_sea[i] - half).max(0.0) } else { (to_land[i] - half).max(0.0) })
+        .collect()
+}
+
+/// Metres from each cell to the nearest cell where `seed` holds (0 there; infinite with no seed).
+fn chamfer(field: &Heightfield, seed: impl Fn(usize) -> bool) -> Vec<f32> {
+    let (w, d) = (field.width, field.depth);
+    let (sx, sz) = (field.spacing[0], field.spacing[1]);
+    let diag = sx.hypot(sz);
+    let mut dist: Vec<f32> = (0..w * d).map(|i| if seed(i) { 0.0 } else { f32::INFINITY }).collect();
+    let pass = |dist: &mut Vec<f32>, c: usize, r: usize, nb: &[(i32, i32, f32)]| {
+        let i = r * w + c;
+        for &(dc, dr, cost) in nb {
+            let (cc, rr) = (c as i32 + dc, r as i32 + dr);
+            if cc >= 0 && rr >= 0 && cc < w as i32 && rr < d as i32 {
+                let v = dist[rr as usize * w + cc as usize] + cost;
+                if v < dist[i] {
+                    dist[i] = v;
+                }
+            }
+        }
+    };
+    let fwd = [(-1, 0, sx), (0, -1, sz), (-1, -1, diag), (1, -1, diag)];
+    let bwd = [(1, 0, sx), (0, 1, sz), (1, 1, diag), (-1, 1, diag)];
+    for r in 0..d {
+        for c in 0..w {
+            pass(&mut dist, c, r, &fwd);
+        }
+    }
+    for r in (0..d).rev() {
+        for c in (0..w).rev() {
+            pass(&mut dist, c, r, &bwd);
+        }
+    }
+    dist
+}
+
 /// Smooth a cell path into a stream: Chaikin corners, points every [`POINT_STEP_M`], water
 /// never running uphill.
 fn make_stream(id: usize, raw: &[Vec3], km2: &[f32], end: &str, field: &Heightfield, rules: &WaterRules) -> Stream {
@@ -976,6 +1026,22 @@ mod tests {
         assert!(w.channel(at[0], at[1], 0.0).is_none());
         assert!(w.streams.iter().any(|s| s.ends_in == "gap"));
         assert!(w.streams.iter().any(|s| s.ends_in == "added"));
+    }
+
+    #[test]
+    fn shore_distance_grows_out_to_sea() {
+        let f = valley();
+        let dist = shore_distance(&f, 0.0);
+        // Row 58 of the sea strip (column 20) lies between walls one cell away.
+        assert!(dist[30 * f.width + 5] < 0.0, "land is inland of the shore: {}", dist[30 * f.width + 5]);
+        // The shore line lies half a cell out from the last land cell.
+        let sea = 58 * f.width + 20;
+        let half = 0.5 * f.spacing[0].min(f.spacing[1]);
+        assert!((dist[sea] - (30.0 - half)).abs() < 1.0, "{}", dist[sea]);
+        assert!(dist[sea] > 0.0 && dist[sea + 1] < 0.0, "zero between sea and land");
+        // A high tide floods the lowest land, so the sea reaches further.
+        let high = shore_distance(&f, 7.0);
+        assert!(high[57 * f.width + 21] > 0.0);
     }
 
     #[test]

@@ -17,7 +17,7 @@ use bevy::{
 };
 use de_world::{Heightfield, island::Look, water::Water};
 
-use crate::scene::{SEA_LEVEL_M, Surface};
+use crate::scene::Surface;
 
 /// How far water sits above the ground mesh under it, metres.
 const LIFT_M: f32 = 0.25;
@@ -30,6 +30,24 @@ pub type WaterMaterial = ExtendedMaterial<StandardMaterial, WaterExt>;
 pub struct WaterExt {
     #[uniform(100)]
     pub params: WaterParams,
+    /// Signed distance to the shore over the island (r: metres / [`SHORE_MAX_M`], negative inland).
+    #[texture(101)]
+    #[sampler(102)]
+    pub shore: Handle<Image>,
+}
+
+/// Distances to land are stored up to this many metres.
+pub const SHORE_MAX_M: f32 = 400.0;
+
+/// What a water material draws.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// Streams and lakes.
+    Fresh,
+    /// The mist where waterfalls land.
+    Mist,
+    /// The sea: wind waves, shallow water and foam along the shore.
+    Sea,
 }
 
 #[derive(ShaderType, Clone, Copy, Debug)]
@@ -38,8 +56,13 @@ pub struct WaterParams {
     pub foam: Vec4,
     pub horizon: Vec4,
     pub zenith: Vec4,
-    /// x: 0 water, 1 mist; y: sky reflection strength; z: ripple strength.
+    /// x: 0 fresh water, 1 mist, 2 sea; y: sky reflection strength; z: ripple strength;
+    /// w: how see-through the sea is.
     pub flags: Vec4,
+    /// The island's size in metres (x, z), then the wind (x, z) in m/s.
+    pub sea: Vec4,
+    /// Shallow-water colour near the shore; w: [`SHORE_MAX_M`].
+    pub shallow: Vec4,
 }
 
 impl MaterialExtension for WaterExt {
@@ -57,36 +80,76 @@ impl Plugin for WaterPlugin {
     }
 }
 
-/// The water material, or the mist material when `mist` is set.
-pub fn material(look: &Look, mist: bool) -> WaterMaterial {
+/// A water material of `kind`. `shore` is [`shore_image`]'s texture, `extent` the island's size.
+pub fn material(look: &Look, kind: Kind, shore: Handle<Image>, extent: [f32; 2]) -> WaterMaterial {
     let v = |c: [f32; 3]| Vec4::new(c[0], c[1], c[2], 1.0);
+    let see_through = kind == Kind::Mist || (kind == Kind::Sea && look.sea_alpha < 1.0);
+    // Shallow water over pale sand and rock reads greener and lighter than the open sea.
+    let shallow = [look.sea[0] * 1.6 + 0.01, look.sea[1] * 1.9 + 0.015, look.sea[2] * 1.4 + 0.01];
     WaterMaterial {
         base: StandardMaterial {
             base_color: Color::WHITE,
             perceptual_roughness: 0.06,
             reflectance: 0.5,
-            alpha_mode: if mist { AlphaMode::Blend } else { AlphaMode::Opaque },
-            cull_mode: if mist { None } else { Some(bevy::render::render_resource::Face::Back) },
-            double_sided: mist,
+            alpha_mode: if see_through { AlphaMode::Blend } else { AlphaMode::Opaque },
+            cull_mode: if kind == Kind::Mist { None } else { Some(bevy::render::render_resource::Face::Back) },
+            double_sided: kind == Kind::Mist,
             ..default()
         },
         extension: WaterExt {
             params: WaterParams {
-                deep: v(look.stream),
+                deep: v(if kind == Kind::Sea { look.sea } else { look.stream }),
                 foam: v(look.foam),
                 horizon: v(look.horizon),
                 zenith: v(look.zenith),
                 // With the physical atmosphere the environment map already puts the sky in the
                 // water; the hand-made reflection is for the plain sky dome.
                 flags: Vec4::new(
-                    if mist { 1.0 } else { 0.0 },
+                    match kind {
+                        Kind::Fresh => 0.0,
+                        Kind::Mist => 1.0,
+                        Kind::Sea => 2.0,
+                    },
                     if look.cinema.atmosphere { 0.0 } else { 1.0 },
                     1.0,
-                    0.0,
+                    look.sea_alpha,
                 ),
+                sea: Vec4::new(extent[0], extent[1], look.clouds.wind[0], look.clouds.wind[1]),
+                shallow: Vec4::new(shallow[0], shallow[1], shallow[2], SHORE_MAX_M),
             },
+            shore,
         },
     }
+}
+
+/// A flat square `size` metres across at height 0, with the vertex data `water.wesl` reads.
+pub fn sea_mesh(size: f32) -> Mesh {
+    let h = size / 2.0;
+    let mut b = Builder::default();
+    b.quad([[-h, 0.0, -h], [h, 0.0, -h], [-h, 0.0, h], [h, 0.0, h]], Lane::LAKE);
+    b.mesh()
+}
+
+/// The distance to land as a texture over the island, one texel per heightmap cell.
+pub fn shore_image(field: &Heightfield, tide_m: f32) -> Image {
+    let dist = de_world::water::shore_distance(field, tide_m);
+    // Half floats: signed, and fine enough (under 0.2 m at 400 m) that the slope towards land is
+    // smooth; eight bits made it step from texel to texel.
+    let data: Vec<u8> =
+        dist.iter().flat_map(|&d| half::f16::from_f32((d / SHORE_MAX_M).clamp(-1.0, 1.0)).to_le_bytes()).collect();
+    let mut img = Image::new(
+        bevy::render::render_resource::Extent3d {
+            width: field.width as u32,
+            height: field.depth as u32,
+            depth_or_array_layers: 1,
+        },
+        bevy::render::render_resource::TextureDimension::D2,
+        data,
+        bevy::render::render_resource::TextureFormat::R16Float,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    img.sampler = bevy::image::ImageSampler::linear();
+    img
 }
 
 /// Meshes for streams (with white water), lakes and the mist at waterfalls.
@@ -168,7 +231,7 @@ impl Builder {
 }
 
 /// Build the water meshes. `surface` is the carved ground the terrain mesh is made from.
-pub fn meshes(water: &Water, field: &Heightfield, surface: &Surface) -> WaterMeshes {
+pub fn meshes(water: &Water, field: &Heightfield, surface: &Surface, sea_level: f32) -> WaterMeshes {
     let mut out = WaterMeshes::default();
     for s in &water.streams {
         let p = &s.points;
@@ -181,7 +244,7 @@ pub fn meshes(water: &Water, field: &Heightfield, surface: &Surface) -> WaterMes
             .iter()
             .map(|q| {
                 let g = surface.height(q[0], q[2]);
-                g.max(q[1].min(g + 3.0)).max(SEA_LEVEL_M) + LIFT_M
+                g.max(q[1].min(g + 3.0)).max(sea_level) + LIFT_M
             })
             .collect();
         let dir = |k: usize| {
@@ -220,7 +283,7 @@ pub fn meshes(water: &Water, field: &Heightfield, surface: &Surface) -> WaterMes
     // Mist where each waterfall lands: three crossed upright sheets, sized by the drop.
     for f in &water.falls {
         let size = (f.drop_m * 0.5).clamp(12.0, 70.0);
-        let base = Vec3::new(f.bottom[0], f.bottom[1].max(SEA_LEVEL_M), f.bottom[2]);
+        let base = Vec3::new(f.bottom[0], f.bottom[1].max(sea_level), f.bottom[2]);
         for k in 0..3 {
             let a = k as f32 * std::f32::consts::PI / 3.0;
             let d = Vec3::new(a.cos(), 0.0, a.sin()) * size * 0.5;
@@ -269,7 +332,10 @@ pub fn meshes(water: &Water, field: &Heightfield, surface: &Surface) -> WaterMes
                 let corners = [(c, r), (c + 1, r), (c, r + 1), (c + 1, r + 1)];
                 let low = corners.iter().map(|&(a, b)| surface.heights[b * surface.w + a]).fold(f32::MAX, f32::min);
                 let own = water.lake_level[fr * w + fc] == l.level_m;
-                if !own && low < l.level_m - 1.0 {
+                // Outside the lake, stop where the ground falls away below the level (an outlet);
+                // inside it, stop where the ground drops far below the carved bed, as at a lake
+                // that ends at a sea cliff, or the sheet would hang over the drop in steps.
+                if (!own && low < l.level_m - 1.0) || low < l.level_m - 4.0 {
                     continue;
                 }
                 taken[k] = true;
@@ -308,7 +374,7 @@ mod tests {
         let water = Water::find(&field, &WaterRules { min_catchment_km2: 0.05, ..Default::default() });
         let look = Look { relief_m: 0.0, ..Look::default() };
         let surface = Surface::new(&field, &look, "t", Some((&water, 1.2)));
-        let m = meshes(&water, &field, &surface);
+        let m = meshes(&water, &field, &surface, 0.6);
         assert!(!m.streams.is_empty() && !m.mist.is_empty());
         let n = m.streams.positions.len();
         assert_eq!((m.streams.uvs.len(), m.streams.colors.len(), m.streams.tangents.len()), (n, n, n));

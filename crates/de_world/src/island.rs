@@ -93,6 +93,9 @@ pub struct Look {
     /// Sea colour, linear RGB, and how see-through it is (0..1).
     pub sea: Vec3,
     pub sea_alpha: f32,
+    /// Tide: metres the sea stands above mean sea level (negative at low water). The Faroes
+    /// range about ±1 m.
+    pub tide_m: f32,
     /// Stream and lake water, and white water where streams fall steeply, linear RGB.
     pub stream: Vec3,
     pub foam: Vec3,
@@ -190,6 +193,7 @@ impl Default for Look {
             rock_slope: 0.38,
             sea: [0.012, 0.045, 0.065],
             sea_alpha: 0.92,
+            tide_m: 0.0,
             stream: [0.02, 0.045, 0.05],
             foam: [0.55, 0.6, 0.62],
             subdivide: 2,

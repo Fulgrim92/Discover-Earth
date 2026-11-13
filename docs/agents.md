@@ -154,6 +154,13 @@ slope, steep stretches turn white, the sky is reflected with a Fresnel term (the
 waterfall gets mist where it lands. Colours are `look.stream` and `look.foam`. It moves with game time, so record a
 clip (a `drone` step with `clip`) and read its `motion.json` for flicker after changing it.
 
+The sea is one plane at `look.tide_m` metres above mean sea level, drawn by the same shader. It reads a
+shore-distance texture (`de_world::water::shore_distance`: metres from each sea cell to land at that tide) to turn
+and steepen the waves over the shallows, colour the water near land and draw surf bands and a wash at the edge.
+Five deep-water waves follow `look.clouds.wind`. To see a tide, sweep it: `de sweep lagoon --set look.tide_m=-1,0,1`;
+`content/shots/sea.json` has the sea shots and a surf clip. `scripts/check.sh` fails the `shaders` step when a shot
+log has a shader compile error, since a broken shader only logs and draws nothing.
+
 Thresholds live in `content/islands/<id>/rules.json` (`de schema rules`), under `water`. When the data is wrong,
 fix it there with `overrides`: `{"remove_streams": {"at": [x, z], "radius_m": r}}`, `{"remove_lake": {"at": [x, z]}}`
 or `{"add_stream": {"path": [[x, z], ...], "catchment_km2": a}}` (world metres, x east, z south). `map.png` draws our

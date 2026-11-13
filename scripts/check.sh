@@ -50,6 +50,9 @@ step content cargo run -q -p de_cli -- validate
 if [[ $shots == 1 ]]; then
   rm -rf "$root/out/shots"
   step shots cargo run -q -p de_client --bin de-shot -- content/shots/smoke.json out/shots
+  # A shader that fails to compile only logs an error and draws nothing, so the capture still
+  # "passes". Fail on it here.
+  step shaders bash -c "! grep -E 'failed to create shader module|Shader .* parsing error' '$log/shots.log'"
   [[ -n "$ref" ]] && step diff compare
 fi
 
