@@ -95,6 +95,8 @@ pub struct Buffers {
     pub normal: Vec<Vec3>,
     /// Whether the land at this pixel is in the sun's shadow (terrain between it and the sun).
     pub shaded: Vec<bool>,
+    /// World position the ray hit; meaningless for sky.
+    pub pos: Vec<Vec3>,
 }
 
 /// The island as the sensor sees it.
@@ -192,6 +194,7 @@ impl<'a> World<'a> {
         let mut depth = Vec::with_capacity((w * h) as usize);
         let mut normal = Vec::with_capacity((w * h) as usize);
         let mut shaded = Vec::with_capacity((w * h) as usize);
+        let mut pos = Vec::with_capacity((w * h) as usize);
         let sun = to_sun(self.look());
         for py in 0..h {
             for px in 0..w {
@@ -202,6 +205,7 @@ impl<'a> World<'a> {
                     Some((t, c, n)) => {
                         let p = add3(add3(cam.pos, scale(d, t)), scale(n, 2.0));
                         shaded.push(c.is_land() && (dot(n, sun) <= 0.0 || self.blocks(p, sun)));
+                        pos.push(add3(cam.pos, scale(d, t)));
                         class.push(c);
                         depth.push(t);
                         normal.push(n);
@@ -211,11 +215,12 @@ impl<'a> World<'a> {
                         depth.push(f32::INFINITY);
                         normal.push([0.0, 0.0, 0.0]);
                         shaded.push(false);
+                        pos.push([0.0; 3]);
                     }
                 }
             }
         }
-        Buffers { width: w, height: h, class, depth, normal, shaded }
+        Buffers { width: w, height: h, class, depth, normal, shaded, pos }
     }
 
     /// Whether terrain lies on the way from `p` towards `dir` (for sun shadows).
@@ -288,6 +293,9 @@ pub struct Report {
     pub fog: FogFacts,
     /// From the rendered PNG, when it exists.
     pub image: Option<ImageFacts>,
+    /// Against the satellite (`scripts/truth/fetch.py`), when the island has it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub truth: Option<crate::truth::ShotTruth>,
     /// The above as sentences.
     pub text: String,
 }
@@ -503,6 +511,7 @@ pub fn report(world: &World, cam: &CameraShot, buf: &Buffers, image: Option<&Rgb
         sun,
         fog,
         image,
+        truth: None,
         text: String::new(),
     };
     r.text = describe(&r);
@@ -623,6 +632,17 @@ pub fn describe(r: &Report) -> String {
             pct(m)
         )),
         None => s.push(format!("Fog keeps {} of a surface's colour at 1 km.", pct(r.fog.left_at_1km))),
+    }
+    if let Some(t) = &r.truth {
+        let mut cov: Vec<_> = t.cover.iter().filter(|(_, v)| **v >= 0.02).collect();
+        cov.sort_by(|a, b| b.1.total_cmp(a.1));
+        let gaps: Vec<String> = t.layers.iter().map(|(k, l)| format!("{k} ΔE {:.0}", l.delta_e)).collect();
+        s.push(format!(
+            "Satellite: the land in view is {} (WorldCover); our ground layers agree on {}. Colour gap to the satellite: {} (2 is barely visible, over 10 clearly different).",
+            cov.iter().map(|(k, v)| format!("{k} {}", pct(**v))).collect::<Vec<_>>().join(", "),
+            pct(t.cover_agree),
+            if gaps.is_empty() { "n/a".to_string() } else { gaps.join(", ") }
+        ));
     }
     if let Some(img) = &r.image {
         let mut parts: Vec<(String, f32)> = img.classes.iter().map(|(k, v)| (k.clone(), v.luma)).collect();

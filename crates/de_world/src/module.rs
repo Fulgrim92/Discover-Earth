@@ -108,6 +108,17 @@ impl WorldModule {
             c("world.sense.tiers", Command, "de-shot --tier sketch|check|hero: 320x180 without shadows, 720p, 1080p"),
             c("tool.sweep", Command, "de sweep: render a view over terrain.json values as one labelled sheet"),
             c("tool.compare", Command, "de compare: perceptual (FLIP) difference per shot with heatmaps"),
+            c(
+                "world.truth.satellite",
+                Content,
+                "Per island: Sentinel-2 ground albedo and ESA WorldCover land cover (scripts/truth/fetch.py)",
+            ),
+            c(
+                "world.truth.shot",
+                System,
+                "Per shot: view painted with satellite colour, land cover, per-layer colour gap (ΔE)",
+            ),
+            c("tool.truth", Command, "de truth: fit ground layer albedos to the satellite; maps and agreement"),
             c("tool.taste", Command, "de taste: record a look decision in docs/taste.jsonl"),
         ]
     }

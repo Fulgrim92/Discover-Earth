@@ -89,6 +89,30 @@ scores every shot in both folders with NVIDIA FLIP (how different they look to a
 `<name>.flip.png` heatmaps, `<name>.compare.png` (before | after | heatmap) and `compare.json`. A mean under 0.005 is
 `same`. It exits 1 when anything changed unless `--report`. `scripts/check.sh --shots --ref <dir>` runs it.
 
+## Ground truth (satellite)
+
+The islands are real places, so their ground can be checked against the real thing.
+
+```
+pip install rasterio pyproj
+python3 scripts/truth/fetch.py saksun        # once per island: satellite.png, landcover.png, truth.json
+de truth saksun [--apply]                    # island-wide report and maps in out/truth/saksun/
+```
+
+`satellite.png` is the per-pixel median surface reflectance (the ground's albedo) of the clearest Sentinel-2
+summer scenes, and `landcover.png` is ESA WorldCover. Both sit on a grid twice as fine as the heightmap.
+`de truth` fits the four ground layer albedos (`look.grass|rock|shore|moss`) so that, blended where we draw them,
+they best reproduce the satellite, and reports the mean colour gap (CIE ΔE: about 2 is barely visible, over 10
+clearly different) before and after, plus where our layers disagree with WorldCover. `--apply` writes the fitted
+albedos into `terrain.json`. `out/truth/<island>/map.png` shows satellite | ours now | ours fitted | land cover from
+above.
+
+When an island has these files, every shot's sensor pack also gets `truth` in `<shot>.sense.json` (land cover in
+view, agreement, per-layer colour gap), a sentence in `sense.md`, `<shot>.satellite.png` (the same view painted with
+satellite colour, brightness matched to the render) and `<shot>.truth.png` (render | satellite colour | land cover).
+Caveats: the satellite sees the ground lit by a late-morning sun, so steep shaded slopes read darker than their
+albedo, and WorldCover often calls shaded cliffs "tree".
+
 ## The live game (Bevy Remote Protocol)
 
 `discover-earth` listens on `http://127.0.0.1:15702` (JSON-RPC). Find the camera and read where it is:

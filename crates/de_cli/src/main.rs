@@ -75,6 +75,17 @@ enum Cmd {
         #[arg(long)]
         report: bool,
     },
+    /// Compare an island's ground with the satellite (needs `scripts/truth/fetch.py <island>`):
+    /// layer albedos now vs fitted, land-cover agreement, and top-down maps in out/truth/<island>/.
+    /// With --apply, writes the fitted albedos into terrain.json.
+    Truth {
+        #[arg(default_value = "saksun")]
+        island: String,
+        #[arg(long)]
+        apply: bool,
+        #[arg(long, default_value = "out/truth")]
+        out: PathBuf,
+    },
     /// Append a look decision to docs/taste.jsonl, so later sessions know what was liked and why.
     Taste {
         /// The sheet the choice was made from.
@@ -198,6 +209,16 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Cmd::Truth { island, apply, out } => match truth(&content, &island, apply, &out.join(&island)) {
+            Ok(text) => {
+                print!("{text}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::FAILURE
+            }
+        },
         Cmd::Taste { sheet, pick, reject, why, by } => {
             let line = serde_json::json!({
                 "date": today(),
@@ -242,6 +263,75 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
     }
+}
+
+fn truth(content: &Path, id: &str, apply: bool, out: &Path) -> Result<String, String> {
+    use de_world::truth;
+    let island = Island::load(content, id).map_err(|e| e.to_string())?;
+    let field = island.heightfield(content, id).map_err(|e| e.to_string())?;
+    let t = truth::Truth::load(content, id, &island)?.ok_or_else(|| {
+        format!("islands/{id} has no satellite.png/landcover.png: run `python3 scripts/truth/fetch.py {id}`")
+    })?;
+    let fit = truth::fit(&island, &field, &t);
+    let agree = truth::agreement(&island, &field, &t);
+    std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
+    let fitted: [de_world::Vec3; 4] = std::array::from_fn(|i| fit.layers[truth::LAYERS[i]].fitted);
+    let [sat, now, after, cover] = truth::maps(&island, &field, &t, &fitted);
+    let cells = [
+        de_world::image::Cell { image: sat, label: "SATELLITE".into() },
+        de_world::image::Cell { image: now, label: format!("OURS NOW DE {:.1}", fit.mean_delta_e_now) },
+        de_world::image::Cell { image: after, label: format!("OURS FITTED DE {:.1}", fit.mean_delta_e_fitted) },
+        de_world::image::Cell { image: cover, label: format!("LAND COVER {:.0}% AGREE", agree.agree * 100.0) },
+    ];
+    de_world::image::sheet(&format!("{id}: ground from above"), &cells, 4, 400).save(&out.join("map.png"))?;
+    let report = serde_json::json!({ "fit": fit, "agreement": agree });
+    std::fs::write(out.join("truth.json"), serde_json::to_string_pretty(&report).expect("serialises"))
+        .map_err(|e| e.to_string())?;
+
+    let mut text = format!("# {} vs the satellite\n\n", island.name);
+    text.push_str(&format!(
+        "Mean colour gap over land (ΔE): {:.1} now, {:.1} with fitted albedos ({} samples).\n\n| layer | share | now | fitted | ΔE |\n| --- | --- | --- | --- | --- |\n",
+        fit.mean_delta_e_now, fit.mean_delta_e_fitted, fit.samples
+    ));
+    for l in truth::LAYERS {
+        let f = &fit.layers[l];
+        text.push_str(&format!(
+            "| {l} | {:.0}% | {:?} | {:?} | {:.1} |\n",
+            f.share * 100.0,
+            f.now,
+            f.fitted,
+            f.delta_e
+        ));
+    }
+    text.push_str(&format!("\nLand cover agrees with our layers on {:.0}% of land.\n", agree.agree * 100.0));
+    for (layer, under) in &agree.under {
+        let mut v: Vec<_> = under.iter().filter(|(_, s)| **s >= 0.02).collect();
+        v.sort_by(|a, b| b.1.total_cmp(a.1));
+        text.push_str(&format!(
+            "- where we draw {layer}: {}\n",
+            v.iter().map(|(k, s)| format!("{k} {:.0}%", **s * 100.0)).collect::<Vec<_>>().join(", ")
+        ));
+    }
+    text.push_str(&format!("\nMaps: {}\n", out.join("map.png").display()));
+    if apply {
+        let path = content.join("islands").join(id).join("terrain.json");
+        let mut doc: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
+        for (i, l) in truth::LAYERS.iter().enumerate() {
+            // Three decimals, written as the decimal you read (not the f32's binary expansion).
+            let v: Vec<f64> = fitted[i].iter().map(|&c| (f64::from(c) * 1000.0).round() / 1000.0).collect();
+            if doc.get("look").is_none() {
+                doc["look"] = serde_json::json!({});
+            }
+            doc["look"][*l] = serde_json::json!(v);
+        }
+        std::fs::write(&path, serde_json::to_string_pretty(&doc).expect("serialises") + "\n")
+            .map_err(|e| e.to_string())?;
+        text.push_str(&format!("Wrote the fitted albedos to {}.\n", path.display()));
+    }
+    std::fs::write(out.join("truth.md"), &text).map_err(|e| e.to_string())?;
+    Ok(text)
 }
 
 /// Today's UTC date as YYYY-MM-DD.
