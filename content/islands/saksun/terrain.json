@@ -109,6 +109,14 @@
     ],
     "sky_light": 1500,
     "sun_lux": 12000,
-    "fog_half_m": 12000
+    "fog_half_m": 60000,
+    "sun_azimuth_deg": 290,
+    "sun_elevation_deg": 9,
+    "cinema": {
+      "atmosphere": true,
+      "exposure_ev100": 13,
+      "bloom": 0.15,
+      "saturation": 1.1
+    }
   }
 }

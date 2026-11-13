@@ -23,6 +23,12 @@ bevy = { workspace = true, features = [
   "bevy_ui_render",
   "default_font",
   "jpeg",
+  # Film-look rendering (look.cinema): tonemapping LUTs (TonyMcMapface and AgX need them; without
+  # them Bevy falls back to an identity LUT), blue noise for the atmosphere and volumetrics.
+  "tonemapping_luts",
+  "bluenoise_texture",
+  "ktx2",
+  "zstd_rust",
 ] }
 
 [[bin]]

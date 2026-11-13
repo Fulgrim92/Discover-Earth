@@ -5,12 +5,19 @@ use std::path::PathBuf;
 use bevy::{
     asset::RenderAssetUsages,
     camera::{Exposure, RenderTarget},
+    core_pipeline::tonemapping::Tonemapping,
+    light::{
+        Atmosphere, AtmosphereEnvironmentMapLight, FogVolume, VolumetricFog, VolumetricLight,
+        atmosphere::ScatteringMedium,
+    },
     light::{
         CascadeShadowConfigBuilder, DirectionalLightShadowMap, GlobalAmbientLight, NotShadowCaster, NotShadowReceiver,
     },
     mesh::{Indices, PrimitiveTopology},
-    pbr::{DistanceFog, FogFalloff},
+    pbr::{AtmosphereSettings, DistanceFog, FogFalloff},
+    post_process::bloom::Bloom,
     prelude::*,
+    render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection},
 };
 use de_world::Rng;
 pub use de_world::island::layer_weights;
@@ -73,7 +80,7 @@ fn spawn_scene(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
-    mut images: ResMut<Assets<Image>>,
+    (mut images, mut media): (ResMut<Assets<Image>>, ResMut<Assets<ScatteringMedium>>),
 ) {
     let island = Island::load(&source.content, &source.id).unwrap_or_else(|e| panic!("{e}"));
     let field = island.heightfield(&source.content, &source.id).unwrap_or_else(|e| panic!("{e}"));
@@ -105,30 +112,45 @@ fn spawn_scene(
         Transform::from_xyz(0.0, SEA_LEVEL_M, 0.0),
     ));
 
-    // Sky: an unlit dome, horizon colour at the bottom fading to a deeper blue overhead.
-    commands.spawn((
-        Name::new("sky"),
-        // The dome surrounds the sun's shadow camera; casting would put the world in shade.
-        NotShadowCaster,
-        NotShadowReceiver,
-        Mesh3d(meshes.add(sky_mesh(sea_reach * 0.45, &look))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            unlit: true,
-            fog_enabled: false,
-            cull_mode: None,
-            ..default()
-        })),
-    ));
+    // Sky: an unlit dome, horizon colour at the bottom fading to a deeper blue overhead; or, with
+    // `cinema.atmosphere`, a physically based atmosphere (the dome would read as far terrain).
+    let cine = &look.cinema;
+    if cine.atmosphere {
+        commands.spawn((Name::new("atmosphere"), Atmosphere::earth(media.add(ScatteringMedium::default()))));
+    } else {
+        commands.spawn((
+            Name::new("sky"),
+            // The dome surrounds the sun's shadow camera; casting would put the world in shade.
+            NotShadowCaster,
+            NotShadowReceiver,
+            Mesh3d(meshes.add(sky_mesh(sea_reach * 0.45, &look))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                unlit: true,
+                fog_enabled: false,
+                cull_mode: None,
+                ..default()
+            })),
+        ));
+    }
+
+    // Low mist over the island, for sun shafts through the valleys.
+    if cine.mist > 0.0 {
+        commands.spawn((
+            Name::new("mist"),
+            FogVolume { density_factor: cine.mist, absorption: 0.05, scattering: 0.6, ..default() },
+            Transform::from_xyz(0.0, cine.mist_top_m * 0.5, 0.0).with_scale(Vec3::new(w, cine.mist_top_m, d)),
+        ));
+    }
 
     // Sun.
     let (el, az) = (look.sun_elevation_deg.to_radians(), look.sun_azimuth_deg.to_radians());
     // Direction *to* the sun: azimuth from north (−Z) clockwise towards east (+X).
     let to_sun = Vec3::new(az.sin() * el.cos(), el.sin(), -az.cos() * el.cos());
-    commands.spawn((
+    let mut sun = commands.spawn((
         Name::new("sun"),
         DirectionalLight {
-            illuminance: look.sun_lux,
+            illuminance: if cine.atmosphere { cine.sun_lux } else { look.sun_lux },
             color: Color::srgb(1.0, 0.95, 0.86),
             shadow_maps_enabled: sketch.is_none(),
             // Metres-scale terrain seen from hundreds of metres away: a larger normal bias
@@ -145,6 +167,9 @@ fn spawn_scene(
         }
         .build(),
     ));
+    if cine.mist > 0.0 {
+        sun.insert(VolumetricLight);
+    }
     commands.insert_resource(DirectionalLightShadowMap { size: 4096 });
     commands.insert_resource(GlobalAmbientLight {
         color: Color::linear_rgb(look.horizon[0], look.horizon[1], look.horizon[2]),
@@ -170,7 +195,12 @@ fn spawn_scene(
             far: sea_reach,
             ..default()
         }),
-        Exposure { ev100: 12.0 },
+        Exposure { ev100: cine.exposure_ev100 },
+        tonemapper(&cine.tonemapper),
+        ColorGrading::with_identical_sections(
+            ColorGradingGlobal { temperature: cine.temperature, ..default() },
+            ColorGradingSection { saturation: cine.saturation, contrast: cine.contrast, ..default() },
+        ),
         DistanceFog {
             color: horizon,
             directional_light_color: Color::srgba(1.0, 0.92, 0.75, 0.35),
@@ -182,8 +212,34 @@ fn spawn_scene(
     if let Some(image) = &target.0 {
         camera.insert(RenderTarget::Image(image.clone().into()));
     }
+    if cine.atmosphere {
+        camera.insert((
+            AtmosphereSettings { aerial_view_lut_max_distance: 60_000.0, ..default() },
+            AtmosphereEnvironmentMapLight::default(),
+        ));
+    }
+    if cine.bloom > 0.0 {
+        camera.insert(Bloom { intensity: cine.bloom, ..Bloom::NATURAL });
+    }
+    if cine.mist > 0.0 {
+        // Mist in the shade is lit by the sky: a small constant glow in the horizon colour, in
+        // display units (the shader doesn't expose it).
+        camera.insert(VolumetricFog { ambient_color: horizon, ambient_intensity: 0.15, step_count: 48, ..default() });
+    }
 
     commands.insert_resource(Ground { island, field });
+}
+
+/// The tonemapper named in `look.cinema.tonemapper` (checked by `Island::check`).
+fn tonemapper(name: &str) -> Tonemapping {
+    match name {
+        "agx" => Tonemapping::AgX,
+        "aces" => Tonemapping::AcesFitted,
+        "filmic" => Tonemapping::BlenderFilmic,
+        "reinhard" => Tonemapping::ReinhardLuminance,
+        "none" => Tonemapping::None,
+        _ => Tonemapping::TonyMcMapface,
+    }
 }
 
 /// The heightfield as one mesh, `look.subdivide` vertices per pixel along each side: heights

@@ -102,6 +102,56 @@ pub struct Look {
     pub detail_normals: f32,
     /// Distance in metres at which the fine detail has faded out.
     pub detail_fade_m: f32,
+    /// Film-look rendering: physical sky, light shafts, tonemapping, bloom and grade. All off by
+    /// default, so a look without it renders as before.
+    pub cinema: Cinema,
+}
+
+/// How the camera films the island. Every field has a default (off / neutral).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct Cinema {
+    /// Physically based sky and aerial perspective (Hillaire 2020): the sky's colour, the haze
+    /// over distant ridges and the light on the land all follow the sun. Replaces the sky dome;
+    /// the land is also lit by the sky (image-based light).
+    pub atmosphere: bool,
+    /// Sun illuminance above the atmosphere when `atmosphere` is on, lux (sunlight is ~130000;
+    /// the atmosphere dims and reddens it near the horizon). `sun_lux` is used otherwise.
+    pub sun_lux: f32,
+    /// Camera exposure, EV100 (higher is darker): 15 for a sunny day, 12 overcast.
+    pub exposure_ev100: f32,
+    /// tony (TonyMcMapface), agx, aces, filmic (Blender Filmic), reinhard or none.
+    pub tonemapper: String,
+    /// Glow around bright light (sun on water, sky): 0 off, 0.15 natural, 0.3 strong.
+    pub bloom: f32,
+    /// Density of the low mist that sun shafts show in, per metre (0 off; 0.001 is a light valley
+    /// haze, 0.005 thick). Lit by the sun, shadowed by ridges.
+    pub mist: f32,
+    /// Mist from sea level up to this height, metres.
+    pub mist_top_m: f32,
+    /// White balance in the grade: negative cooler, positive warmer (-1..1).
+    pub temperature: f32,
+    /// Colour saturation in the grade (1 unchanged).
+    pub saturation: f32,
+    /// Contrast in the grade (1 unchanged).
+    pub contrast: f32,
+}
+
+impl Default for Cinema {
+    fn default() -> Self {
+        Self {
+            atmosphere: false,
+            sun_lux: 130_000.0,
+            exposure_ev100: 12.0,
+            tonemapper: "tony".into(),
+            bloom: 0.0,
+            mist: 0.0,
+            mist_top_m: 120.0,
+            temperature: 0.0,
+            saturation: 1.0,
+            contrast: 1.0,
+        }
+    }
 }
 
 /// Ground layer weights (grass, rock, shore, moss) from height and slope (0 flat .. 1 vertical).
@@ -139,6 +189,7 @@ impl Default for Look {
             relief_m: 1.5,
             detail_normals: 0.35,
             detail_fade_m: 900.0,
+            cinema: Cinema::default(),
         }
     }
 }
@@ -197,6 +248,14 @@ impl Island {
     /// Problems a person or agent should fix, as readable lines. Empty means valid.
     pub fn check(&self, h: &Heightfield) -> Vec<String> {
         let mut out = Vec::new();
+        const TONEMAPPERS: [&str; 6] = ["tony", "agx", "aces", "filmic", "reinhard", "none"];
+        if !TONEMAPPERS.contains(&self.look.cinema.tonemapper.as_str()) {
+            out.push(format!(
+                "look.cinema.tonemapper `{}` is not one of {}",
+                self.look.cinema.tonemapper,
+                TONEMAPPERS.join(", ")
+            ));
+        }
         if !(1..=4).contains(&self.look.subdivide) {
             out.push(format!("look.subdivide must be 1..=4, is {}", self.look.subdivide));
         }

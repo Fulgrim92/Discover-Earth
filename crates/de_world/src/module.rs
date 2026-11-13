@@ -134,6 +134,11 @@ impl WorldModule {
                 Command,
                 "de photo match: render each photo's camera; colour, lightness and palette gap vs the photo",
             ),
+            c(
+                "world.look.cinema",
+                Content,
+                "Film look per island: physical atmosphere, tonemapper, bloom, grade, volumetric mist (look.cinema)",
+            ),
             c("tool.taste", Command, "de taste: record a look decision in docs/taste.jsonl"),
         ]
     }

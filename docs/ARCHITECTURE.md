@@ -44,7 +44,13 @@ of seeded small relief). Vertex colours carry ground layer weights (grass, rock,
 `terrain.wesl` extends Bevy's PBR to blend the layers, from scanned CC0 textures in `content/materials/` when they
 exist (triplanar, at two scales) and from seeded noise otherwise, with basalt banding on rock, patches of browner
 grass, and fine detail normals that fade with distance. Then a large
-sea plane, an unlit sky dome, a sun with cascaded shadows, exponential distance fog and Bevy's PBR. The same
+sea plane, an unlit sky dome, a sun with cascaded shadows, exponential distance fog and Bevy's PBR.
+
+`look.cinema` films it: with `atmosphere` on, Bevy's physically based atmosphere (Hillaire 2020) replaces the dome, so
+the sky's colour, the haze over far ridges and the sky light on the land (an environment map generated from the
+atmosphere) all follow the sun. Then the tonemapper (TonyMcMapface by default, now with its LUTs), bloom, and a grade
+(white balance, saturation, contrast). `mist` adds a volumetric fog box over the island for sun shafts; it is off,
+since on the software renderer it still shows banding where the box meets the ground. The same
 `ScenePlugin` runs in the window and offscreen. The sky dome and sea never cast shadows (the dome encloses the sun's
 shadow camera).
 

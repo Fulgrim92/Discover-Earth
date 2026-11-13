@@ -60,6 +60,16 @@ Per clip `<clip>`:
 `de-shot <steps> <out> --tier sketch|check|hero` overrides the step list's size: `sketch` is 320x180 without
 shadows (layout, "is it there", about 10 s a run), `check` 1280x720, `hero` 1920x1080 for PR images and look decisions.
 
+## The film look (`look.cinema`)
+
+`de schema terrain` lists it: `atmosphere`, `sun_lux` (above the atmosphere), `exposure_ev100`, `tonemapper`,
+`bloom`, `mist`/`mist_top_m`, `temperature`, `saturation`, `contrast`. Sweep it like any look value, e.g.
+`de sweep valley --set look.sun_azimuth_deg=230,280,320 --set look.sun_elevation_deg=5,12,30`.
+`content/shots/cinematic.json` renders the hero views and a cine-mode clip down the valley (`golden-valley`).
+Notes from tuning: Bevy's `contrast` is strong (1.15 already crushes shadows); mist density is per metre, so 0.001 is
+already a visible haze; the atmosphere is a clear sky, so it moves renders away from the overcast reference photos
+(`de photo match` says how far).
+
 ## Deciding by comparing: sweeps and taste
 
 ```
