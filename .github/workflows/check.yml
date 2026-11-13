@@ -11,15 +11,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: System packages
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev pkg-config mesa-vulkan-drivers ffmpeg
-      - name: Forge (private, read-only)
-        env:
-          FORGE_TOKEN: ${{ secrets.FORGE_TOKEN }}
-        run: |
-          if [ -z "$FORGE_TOKEN" ]; then
-            echo "::error::Add a FORGE_TOKEN secret with read access to Fulgrim92/cardcraft-eternal (docs/forge.md)"
-            exit 1
-          fi
-          FORGE_URL="https://x-access-token:${FORGE_TOKEN}@github.com/Fulgrim92/cardcraft-eternal" scripts/forge.sh
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: rustfmt, clippy

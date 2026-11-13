@@ -1,26 +1,63 @@
-//! The world as a Forge module, so its features show up in `de capabilities`.
+//! What the game can do, as a list an agent reads first (`de capabilities`). Add an entry here
+//! whenever you add a feature, a content file, a step or a command.
 
-use forge_core::{Capability, CapabilityKind, ForgeModule, Layer, ModuleManifest};
+use serde::Serialize;
+
+/// The crate that provides a capability, and its layer: data (`de_world`), game (`de_client`)
+/// or tool (`de_cli`).
+#[derive(Clone, Debug, Serialize)]
+pub struct Module {
+    pub name: String,
+    pub version: String,
+    pub layer: String,
+    pub summary: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityKind {
+    /// Code that runs: a simulation, a renderer feature, a sensor.
+    System,
+    /// Something written as data in `content/`.
+    Content,
+    /// A JSON schema (`de schema ...`).
+    Schema,
+    /// A command or capture step.
+    Command,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Capability {
+    pub id: String,
+    pub kind: CapabilityKind,
+    pub module: String,
+    pub summary: String,
+}
 
 pub struct WorldModule;
 
 const NAME: &str = "de_world";
 
-impl ForgeModule for WorldModule {
-    fn manifest(&self) -> ModuleManifest {
-        ModuleManifest {
+impl WorldModule {
+    pub fn manifest(&self) -> Module {
+        Module {
             name: NAME.into(),
             version: env!("CARGO_PKG_VERSION").into(),
-            layer: Layer::Gameplay,
+            layer: "gameplay".into(),
             summary: "Island data: real-terrain heightfields, views, looks and capture step lists".into(),
-            depends_on: vec!["forge_core".into()],
         }
     }
 
-    fn capabilities(&self) -> Vec<Capability> {
+    pub fn capabilities(&self) -> Vec<Capability> {
         use CapabilityKind::*;
-        let c = |id: &str, kind, summary: &str| Capability::new(id, kind, NAME, summary);
+        let c = |id: &str, kind, summary: &str| Capability {
+            id: id.into(),
+            kind,
+            module: NAME.into(),
+            summary: summary.into(),
+        };
         vec![
+            c("module.de_world", System, "Island data: terrain, views, looks, drone, step lists, sensors"),
             c(
                 "world.terrain.heightfield",
                 System,
@@ -58,6 +95,20 @@ impl ForgeModule for WorldModule {
                 "Level-horizon gimbal with tilt control and a slight bank into sideways moves",
             ),
             c("world.schema.drone", Schema, "JSON schema for content/drone.json"),
+            c(
+                "world.sense.pack",
+                System,
+                "Per shot: class, depth, normal and sun-shadow buffers, stats JSON and a text description (sense.md)",
+            ),
+            c(
+                "world.sense.motion",
+                System,
+                "Per clip: keyframe sheet, flicker score and map, jumps, speed and altitude",
+            ),
+            c("world.sense.tiers", Command, "de-shot --tier sketch|check|hero: 320x180 without shadows, 720p, 1080p"),
+            c("tool.sweep", Command, "de sweep: render a view over terrain.json values as one labelled sheet"),
+            c("tool.compare", Command, "de compare: perceptual (FLIP) difference per shot with heatmaps"),
+            c("tool.taste", Command, "de taste: record a look decision in docs/taste.jsonl"),
         ]
     }
 }

@@ -1,14 +1,12 @@
-# Discover Earth: a dreamlike island explorer on the Forge engine, with Bevy drawing in 3D.
+# Discover Earth: a dreamlike island explorer, with Bevy drawing in 3D.
 #
-# Layers (Forge's rule, see docs/ARCHITECTURE.md):
-#   core   forge_core (vendor/forge, pinned by FORGE_REV, fetched by scripts/forge.sh)
+# Layers (see docs/ARCHITECTURE.md):
 #   world  crates/de_world   island data: terrain, schemas, sampling; no renderer, no window
 #   game   crates/de_client  the Bevy 3D client: terrain mesh, sky, water, camera, captures
 #   tool   crates/de_cli     the `de` command line for agents
 [workspace]
 resolver = "3"
 members = ["crates/de_world", "crates/de_client", "crates/de_cli"]
-exclude = ["vendor"]
 
 [workspace.package]
 version = "0.1.0"
@@ -18,17 +16,15 @@ license = "UNLICENSED"
 publish = false
 
 [workspace.dependencies]
-# Pinned to the same Bevy as Forge (bevy_ecs =0.20.0), so Forge modules and the 3D client share one ECS.
+# Pinned exactly: Bevy's minor releases break APIs.
 bevy = { version = "=0.20.0", default-features = false }
-bevy_app = { version = "=0.20.0", default-features = false }
-bevy_ecs = { version = "=0.20.0", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
 schemars = "1.2"
 clap = { version = "4.6", features = ["derive"] }
 png = "0.18"
+nv-flip = "0.1.2"
 
-forge_core = { path = "vendor/forge/crates/forge_core" }
 de_world = { path = "crates/de_world" }
 de_client = { path = "crates/de_client" }
 

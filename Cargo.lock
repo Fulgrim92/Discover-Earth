@@ -2362,8 +2362,9 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "de_world",
- "forge_core",
+ "nv-flip",
  "schemars",
+ "serde",
  "serde_json",
 ]
 
@@ -2373,7 +2374,6 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "de_world",
- "forge_core",
  "serde_json",
 ]
 
@@ -2381,7 +2381,6 @@ dependencies = [
 name = "de_world"
 version = "0.1.0"
 dependencies = [
- "forge_core",
  "png",
  "schemars",
  "serde",
@@ -2691,17 +2690,6 @@ name = "foreign-types-shared"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
-
-[[package]]
-name = "forge_core"
-version = "0.1.0"
-dependencies = [
- "bevy_app",
- "bevy_ecs",
- "schemars",
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "funty"
@@ -3834,6 +3822,24 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "nv-flip"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ec3c68ac226790270de1d9d0eb5853832d82a34b62199ab2a1a4756df1a1974"
+dependencies = [
+ "nv-flip-sys",
+]
+
+[[package]]
+name = "nv-flip-sys"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "932e1eed40002ba70fccac6dab3b64be3301607c3ee88bd14989c4d4e1c1c993"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

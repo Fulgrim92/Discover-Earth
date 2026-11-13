@@ -3,7 +3,7 @@
 A dreamlike island explorer: real islands, real weather and light, and moments where the land melts into a dream.
 No goals, only awe. The first island is the Saksun valley and Tjørnuvík on Streymoy, Faroe Islands, built from open elevation data.
 
-It runs on **Forge**, the Rust engine from Equilibrium: Eternal, with **Bevy** drawing the 3D world. Everything an
+It's written in Rust, with **Bevy** drawing the 3D world. Everything an
 agent needs is data, a command line, and captures it can look at: see [CLAUDE.md](CLAUDE.md).
 
 | Overview | Down the valley |
@@ -14,7 +14,6 @@ agent needs is data, a command line, and captures it can look at: see [CLAUDE.md
 ## Run it
 
 ```
-scripts/forge.sh                                  # fetch the pinned Forge crates (needs access, see docs/forge.md)
 cargo run --release -p de_client --bin discover-earth
 ```
 
@@ -39,10 +38,14 @@ scripts/check.sh [--shots [--ref <dir>]]          # the whole check; verdict in 
 cargo run -q -p de_cli -- capabilities            # what exists
 cargo run -q -p de_cli -- schema terrain|steps|drone   # how content is written
 cargo run -q -p de_cli -- validate                # check all content
-cargo run -q -p de_client --bin de-shot -- content/shots/smoke.json out/shots   # screenshots and clips
+cargo run -q -p de_client --bin de-shot -- content/shots/smoke.json out/shots   # screenshots, clips, sense.md
+cargo run -q -p de_cli -- sweep valley --set look.fog_half_m=4000,12000,30000      # options as one sheet
+cargo run -q -p de_cli -- compare <before-dir> <after-dir>                         # FLIP difference per shot
 ```
 
 ## Credits
+
+Image comparison: [NVIDIA FLIP](https://github.com/NVlabs/flip) (BSD-3-Clause) through the `nv-flip` crate.
 
 Ground materials, when downloaded with `scripts/materials/fetch.py`: [ambientCG](https://ambientcg.com), CC0 1.0.
 
