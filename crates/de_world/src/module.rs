@@ -173,6 +173,12 @@ impl WorldModule {
                 Content,
                 "Volumetric cloud layer per island: cover, base/top height, wind, light, shadows on the ground (look.clouds)",
             ),
+            c("world.sun", Content, "Sun azimuth and elevation for a place and a UTC time (de_world::sun, NOAA)"),
+            c(
+                "tool.photo.light",
+                Command,
+                "de photo match --photo-light: each render at its photo's sun, EXIF exposure and cloud cover",
+            ),
             c("tool.taste", Command, "de taste: record a look decision in docs/taste.jsonl"),
         ]
     }

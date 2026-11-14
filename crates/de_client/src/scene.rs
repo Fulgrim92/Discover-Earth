@@ -206,7 +206,7 @@ fn spawn_scene(
     commands.insert_resource(DirectionalLightShadowMap { size: 4096 });
     commands.insert_resource(GlobalAmbientLight {
         color: Color::linear_rgb(look.horizon[0], look.horizon[1], look.horizon[2]),
-        brightness: look.sky_light,
+        brightness: look.sky_light_now(),
         ..default()
     });
 
@@ -248,7 +248,7 @@ fn spawn_scene(
     if cine.atmosphere {
         camera.insert((
             AtmosphereSettings { aerial_view_lut_max_distance: 60_000.0, ..default() },
-            AtmosphereEnvironmentMapLight::default(),
+            AtmosphereEnvironmentMapLight { intensity: cine.sky_env, ..default() },
         ));
     }
     if clouds.any() {
