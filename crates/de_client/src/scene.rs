@@ -6,10 +6,7 @@ use bevy::{
     asset::RenderAssetUsages,
     camera::{Exposure, RenderTarget},
     core_pipeline::tonemapping::Tonemapping,
-    light::{
-        Atmosphere, AtmosphereEnvironmentMapLight, FogVolume, VolumetricFog, VolumetricLight,
-        atmosphere::ScatteringMedium,
-    },
+    light::{Atmosphere, AtmosphereEnvironmentMapLight, atmosphere::ScatteringMedium},
     light::{
         CascadeShadowConfigBuilder, DirectionalLightShadowMap, GlobalAmbientLight, NotShadowCaster, NotShadowReceiver,
     },
@@ -104,7 +101,7 @@ fn spawn_scene(
     } else {
         crate::clouds::empty_noise_image()
     });
-    if look.clouds.on() {
+    if clouds.any() {
         crate::clouds::spawn(&mut commands, &mut meshes, &mut cloud_materials, clouds, noise.clone());
     }
 
@@ -170,20 +167,11 @@ fn spawn_scene(
         ));
     }
 
-    // Low mist over the island, for sun shafts through the valleys.
-    if cine.mist > 0.0 {
-        commands.spawn((
-            Name::new("mist"),
-            FogVolume { density_factor: cine.mist, absorption: 0.05, scattering: 0.6, ..default() },
-            Transform::from_xyz(0.0, cine.mist_top_m * 0.5, 0.0).with_scale(Vec3::new(w, cine.mist_top_m, d)),
-        ));
-    }
-
     // Sun.
     let (el, az) = (look.sun_elevation_deg.to_radians(), look.sun_azimuth_deg.to_radians());
     // Direction *to* the sun: azimuth from north (−Z) clockwise towards east (+X).
     let to_sun = Vec3::new(az.sin() * el.cos(), el.sin(), -az.cos() * el.cos());
-    let mut sun = commands.spawn((
+    commands.spawn((
         Name::new("sun"),
         DirectionalLight {
             illuminance: if cine.atmosphere { cine.sun_lux } else { look.sun_lux },
@@ -203,9 +191,6 @@ fn spawn_scene(
         }
         .build(),
     ));
-    if cine.mist > 0.0 {
-        sun.insert(VolumetricLight);
-    }
     commands.insert_resource(DirectionalLightShadowMap { size: 4096 });
     commands.insert_resource(GlobalAmbientLight {
         color: Color::linear_rgb(look.horizon[0], look.horizon[1], look.horizon[2]),
@@ -254,17 +239,12 @@ fn spawn_scene(
             AtmosphereEnvironmentMapLight::default(),
         ));
     }
-    if look.clouds.on() {
-        // The clouds stop their rays at the land, which they read from the depth prepass.
+    if clouds.any() {
+        // The clouds and mist stop their rays at the land, which they read from the depth prepass.
         camera.insert(bevy::core_pipeline::prepass::DepthPrepass);
     }
     if cine.bloom > 0.0 {
         camera.insert(Bloom { intensity: cine.bloom, ..Bloom::NATURAL });
-    }
-    if cine.mist > 0.0 {
-        // Mist in the shade is lit by the sky: a small constant glow in the horizon colour, in
-        // display units (the shader doesn't expose it).
-        camera.insert(VolumetricFog { ambient_color: horizon, ambient_intensity: 0.15, step_count: 48, ..default() });
     }
 
     commands.insert_resource(Ground { island, field });

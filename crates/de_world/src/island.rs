@@ -132,10 +132,11 @@ pub struct Cinema {
     pub tonemapper: String,
     /// Glow around bright light (sun on water, sky): 0 off, 0.15 natural, 0.3 strong.
     pub bloom: f32,
-    /// Density of the low mist that sun shafts show in, per metre (0 off; 0.001 is a light valley
-    /// haze, 0.005 thick). Lit by the sun, shadowed by ridges.
+    /// Density of the low mist that sun shafts show in, per metre at sea level (0 off; 0.0003 is
+    /// a light valley haze, 0.0015 thick). Lit by the sun where ridges and clouds let it through.
     pub mist: f32,
-    /// Mist from sea level up to this height, metres.
+    /// Height over which the mist thins to a third, metres: it pools in the valleys and over
+    /// the sea.
     pub mist_top_m: f32,
     /// White balance in the grade: negative cooler, positive warmer (-1..1).
     pub temperature: f32,

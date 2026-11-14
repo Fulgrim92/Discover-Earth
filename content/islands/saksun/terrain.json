@@ -116,7 +116,9 @@
       "atmosphere": true,
       "exposure_ev100": 13,
       "bloom": 0.15,
-      "saturation": 1.1
+      "saturation": 1.1,
+      "mist": 0.0003,
+      "mist_top_m": 150.0
     },
     "clouds": {
       "cover": 0.55,

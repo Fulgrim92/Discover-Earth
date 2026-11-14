@@ -38,6 +38,9 @@ pub struct CloudParams {
     pub sky_top: Vec4,
     /// Light on the cloud bellies (radiance per channel), and the shadow strength on the ground.
     pub sky_bottom: Vec4,
+    /// Valley mist: density per metre at sea level, the height over which it thins (metres),
+    /// how far it is marched (metres), and the march steps. Density 0 turns it off.
+    pub mist: Vec4,
 }
 
 impl CloudParams {
@@ -79,7 +82,19 @@ impl CloudParams {
             sun: sun.extend(c.light * 2.0),
             sky_top: top.extend(c.reach_m),
             sky_bottom: bottom.extend(c.shadows),
+            mist: Vec4::new(cine.mist, cine.mist_top_m.max(1.0), MIST_REACH_M, MIST_STEPS),
         }
+    }
+}
+
+/// How far along each ray the mist is marched, and in how many steps.
+const MIST_REACH_M: f32 = 12_000.0;
+const MIST_STEPS: f32 = 40.0;
+
+impl CloudParams {
+    /// Whether the box needs drawing at all: clouds, mist, or both.
+    pub fn any(&self) -> bool {
+        self.shape.x > 0.0 || self.mist.x > 0.0
     }
 }
 
