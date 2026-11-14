@@ -136,6 +136,23 @@ impl WorldModule {
             c("world.schema.rules", Schema, "JSON schema for content/islands/<id>/rules.json"),
             c("tool.water", Command, "de water: water report, map vs WorldCover water, a shot list per waterfall"),
             c(
+                "world.water.shore",
+                System,
+                "Metres from each sea cell to land at the current tide (chamfer distance), for surf and shallows",
+            ),
+            c("world.look.tide", Content, "look.tide_m: sea level above mean; moves the sea, shore line and lagoon"),
+            c(
+                "world.grass.rules",
+                Content,
+                "rules.json grass: tufts per m² by land cover class, slope, altitude and exposure limits, LOD, budget",
+            ),
+            c(
+                "world.grass.scatter",
+                System,
+                "Seeded grass tufts per 16 m chunk, nested levels of detail; a test keeps every view under the budget",
+            ),
+            c("client.grass", System, "Grass blades around the camera, bent by the wind in the vertex shader"),
+            c(
                 "world.truth.photos",
                 Content,
                 "Per island: CC-licensed reference photos with credit and solved cameras (content/references/)",

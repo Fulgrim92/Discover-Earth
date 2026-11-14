@@ -7,6 +7,7 @@
 pub mod capture;
 pub mod clouds;
 pub mod drone;
+pub mod grass;
 pub mod ground;
 pub mod scene;
 pub mod water;

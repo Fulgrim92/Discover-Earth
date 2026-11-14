@@ -94,6 +94,9 @@ pub struct Look {
     /// Sea colour, linear RGB, and how see-through it is (0..1).
     pub sea: Vec3,
     pub sea_alpha: f32,
+    /// Tide: metres the sea stands above mean sea level (negative at low water). The Faroes
+    /// range about ±1 m.
+    pub tide_m: f32,
     /// Stream and lake water, and white water where streams fall steeply, linear RGB.
     pub stream: Vec3,
     pub foam: Vec3,
@@ -210,6 +213,7 @@ impl Default for Look {
             rock_slope: 0.38,
             sea: [0.012, 0.045, 0.065],
             sea_alpha: 0.92,
+            tide_m: 0.0,
             stream: [0.02, 0.045, 0.05],
             foam: [0.55, 0.6, 0.62],
             subdivide: 2,
@@ -254,11 +258,11 @@ impl Island {
         serde_json::from_str(&text).map_err(|e| LoadError::Json(path, e))
     }
 
-    /// Reads the island's heightmap.
+    /// Reads the island's heightmap, with the sea floor sloped (see [`crate::water::shape_seabed`]).
     pub fn heightfield(&self, content: &Path, id: &str) -> Result<Heightfield, LoadError> {
         let path = content.join("islands").join(id).join(&self.heightmap);
         let bytes = std::fs::read(&path).map_err(|e| LoadError::Io(path.clone(), e))?;
-        let h = Heightfield::from_png16(&bytes, self.height_range_m, self.metres_per_px)
+        let mut h = Heightfield::from_png16(&bytes, self.height_range_m, self.metres_per_px)
             .map_err(|e| LoadError::Heightmap(path.clone(), e))?;
         if [h.width as u32, h.depth as u32] != self.size_px {
             return Err(LoadError::Heightmap(
@@ -266,6 +270,7 @@ impl Island {
                 format!("is {}x{} px, terrain.json says {:?}", h.width, h.depth, self.size_px),
             ));
         }
+        crate::water::shape_seabed(&mut h);
         Ok(h)
     }
 

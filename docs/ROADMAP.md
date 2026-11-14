@@ -45,8 +45,10 @@ verdict.
 ## Step 4: Water from the land's own data
 
 First slice done (streams, waterfalls and lakes from the DEM, `rules.json` with overrides, `de water` with a map
-against WorldCover and a waterfall sheet), with moving water, foam, sky reflection and mist at the falls. Still to
-do: the lagoon with tide, an FFT sea with shore foam, and the cached generation graph.
+against WorldCover and a waterfall sheet), with moving water, foam, sky reflection and mist at the falls. Second
+slice: the sea with wind waves that turn and steepen towards the shore, surf and wash from a shore-distance field,
+shallows, and a tide (`look.tide_m`) that moves the shore line and the lagoon. Still to do: an FFT sea and the
+cached generation graph.
 
 - **Game:** the real streams of Saksun, found from the DEM; waterfalls where they drop over cliffs; the lagoon with
   tide; an FFT sea with foam on the shore.
@@ -61,6 +63,10 @@ do: the lagoon with tide, an FFT sea with shore foam, and the cached generation 
 - **Tool:** vegetation rules from WorldCover plus slope, height and exposure; budgets as tests (frame time and
   instance counts) with a reference GPU profile, run on C's PC.
 - **Proof:** ground-level hero shots before and after, and a clip with wind; frame time inside the budget.
+
+First slice done: grass from WorldCover plus slope, altitude and exposure (`rules.json` `grass`), seeded per chunk
+with nested levels of detail, blades bent by travelling gusts, and a budget test over every view and a 2 km grid of
+standing points. Still to do: moss and heather as their own plants, and the frame-time budget on C's PC.
 
 ## Step 6: Life
 

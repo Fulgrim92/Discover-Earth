@@ -55,7 +55,7 @@ pub struct ScenePlugin;
 
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((GroundPlugin, CloudsPlugin, crate::water::WaterPlugin))
+        app.add_plugins((GroundPlugin, CloudsPlugin, crate::water::WaterPlugin, crate::grass::GrassPlugin))
             .register_type::<CameraRig>()
             .init_resource::<CameraTarget>()
             .add_systems(Startup, spawn_scene);
@@ -77,6 +77,7 @@ type Materials<'w> = (
     ResMut<'w, Assets<TerrainMaterial>>,
     ResMut<'w, Assets<CloudMaterial>>,
     ResMut<'w, Assets<crate::water::WaterMaterial>>,
+    ResMut<'w, Assets<crate::grass::GrassMaterial>>,
 );
 
 fn spawn_scene(
@@ -84,7 +85,7 @@ fn spawn_scene(
     source: Res<IslandSource>,
     (target, sketch): (Res<CameraTarget>, Option<Res<Sketch>>),
     mut meshes: ResMut<Assets<Mesh>>,
-    (mut materials, mut terrain_materials, mut cloud_materials, mut water_materials): Materials,
+    (mut materials, mut terrain_materials, mut cloud_materials, mut water_materials, mut grass_materials): Materials,
     (mut images, mut media): (ResMut<Assets<Image>>, ResMut<Assets<ScatteringMedium>>),
 ) {
     let island = Island::load(&source.content, &source.id).unwrap_or_else(|e| panic!("{e}"));
@@ -117,9 +118,12 @@ fn spawn_scene(
         MeshMaterial3d(terrain_materials.add(terrain_material(&look, &source.content, &mut images, clouds, noise))),
     ));
 
-    let wm = crate::water::meshes(&water, &field, &surface);
-    let water_mat = water_materials.add(crate::water::material(&look, false));
-    let mist_mat = water_materials.add(crate::water::material(&look, true));
+    let sea_level = SEA_LEVEL_M + look.tide_m;
+    let shore = images.add(crate::water::shore_image(&field, look.tide_m));
+    let wm = crate::water::meshes(&water, &field, &surface, sea_level);
+    let water_mat =
+        water_materials.add(crate::water::material(&look, crate::water::Kind::Fresh, shore.clone(), [w, d]));
+    let mist_mat = water_materials.add(crate::water::material(&look, crate::water::Kind::Mist, shore.clone(), [w, d]));
     for (name, b, mat) in
         [("streams", wm.streams, water_mat.clone()), ("lakes", wm.lakes, water_mat), ("mist", wm.mist, mist_mat)]
     {
@@ -128,20 +132,29 @@ fn spawn_scene(
         }
     }
 
-    // Sea: one large plane, slightly see-through so the seabed darkens it near the shore.
-    let sea = Color::linear_rgba(look.sea[0], look.sea[1], look.sea[2], look.sea_alpha);
+    // Grass where the land cover and the terrain say, grown around the camera as it moves.
+    let truth = de_world::truth::Truth::load(&source.content, &source.id, &island).unwrap_or_else(|e| panic!("{e}"));
+    commands.insert_resource(crate::grass::Meadow::new(
+        rules.grass.clone(),
+        (field.clone(), truth, surface.clone()),
+        &look,
+        crate::ground::grass_ground_colour(&source.content, &look),
+        sea_level,
+        &mut grass_materials,
+    ));
+
+    // Sea: one large plane at the tide's level, with wind waves and foam along the shore.
     commands.spawn((
         Name::new("sea"),
         NotShadowCaster,
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(sea_reach, sea_reach))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: sea,
-            perceptual_roughness: 0.12,
-            reflectance: 0.6,
-            alpha_mode: AlphaMode::Blend,
-            ..default()
-        })),
-        Transform::from_xyz(0.0, SEA_LEVEL_M, 0.0),
+        Mesh3d(meshes.add(crate::water::sea_mesh(sea_reach))),
+        MeshMaterial3d(water_materials.add(crate::water::material(
+            &look,
+            crate::water::Kind::Sea,
+            shore.clone(),
+            [w, d],
+        ))),
+        Transform::from_xyz(0.0, sea_level, 0.0),
     ));
 
     // Sky: an unlit dome, horizon colour at the bottom fading to a deeper blue overhead; or, with
@@ -253,6 +266,7 @@ fn spawn_scene(
 /// (Catmull-Rom) plus `look.relief_m` of seeded small relief, with stream channels and lake
 /// beds cut in when water is given. [`Surface::height`] matches the mesh's triangles exactly,
 /// so water can sit on it.
+#[derive(Clone)]
 pub struct Surface {
     pub w: usize,
     pub d: usize,

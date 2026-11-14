@@ -4,6 +4,7 @@
 
 pub mod clouds;
 pub mod drone;
+pub mod grass;
 pub mod image;
 pub mod island;
 pub mod module;

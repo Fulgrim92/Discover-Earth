@@ -2374,6 +2374,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "de_world",
+ "half",
  "serde_json",
 ]
 

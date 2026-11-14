@@ -156,11 +156,37 @@ slope, steep stretches turn white, the sky is reflected with a Fresnel term (the
 waterfall gets mist where it lands. Colours are `look.stream` and `look.foam`. It moves with game time, so record a
 clip (a `drone` step with `clip`) and read its `motion.json` for flicker after changing it.
 
+The sea is one plane at `look.tide_m` metres above mean sea level, drawn by the same shader. It reads a
+shore-distance texture (`de_world::water::shore_distance`: metres from each sea cell to land at that tide) to turn
+and steepen the waves over the shallows, colour the water near land and draw surf bands and a wash at the edge.
+Five deep-water waves follow `look.clouds.wind`. To see a tide, sweep it: `de sweep lagoon --set look.tide_m=-1,0,1`;
+`content/shots/sea.json` has the sea shots and a surf clip. `scripts/check.sh` fails the `shaders` step when a shot
+log has a shader compile error, since a broken shader only logs and draws nothing.
+
 Thresholds live in `content/islands/<id>/rules.json` (`de schema rules`), under `water`. When the data is wrong,
 fix it there with `overrides`: `{"remove_streams": {"at": [x, z], "radius_m": r}}`, `{"remove_lake": {"at": [x, z]}}`
 or `{"add_stream": {"path": [[x, z], ...], "catchment_km2": a}}` (world metres, x east, z south). `map.png` draws our
 streams and lakes in deep blue over WorldCover's water in pale blue, waterfalls as numbered red rings, and
 `water.md` says how much of WorldCover's inland water we cover and lists the biggest blobs we miss.
+## Grass (`rules.json` `grass`)
+
+Grass is scattered by rules, not painted: `de_world::grass` reads the satellite land cover (tufts per m² per WorldCover
+class), thins it on steep ground, high up and on exposed ridges, and keeps it off the beach. The island is cut into
+16 m chunks, each scattered from its own seed, and every tuft has a `keep` number; a view far away draws only tufts
+whose `keep` is under its level of detail, so near views are a superset of far ones and nothing pops. The client
+(`crates/de_client/src/grass.rs`, `grass.wesl`) grows the chunks around the camera and bends the blades in the vertex
+shader with gusts that roll across the meadow along `look.clouds.wind`. Blades take the ground's normal and the
+grass layer's average colour, so a meadow matches the ground under it.
+
+```
+de-shot content/shots/grass.json out/grass        # ground-level shots and a wind clip
+cargo test -p de_world grass -- --nocapture       # budget: most tufts any view draws
+```
+
+Grass only shows within `far_m` (40 m) of the camera, so aerial shots are unchanged. Keep the depth prepass shader
+(`grass_prepass.wesl`) in step with `grass.wesl`: the clouds, mist and atmosphere read its depth, and a blade the
+prepass doesn't know about comes out white.
+
 ## Ground truth (real photos)
 
 The satellite says what colour the ground is; photos say what the place looks like from the ground: sky, haze, light,
