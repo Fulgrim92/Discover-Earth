@@ -62,7 +62,8 @@ cached generation graph.
 
 First slice done: grass from WorldCover plus slope, altitude and exposure (`rules.json` `grass`), seeded per chunk
 with nested levels of detail, blades bent by travelling gusts, and a budget test over every view and a 2 km grid of
-standing points. Still to do: moss and heather as their own plants, and the frame-time budget on C's PC.
+standing points. Second slice done: heather on heath and drained upland slopes, moss on bare ground, the plateau and
+wet flats, and longer grass in sheltered hollows, all in clumps. Still to do: the frame-time budget on C's PC.
 
 ## Step 6: Life
 

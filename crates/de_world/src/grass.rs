@@ -1,5 +1,8 @@
-//! Where grass grows and how tall: tufts scattered over the land by rules, from the satellite's
-//! land cover (ESA WorldCover) plus the terrain's slope, height and exposure.
+//! Where grass, heather and moss grow and how tall: tufts scattered over the land by rules,
+//! from the satellite's land cover (ESA WorldCover) plus the terrain's slope, height, exposure
+//! and shelter. Faroese ground is grazed turf in the valleys, taller grass in sheltered hollows,
+//! heather on the drier upland slopes and moss (woolly fringe-moss heath, bog moss) on the high
+//! plateaus and the wet flats.
 //!
 //! The island is cut into square chunks. Each chunk scatters its candidate tufts from its own
 //! seed (the rules' seed and the chunk's coordinates), so a chunk is the same whichever way the
@@ -25,8 +28,24 @@ pub struct GrassRules {
     /// `built`, `bare`, `wetland`, `moss`, ...). Classes not listed get none. Without land
     /// cover data every land cell counts as `grass`.
     pub density: BTreeMap<String, f32>,
-    /// Tuft height in metres, shortest and tallest, on sheltered low ground.
+    /// Grass tuft height in metres, shortest and tallest, on open low ground.
     pub height_m: [f32; 2],
+    /// Tallest grass in fully sheltered spots (hollows, gullies, valley floors under slopes),
+    /// metres: out of the wind and away from the sheep, grass grows long.
+    pub sheltered_height_m: f32,
+    /// Ground this many metres below the ring around it counts as fully sheltered.
+    pub sheltered_m: f32,
+    /// Share of tufts that are heather, by land cover class; plus `heather_upland` on the
+    /// slopes between `upland_m[0]` and `upland_m[1]` metres up.
+    pub heather: BTreeMap<String, f32>,
+    pub heather_upland: f32,
+    /// Share of tufts that are moss, by land cover class; plus `moss_high` above `upland_m[1]`,
+    /// and `moss_wet` on flat sheltered ground (bog).
+    pub moss: BTreeMap<String, f32>,
+    pub moss_high: f32,
+    pub moss_wet: f32,
+    /// Where the upland begins and where it is fully upland, metres above the sea.
+    pub upland_m: [f32; 2],
     /// Gradient (metres up per metre across) where grass stops: cliffs and scree stay bare.
     pub max_gradient: f32,
     /// Grass thins and shortens with altitude: half as dense and tall this many metres up.
@@ -51,14 +70,27 @@ pub struct GrassRules {
 
 impl Default for GrassRules {
     fn default() -> Self {
-        let density =
-            [("grass", 24.0), ("crop", 24.0), ("shrub", 12.0), ("moss", 8.0), ("wetland", 12.0), ("tree", 12.0)]
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect();
+        let map = |v: &[(&str, f32)]| v.iter().map(|&(k, v)| (k.to_string(), v)).collect();
         Self {
-            density,
+            density: map(&[
+                ("grass", 24.0),
+                ("crop", 24.0),
+                ("shrub", 16.0),
+                ("tree", 16.0),
+                ("moss", 16.0),
+                ("wetland", 16.0),
+                ("bare", 3.0),
+            ]),
             height_m: [0.06, 0.2],
+            sheltered_height_m: 0.45,
+            sheltered_m: 8.0,
+            // WorldCover's few "tree" pixels on the Faroes are dark heath, not woods.
+            heather: map(&[("shrub", 0.75), ("tree", 0.7), ("grass", 0.03)]),
+            heather_upland: 0.5,
+            moss: map(&[("moss", 0.85), ("wetland", 0.5), ("bare", 0.9), ("grass", 0.03)]),
+            moss_high: 0.55,
+            moss_wet: 0.35,
+            upland_m: [150.0, 400.0],
             max_gradient: 1.1,
             half_at_m: 350.0,
             exposed_m: 12.0,
@@ -73,11 +105,20 @@ impl Default for GrassRules {
     }
 }
 
-/// One tuft of grass on the ground at (x, z).
+/// What a tuft is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub enum Plant {
+    Grass,
+    Heather,
+    Moss,
+}
+
+/// One tuft of grass, heather or moss on the ground at (x, z).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct Tuft {
     pub x: f32,
     pub z: f32,
+    pub plant: Plant,
     /// Height in metres.
     pub height: f32,
     /// Which way the tuft leans at rest, radians from +x.
@@ -96,12 +137,17 @@ pub struct Growth {
     /// 0..1 between `height_m[0]` and `height_m[1]`.
     pub tall: f32,
     pub dry: f32,
+    /// 0 open, 1 fully sheltered (grass grows towards `sheltered_height_m`).
+    pub shelter: f32,
+    /// Shares of the tufts that are heather and moss (the rest is grass).
+    pub heather: f32,
+    pub moss: f32,
 }
 
 impl GrassRules {
     /// Growth at world x, z, from land cover (when there is any) and the terrain.
     pub fn growth(&self, field: &Heightfield, truth: Option<&Truth>, sea_level: f32, x: f32, z: f32) -> Growth {
-        let none = Growth { density: 0.0, tall: 0.0, dry: 0.0 };
+        let none = Growth { density: 0.0, tall: 0.0, dry: 0.0, shelter: 0.0, heather: 0.0, moss: 0.0 };
         if !field.contains(x, z) {
             return none;
         }
@@ -129,10 +175,26 @@ impl GrassRules {
         let ring =
             (field.height(x + r, z) + field.height(x - r, z) + field.height(x, z + r) + field.height(x, z - r)) / 4.0;
         let exposed = smoothstep(0.0, self.exposed_m.max(0.1), h - ring);
+        let shelter = smoothstep(0.0, self.sheltered_m.max(0.1), ring - h) * alt;
         let density = base * steep * (0.4 + 0.6 * alt);
         let tall = (alt * (1.0 - 0.5 * exposed) * (0.5 + 0.5 * steep)).clamp(0.0, 1.0);
         let dry = (1.0 - alt + exposed * 0.5 + (1.0 - steep) * 0.4).clamp(0.0, 1.0);
-        Growth { density, tall, dry }
+        let up = smoothstep(self.upland_m[0], self.upland_m[1], h);
+        let high = smoothstep(self.upland_m[1] * 0.85, self.upland_m[1] * 1.3, h);
+        // Heather likes drained upland slopes, not the plateaus or the flats.
+        let drained = smoothstep(0.03, 0.15, grad);
+        let flat = 1.0 - smoothstep(0.02, 0.08, grad);
+        let share = |m: &BTreeMap<String, f32>| m.get(class).copied().unwrap_or(0.0);
+        let mut moss =
+            share(&self.moss) + self.moss_high * high + self.moss_wet * flat * shelter.max(0.5 * (1.0 - alt));
+        moss = moss.clamp(0.0, 1.0);
+        let heather =
+            ((share(&self.heather) + self.heather_upland * up * (1.0 - high) * drained) * (1.0 - moss)).clamp(0.0, 1.0);
+        // Heather and moss grow in patches a few metres across, not evenly mixed into the grass.
+        let (ph, pm) = (patch(x, z, self.seed), patch(x + 517.0, z - 211.0, self.seed));
+        let moss = (moss * 2.0 * pm).clamp(0.0, 1.0);
+        let heather = (heather * 2.0 * ph).clamp(0.0, 1.0 - moss);
+        Growth { density, tall, dry, shelter, heather, moss }
     }
 
     /// Chunk coordinates of the chunk holding world x, z.
@@ -152,16 +214,30 @@ impl GrassRules {
         let mut out = Vec::new();
         for _ in 0..n {
             let (x, z) = (x0 + f() * self.chunk_m, z0 + f() * self.chunk_m);
-            let (accept, keep, turn, vary) = (f(), f(), f(), f());
+            let (accept, keep, turn, vary, pick) = (f(), f(), f(), f(), f());
             let g = self.growth(field, truth, sea_level, x, z);
             if accept * max_density >= g.density {
                 continue;
             }
             let t = (g.tall * (0.6 + 0.8 * vary)).clamp(0.0, 1.0);
+            let plant = if pick < g.moss {
+                Plant::Moss
+            } else if pick < g.moss + g.heather {
+                Plant::Heather
+            } else {
+                Plant::Grass
+            };
+            let open = self.height_m[0] + (self.height_m[1] - self.height_m[0]) * t;
+            let height = match plant {
+                Plant::Grass => open + (self.sheltered_height_m * (0.6 + 0.4 * vary) - open).max(0.0) * g.shelter,
+                Plant::Heather => 0.12 + 0.25 * t,
+                Plant::Moss => 0.03 + 0.04 * vary,
+            };
             out.push(Tuft {
                 x,
                 z,
-                height: self.height_m[0] + (self.height_m[1] - self.height_m[0]) * t,
+                plant,
+                height,
                 turn: turn * std::f32::consts::TAU,
                 dry: (g.dry + (vary - 0.5) * 0.3).clamp(0.0, 1.0),
                 keep,
@@ -221,6 +297,22 @@ impl GrassRules {
     }
 }
 
+/// Smooth seeded noise in 0..1 with features about `PATCH_M` across (value noise, smoothstep
+/// interpolation), for patches of heather and moss.
+fn patch(x: f32, z: f32, seed: u64) -> f32 {
+    const PATCH_M: f32 = 6.0;
+    let (fx, fz) = (x / PATCH_M, z / PATCH_M);
+    let (ix, iz) = (fx.floor(), fz.floor());
+    let corner = |a: f32, b: f32| {
+        let h = (a as i32 as u32 as u64) << 32 | (b as i32 as u32 as u64);
+        Rng::new(h ^ seed.wrapping_mul(0x9E37_79B9_7F4A_7C15)).next_f64() as f32
+    };
+    let (tx, tz) = (smoothstep(0.0, 1.0, fx - ix), smoothstep(0.0, 1.0, fz - iz));
+    let top = corner(ix, iz) + (corner(ix + 1.0, iz) - corner(ix, iz)) * tx;
+    let bottom = corner(ix, iz + 1.0) + (corner(ix + 1.0, iz + 1.0) - corner(ix, iz + 1.0)) * tx;
+    top + (bottom - top) * tz
+}
+
 fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
     let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
@@ -267,6 +359,38 @@ mod tests {
         let (x, z) = xz(&f, 30, 8);
         let high = g.growth(&f, None, 0.6, x, z);
         assert!(high.density < meadow.density && high.tall < meadow.tall && high.dry > meadow.dry, "{high:?}");
+    }
+
+    #[test]
+    fn heather_on_upland_slopes_moss_up_high_and_long_grass_in_hollows() {
+        let g = GrassRules::default();
+        // A slope rising 0.15 m per metre east from the sea to 600 m, with a hollow at 60 m.
+        let (w, d) = (160, 20);
+        let mut heights: Vec<f32> = (0..w * d).map(|i| (i % w) as f32 * 30.0 * 0.15).collect();
+        for r in 0..d {
+            for c in 12..15 {
+                heights[r * w + c] -= 12.0;
+            }
+        }
+        let f = Heightfield { width: w, depth: d, spacing: [30.0, 30.0], heights };
+        let at = |c: usize| {
+            let [x, z] = f.world_xz(c, d / 2);
+            g.growth(&f, None, 0.6, x, z)
+        };
+        let low = at(30); // 135 m, open slope
+        let mid = at(60); // 270 m
+        let top = at(140); // 630 m
+        assert!(mid.heather > low.heather + 0.2, "{mid:?} vs {low:?}");
+        assert!(top.moss > 0.4 && top.moss > mid.moss, "{top:?}");
+        let hollow = at(13);
+        assert!(hollow.shelter > 0.5 && low.shelter < 0.1, "{hollow:?} {low:?}");
+        // So grass in the hollow grows longer than on the open slope.
+        let tufts = |c: usize| {
+            let [x, z] = f.world_xz(c, d / 2);
+            g.scatter(&f, None, 0.6, g.chunk_of(x, z))
+        };
+        let tallest = |v: Vec<Tuft>| v.iter().filter(|t| t.plant == Plant::Grass).map(|t| t.height).fold(0.0, f32::max);
+        assert!(tallest(tufts(13)) > tallest(tufts(30)) + 0.1);
     }
 
     #[test]

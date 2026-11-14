@@ -178,6 +178,13 @@ whose `keep` is under its level of detail, so near views are a superset of far o
 shader with gusts that roll across the meadow along `look.clouds.wind`. Blades take the ground's normal and the
 grass layer's average colour, so a meadow matches the ground under it.
 
+Three plants share the scatter. **Grass** grows longer (`sheltered_height_m`) in hollows sheltered by the ground
+around it (`sheltered_m`). **Heather** grows on WorldCover shrub and heath ("tree" on these islands, `heather` shares)
+and on drained upland slopes (`heather_upland` between `upland_m`). **Moss** carpets bare and moss cover, the high
+plateau (`moss_high`) and wet flat ground (`moss_wet`). Each share is broken into patches by seeded noise, so plants
+grow in clumps instead of an even mix. Heather is stiffer in the wind and moss does not move (vertex colour alpha is
+the sway).
+
 ```
 de-shot content/shots/grass.json out/grass        # ground-level shots and a wind clip
 cargo test -p de_world grass -- --nocapture       # budget: most tufts any view draws
