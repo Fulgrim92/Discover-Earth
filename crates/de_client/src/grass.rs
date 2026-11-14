@@ -1,4 +1,5 @@
-//! Grass: the tufts `de_world::grass` scatters, drawn as blades that bend in the wind.
+//! Grass, heather and moss: the tufts `de_world::grass` scatters, drawn as blades that bend in
+//! the wind (grass most, heather a little, moss not at all).
 //!
 //! Each chunk around the camera is one mesh of blades, built once per level of detail (see
 //! `GrassRules::chunks_near`). `grass.wesl` bends the blades with the wind in the vertex shader
@@ -17,7 +18,12 @@ use bevy::{
     render::render_resource::{AsBindGroup, ShaderType},
     shader::ShaderRef,
 };
-use de_world::{Heightfield, Rng, grass::GrassRules, island::Look, truth::Truth};
+use de_world::{
+    Heightfield, Rng,
+    grass::{GrassRules, Plant},
+    island::Look,
+    truth::Truth,
+};
 
 use crate::scene::Surface;
 
@@ -76,8 +82,43 @@ pub struct Meadow {
     chunks: HashMap<[i32; 2], (Entity, u8)>,
 }
 
-/// Blades per tuft.
-const BLADES: usize = 4;
+/// Most blades per tuft (heather), for sizing buffers.
+const BLADES: usize = 7;
+
+/// How each plant is built from blades: count, spread from the tuft's centre, half width and
+/// lean (both per metre of height), how the lean curls (2: arcs over at the top, 1: straight
+/// out), and how much the wind moves it (vertex colour alpha, read by `grass.wesl`).
+struct Kind {
+    blades: usize,
+    radius: [f32; 2],
+    width: [f32; 2],
+    lean: [f32; 2],
+    curl: f32,
+    sway: f32,
+}
+
+impl Kind {
+    fn of(plant: Plant) -> Self {
+        match plant {
+            Plant::Grass => {
+                Self { blades: 4, radius: [0.03, 0.1], width: [0.006, 0.012], lean: [0.2, 0.65], curl: 2.0, sway: 1.0 }
+            }
+            // Stiff woody twigs in a rounded clump.
+            Plant::Heather => Self {
+                blades: 7,
+                radius: [0.02, 0.12],
+                width: [0.01, 0.016],
+                lean: [0.15, 0.45],
+                curl: 1.5,
+                sway: 0.25,
+            },
+            // A low cushion: short wide fronds lying out flat.
+            Plant::Moss => {
+                Self { blades: 7, radius: [0.02, 0.16], width: [0.03, 0.05], lean: [1.5, 2.5], curl: 1.0, sway: 0.0 }
+            }
+        }
+    }
+}
 
 impl Meadow {
     /// `ground`: the heightfield, its land cover (if any) and the drawn surface.
@@ -96,8 +137,8 @@ impl Meadow {
         let material = materials.add(GrassMaterial {
             base: StandardMaterial {
                 base_color: Color::WHITE,
-                perceptual_roughness: 0.85,
-                reflectance: 0.3,
+                perceptual_roughness: 0.95,
+                reflectance: 0.1,
                 cull_mode: None,
                 ..default()
             },
@@ -125,12 +166,16 @@ impl Meadow {
         let mut uv_b = Vec::with_capacity(n * 5);
         let mut col = Vec::with_capacity(n * 5);
         let mut idx: Vec<u32> = Vec::with_capacity(n * 9);
-        // Live blades: the colour the ground's grass layer averages to (so the meadow matches
-        // the ground under and beyond it), a little greener, since soil and litter make the
-        // ground browner than the blades. Dry blades: straw, about as bright.
+        // Colours start from what the ground's grass layer averages to, so plants match the
+        // ground under and beyond them. Live grass: a little greener (soil and litter make the
+        // ground browner than the blades); dry grass: straw, about as bright. Heather: dark
+        // woody stems with purple-brown tips. Moss: yellow-green, greying on high dry ground
+        // (woolly fringe-moss).
         let g = self.lush;
         let green = [g[0] * 0.95, g[1] * 1.1, g[2] * 0.85];
         let straw = [g[0] * 1.3, g[1] * 1.15, g[2] * 0.75];
+        let mix3 = |a: [f32; 3], b: [f32; 3], t: f32| -> [f32; 3] { std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t) };
+        let grey = [(g[0] + g[1] + g[2]) / 3.0 * 1.1; 3];
         let s = &self.surface;
         for t in &tufts {
             let e = 0.75;
@@ -143,29 +188,41 @@ impl Meadow {
             .normalize();
             let mut rng = Rng::new((t.x.to_bits() as u64) << 32 | t.z.to_bits() as u64);
             let mut f = || rng.next_f64() as f32;
-            let c: [f32; 3] = std::array::from_fn(|i| green[i] + (straw[i] - green[i]) * t.dry * 0.7);
-            for b in 0..BLADES {
+            let p = Kind::of(t.plant);
+            let (root, tip) = match t.plant {
+                Plant::Grass => {
+                    let c = mix3(green, straw, t.dry * 0.7);
+                    (c, c)
+                }
+                Plant::Heather => ([g[0] * 0.75, g[1] * 0.55, g[2] * 0.65], [g[0] * 1.2, g[1] * 0.62, g[2] * 1.25]),
+                Plant::Moss => {
+                    let c = mix3([g[0] * 0.65, g[1] * 0.8, g[2] * 0.35], grey, t.dry * 0.2);
+                    (c, c)
+                }
+            };
+            for b in 0..p.blades {
                 let a = t.turn + b as f32 * 2.399 + (f() - 0.5) * 0.6;
                 let (dx, dz) = (a.cos(), a.sin());
-                let r = 0.03 + f() * 0.07;
+                let r = p.radius[0] + f() * (p.radius[1] - p.radius[0]);
                 let (bx, bz) = (t.x + dx * r, t.z + dz * r);
                 let y = ground(bx, bz) - 0.02;
                 let h = t.height * (0.65 + f() * 0.5);
-                let w = 0.006 + f() * 0.006;
+                let w = p.width[0] + f() * (p.width[1] - p.width[0]);
                 // Blades face across their lean; they lean out from the tuft's centre.
                 let (sx, sz) = (-dz * w, dx * w);
-                let lean = (0.2 + f() * 0.45) * h;
+                let lean = (p.lean[0] + f() * (p.lean[1] - p.lean[0])) * h;
                 let shade = 0.85 + f() * 0.3;
                 let base = pos.len() as u32;
                 for (k, &(up, half)) in
                     [(0.0, 1.0), (0.0, -1.0), (0.55, 0.75), (0.55, -0.75), (1.0, 0.0)].iter().enumerate()
                 {
-                    let bend = lean * up * up;
+                    let bend = lean * f32::powf(up, p.curl);
                     pos.push([bx + sx * half + dx * bend, y + h * up, bz + sz * half + dz * bend]);
                     nor.push(n.to_array());
                     uv.push([if k == 4 { 0.0 } else { half }, up]);
                     uv_b.push([h, t.keep]);
-                    col.push([c[0] * shade, c[1] * shade, c[2] * shade, 1.0]);
+                    let c = mix3(root, tip, up);
+                    col.push([c[0] * shade, c[1] * shade, c[2] * shade, p.sway]);
                 }
                 idx.extend_from_slice(&[
                     base,

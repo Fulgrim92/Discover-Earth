@@ -793,6 +793,21 @@ pub const REGIONS: [&str; 4] = ["sky", "sea", "land_near", "land_far"];
 
 /// Land closer than this is "near", metres: past it fog and haze start to show.
 pub const NEAR_M: f32 = 1500.0;
+/// Region index of pixels measured in no region (see [`regions`]).
+pub const SKIPPED: u8 = 255;
+
+/// Whether a sea ray from `eye` to `hit` passes low enough over grassland near the camera for
+/// the grass (de_world::grass) to stand in its way.
+fn grass_hides_sea(world: &World, g: &crate::grass::GrassRules, eye: [f32; 3], hit: [f32; 3]) -> bool {
+    let tallest = g.height_m[1].max(g.sheltered_height_m);
+    world.clearance(eye, direction(eye, hit), g.far_m, g.above_sea_m) < tallest
+}
+
+fn direction(from: [f32; 3], to: [f32; 3]) -> [f32; 3] {
+    let d = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+    let l = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt().max(1e-6);
+    [d[0] / l, d[1] / l, d[2] / l]
+}
 
 /// How a render compares with a photo from the same camera.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -827,12 +842,15 @@ pub struct RegionMatch {
     pub lightness_gap: f32,
 }
 
-/// Region index per pixel of `cam` at `w` wide (see [`REGIONS`]), from the sensor ray cast.
-pub fn regions(world: &World, cam: &CameraShot, w: u32) -> (u32, u32, Vec<u8>) {
+/// Region index per pixel of `cam` at `w` wide (see [`REGIONS`]; [`SKIPPED`] for none), from the sensor ray cast.
+pub fn regions(world: &World, cam: &CameraShot, w: u32, grass: &crate::grass::GrassRules) -> (u32, u32, Vec<u8>) {
     let buf = world.buffers(cam, w);
     let reg = (0..buf.class.len())
         .map(|i| match buf.class[i] {
             Class::Sky => 0,
+            // Sea seen just over a grassy bank near the camera is grass in the render (blades
+            // stand up into it), so it is not measured as sea.
+            Class::Sea if grass_hides_sea(world, grass, cam.pos, buf.pos[i]) => SKIPPED,
             Class::Sea => 1,
             _ if buf.depth[i] < NEAR_M => 2,
             _ => 3,

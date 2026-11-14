@@ -178,6 +178,13 @@ whose `keep` is under its level of detail, so near views are a superset of far o
 shader with gusts that roll across the meadow along `look.clouds.wind`. Blades take the ground's normal and the
 grass layer's average colour, so a meadow matches the ground under it.
 
+Three plants share the scatter. **Grass** grows longer (`sheltered_height_m`) in hollows sheltered by the ground
+around it (`sheltered_m`). **Heather** grows on WorldCover shrub and heath ("tree" on these islands, `heather` shares)
+and on drained upland slopes (`heather_upland` between `upland_m`). **Moss** carpets bare and moss cover, the high
+plateau (`moss_high`) and wet flat ground (`moss_wet`). Each share is broken into patches by seeded noise, so plants
+grow in clumps instead of an even mix. Heather is stiffer in the wind and moss does not move (vertex colour alpha is
+the sway).
+
 ```
 de-shot content/shots/grass.json out/grass        # ground-level shots and a wind clip
 cargo test -p de_world grass -- --nocapture       # budget: most tufts any view draws
@@ -212,7 +219,10 @@ lightness distribution (L* earth mover's distance) and the images' six-colour pa
 those three; lower is closer to the real place. It writes `<id>.match.png` (photo | before | render, region swatches,
 L* 10/50/90th percentiles, palettes), `sheet.png`, `match.json` and `match.md`. `--set` renders through an overlay like
 `de sweep`, so a look change can be scored against the photos before it touches `terrain.json`; `--ref` adds an
-earlier run as "before" and counts on how many photos the gap went down.
+earlier run as "before" and counts on how many photos the gap went down. `<id>.regions.png` shows photo and render
+tinted by region (sky blue, sea cyan, land near green, land far orange, unmeasured dark): look at it before trusting a
+region's numbers. The sensor casts against the ground as drawn (`de_world::Surface`: smooth, with relief and water
+cut in), and sea seen low over grassland within the grass's reach is left out, because grass stands in it in the render.
 
 Caveats: each photo has its own weather and hour, and the render has one look, so a gap never reaches zero; judge the
 mean and how many photos move. Houses, people and fences are in the photos and not in the island.

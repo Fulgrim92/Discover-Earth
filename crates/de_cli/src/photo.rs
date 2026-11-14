@@ -121,7 +121,10 @@ pub fn run(content: &Path, a: &MatchArgs) -> Result<String, String> {
         })
         .transpose()?;
 
-    let world = World::new(&isl, &field);
+    let rules = de_world::water::Rules::load(content, &a.island)?;
+    let water = de_world::water::Water::find(&field, &rules.water);
+    let surface = de_world::Surface::new(&field, &isl.look, &a.island, Some((&water, rules.water.channel_depth_m)));
+    let world = World::new(&isl, &field).with_water(&water).with_surface(&surface);
     let mut results = Vec::new();
     let mut rows = Vec::new();
     for p in &refs.photos {
@@ -161,8 +164,9 @@ pub fn run(content: &Path, a: &MatchArgs) -> Result<String, String> {
             return Err(format!("{}: de-shot failed, see {}", p.id, log.display()));
         }
         let render = Rgba::load(&a.out.join(format!("{}.png", p.id)))?;
-        let (rw, rh, reg) = photo::regions(&world, &cam.shot(&p.id, [w, h]), 320);
+        let (rw, rh, reg) = photo::regions(&world, &cam.shot(&p.id, [w, h]), 320, &rules.grass);
         let m = photo::compare(&p.id, &img, &render, rw, rh, &reg);
+        regions_overlay(&img, &render, rw, rh, &reg).save(&a.out.join(format!("{}.regions.png", p.id)))?;
         let old = before.as_ref().and_then(|b| b.iter().find(|o| o.id == p.id));
         let old_render = a.reference.as_ref().and_then(|r| Rgba::load(&r.join(format!("{}.png", p.id))).ok());
         let credit = p.source.as_ref().map(|s| s.credit.clone()).unwrap_or_default();
@@ -234,6 +238,29 @@ pub fn run(content: &Path, a: &MatchArgs) -> Result<String, String> {
     md.push_str(&format!("\n\nSheet: {}\n", a.out.join("sheet.png").display()));
     std::fs::write(a.out.join("match.md"), &md).map_err(|e| e.to_string())?;
     Ok(md)
+}
+
+/// Photo | render, each tinted by the region it is measured in (sky blue, sea cyan, land near
+/// green, land far orange; skipped pixels dark), so a wrong region split shows before its numbers are trusted.
+fn regions_overlay(photo: &Rgba, render: &Rgba, w: u32, h: u32, reg: &[u8]) -> Rgba {
+    const TINT: [[f32; 3]; 4] = [[80.0, 140.0, 255.0], [0.0, 230.0, 230.0], [60.0, 220.0, 60.0], [255.0, 150.0, 40.0]];
+    let tint = |img: &Rgba| {
+        let mut out = img.resize(w, h);
+        for (px, &k) in out.pixels.iter_mut().zip(reg) {
+            let Some(t) = TINT.get(k as usize) else {
+                *px = [px[0] / 3, px[1] / 3, px[2] / 3, 255];
+                continue;
+            };
+            for c in 0..3 {
+                px[c] = (0.55 * px[c] as f32 + 0.45 * t[c]) as u8;
+            }
+        }
+        out
+    };
+    let mut sheet = Rgba::new(2 * w + 4, h, [24, 24, 28, 255]);
+    sheet.blit(&tint(photo), 0, 0);
+    sheet.blit(&tint(render), w + 4, 0);
+    sheet
 }
 
 /// One photo's card: photo | (before) | render on top, then per-region colours and palettes.
