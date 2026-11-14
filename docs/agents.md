@@ -66,8 +66,10 @@ shadows (layout, "is it there", about 10 s a run), `check` 1280x720, `hero` 1920
 `bloom`, `mist`/`mist_top_m`, `temperature`, `saturation`, `contrast`. Sweep it like any look value, e.g.
 `de sweep valley --set look.sun_azimuth_deg=230,280,320 --set look.sun_elevation_deg=5,12,30`.
 `content/shots/cinematic.json` renders the hero views and a cine-mode clip down the valley (`golden-valley`).
-Notes from tuning: Bevy's `contrast` is strong (1.15 already crushes shadows); mist density is per metre, so 0.001 is
-already a visible haze; the atmosphere is a clear sky, so it moves renders away from the overcast reference photos
+Notes from tuning: Bevy's `contrast` is strong (1.15 already crushes shadows); mist density is per metre at sea level
+and thins with height over `mist_top_m`, so 0.0003 is already a valley haze and 0.0015 a thick fog. The mist is
+marched in `clouds.wesl` with the sun's shadow map, so ridges cast shafts through it (none in `sketch`, which has no
+shadows); the atmosphere is a clear sky, so it moves renders away from the overcast reference photos
 (`de photo match` says how far).
 
 ## Clouds (`look.clouds`)

@@ -35,6 +35,7 @@ struct CloudParams {
     sun: vec4<f32>,
     sky_top: vec4<f32>,
     sky_bottom: vec4<f32>,
+    mist: vec4<f32>,
 }
 @group(constants::MATERIAL_BIND_GROUP) @binding(105) var<uniform> clouds: CloudParams;
 @group(constants::MATERIAL_BIND_GROUP) @binding(106) var cloud_tex: texture_3d<f32>;
