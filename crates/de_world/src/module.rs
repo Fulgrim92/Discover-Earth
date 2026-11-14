@@ -102,7 +102,7 @@ impl WorldModule {
             c(
                 "world.sense.pack",
                 System,
-                "Per shot: class, depth, normal and sun-shadow buffers, stats JSON and a text description (sense.md)",
+                "Per shot: class, depth, normal and sun-shadow buffers cast against the drawn ground, stats JSON and a text description (sense.md)",
             ),
             c(
                 "world.sense.motion",
@@ -165,7 +165,7 @@ impl WorldModule {
             c(
                 "tool.photo.match",
                 Command,
-                "de photo match: render each photo's camera; colour, lightness and palette gap vs the photo",
+                "de photo match: render each photo's camera; colour, lightness and palette gap vs the photo per region (regions.png shows the split)",
             ),
             c(
                 "world.look.cinema",

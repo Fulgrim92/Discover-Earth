@@ -174,7 +174,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         let colour = mix(water.deep.rgb, water.shallow.rgb, (1.0 - smoothstep(10.0, 140.0, d)) * 0.8);
         pbr_input.N = N;
         pbr_input.material.base_color = vec4(mix(colour, water.foam.rgb, foam), 1.0);
-        pbr_input.material.perceptual_roughness = mix(0.08, 0.7, foam);
+        pbr_input.material.perceptual_roughness = mix(max(pbr_input.material.perceptual_roughness, 0.08), 0.7, foam);
         out.color = apply_pbr_lighting(pbr_input);
         let r = reflect(-V, N);
         let fresnel = 0.02 + 0.98 * pow(1.0 - saturate(dot(N, V)), 5.0);

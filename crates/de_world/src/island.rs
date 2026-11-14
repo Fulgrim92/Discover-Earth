@@ -93,6 +93,9 @@ pub struct Look {
     /// Sea colour, linear RGB, and how see-through it is (0..1).
     pub sea: Vec3,
     pub sea_alpha: f32,
+    /// How rough the sea's surface reads (0 mirror .. 1 matte). Wind-roughened sea reflects
+    /// far less of the sky at a low angle than a mirror does.
+    pub sea_roughness: f32,
     /// Tide: metres the sea stands above mean sea level (negative at low water). The Faroes
     /// range about ±1 m.
     pub tide_m: f32,
@@ -194,6 +197,7 @@ impl Default for Look {
             rock_slope: 0.38,
             sea: [0.012, 0.045, 0.065],
             sea_alpha: 0.92,
+            sea_roughness: 0.06,
             tide_m: 0.0,
             stream: [0.02, 0.045, 0.05],
             foam: [0.55, 0.6, 0.62],
@@ -273,6 +277,9 @@ impl Island {
         out.extend(self.look.clouds.problems());
         if !(1..=4).contains(&self.look.subdivide) {
             out.push(format!("look.subdivide must be 1..=4, is {}", self.look.subdivide));
+        }
+        if !(0.0..=1.0).contains(&self.look.sea_roughness) {
+            out.push(format!("look.sea_roughness must be 0..=1, is {}", self.look.sea_roughness));
         }
         if self.views.is_empty() {
             out.push("no views: add at least one (the first is the spawn point)".into());

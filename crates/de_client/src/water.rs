@@ -89,8 +89,9 @@ pub fn material(look: &Look, kind: Kind, shore: Handle<Image>, extent: [f32; 2])
     WaterMaterial {
         base: StandardMaterial {
             base_color: Color::WHITE,
-            perceptual_roughness: 0.06,
-            reflectance: 0.5,
+            perceptual_roughness: if kind == Kind::Sea { look.sea_roughness } else { 0.06 },
+            // Water reflects 2% head on: F0 = 0.16 * reflectance^2.
+            reflectance: 0.35,
             alpha_mode: if see_through { AlphaMode::Blend } else { AlphaMode::Opaque },
             cull_mode: if kind == Kind::Mist { None } else { Some(bevy::render::render_resource::Face::Back) },
             double_sided: kind == Kind::Mist,

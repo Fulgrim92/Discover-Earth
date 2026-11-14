@@ -110,6 +110,7 @@
     "sky_light": 1500,
     "sun_lux": 12000,
     "fog_half_m": 60000,
+    "sea_roughness": 0.2,
     "sun_azimuth_deg": 290,
     "sun_elevation_deg": 9,
     "cinema": {
