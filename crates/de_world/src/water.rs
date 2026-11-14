@@ -27,6 +27,8 @@ const SEA_CELL_M: f32 = 0.5;
 #[serde(default, deny_unknown_fields)]
 pub struct Rules {
     pub water: WaterRules,
+    /// Where grass grows (`de_world::grass`).
+    pub grass: crate::grass::GrassRules,
 }
 
 /// How water is found in the terrain.

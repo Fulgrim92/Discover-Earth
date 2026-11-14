@@ -202,6 +202,47 @@ fn halve(px: &[u8], w: u32, h: u32, srgb: bool) -> (Vec<u8>, u32, u32) {
     (out, nw, nh)
 }
 
+/// The average colour (linear) the terrain shader draws for the grass layer: the scanned
+/// texture's mean with the shader's tint towards `look.grass`, or the noise colour's mean when
+/// there is no texture. Grass blades use it so a meadow and the ground under it match.
+pub fn grass_ground_colour(content: &Path, look: &Look) -> [f32; 3] {
+    let base = look.grass;
+    let path = content.join("materials").join("grass").join("albedo.jpg");
+    let mean = std::fs::read(&path).ok().and_then(|bytes| {
+        let img = Image::from_buffer(
+            &bytes,
+            ImageType::Extension("jpg"),
+            default(),
+            true,
+            ImageSampler::Default,
+            RenderAssetUsages::RENDER_WORLD,
+        )
+        .ok()?
+        .convert(TextureFormat::Rgba8UnormSrgb)?;
+        let data = img.data?;
+        let n = (data.len() / 4) as f32;
+        let lin = |v: u8| {
+            let c = f32::from(v) / 255.0;
+            if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        };
+        let mut sum = [0.0f32; 3];
+        for px in data.chunks_exact(4) {
+            for i in 0..3 {
+                sum[i] += lin(px[i]);
+            }
+        }
+        Some(sum.map(|s| s / n))
+    });
+    match mean {
+        Some(tex) => {
+            let avg = ((base[0] + base[1] + base[2]) / 3.0).max(0.001);
+            std::array::from_fn(|i| tex[i] * (0.75 + 0.25 * base[i] / avg))
+        }
+        // Noise mean: (0.6 + 0.6 * 0.5) * (0.6 + 0.8 * 0.5).
+        None => base.map(|c| c * 0.9),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

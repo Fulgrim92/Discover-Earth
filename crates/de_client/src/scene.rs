@@ -55,7 +55,7 @@ pub struct ScenePlugin;
 
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((GroundPlugin, CloudsPlugin, crate::water::WaterPlugin))
+        app.add_plugins((GroundPlugin, CloudsPlugin, crate::water::WaterPlugin, crate::grass::GrassPlugin))
             .register_type::<CameraRig>()
             .init_resource::<CameraTarget>()
             .add_systems(Startup, spawn_scene);
@@ -77,6 +77,7 @@ type Materials<'w> = (
     ResMut<'w, Assets<TerrainMaterial>>,
     ResMut<'w, Assets<CloudMaterial>>,
     ResMut<'w, Assets<crate::water::WaterMaterial>>,
+    ResMut<'w, Assets<crate::grass::GrassMaterial>>,
 );
 
 fn spawn_scene(
@@ -84,7 +85,7 @@ fn spawn_scene(
     source: Res<IslandSource>,
     (target, sketch): (Res<CameraTarget>, Option<Res<Sketch>>),
     mut meshes: ResMut<Assets<Mesh>>,
-    (mut materials, mut terrain_materials, mut cloud_materials, mut water_materials): Materials,
+    (mut materials, mut terrain_materials, mut cloud_materials, mut water_materials, mut grass_materials): Materials,
     (mut images, mut media): (ResMut<Assets<Image>>, ResMut<Assets<ScatteringMedium>>),
 ) {
     let island = Island::load(&source.content, &source.id).unwrap_or_else(|e| panic!("{e}"));
@@ -130,6 +131,17 @@ fn spawn_scene(
             commands.spawn((Name::new(name), NotShadowCaster, Mesh3d(meshes.add(b.mesh())), MeshMaterial3d(mat)));
         }
     }
+
+    // Grass where the land cover and the terrain say, grown around the camera as it moves.
+    let truth = de_world::truth::Truth::load(&source.content, &source.id, &island).unwrap_or_else(|e| panic!("{e}"));
+    commands.insert_resource(crate::grass::Meadow::new(
+        rules.grass.clone(),
+        (field.clone(), truth, surface.clone()),
+        &look,
+        crate::ground::grass_ground_colour(&source.content, &look),
+        sea_level,
+        &mut grass_materials,
+    ));
 
     // Sea: one large plane at the tide's level, with wind waves and foam along the shore.
     commands.spawn((
@@ -254,6 +266,7 @@ fn spawn_scene(
 /// (Catmull-Rom) plus `look.relief_m` of seeded small relief, with stream channels and lake
 /// beds cut in when water is given. [`Surface::height`] matches the mesh's triangles exactly,
 /// so water can sit on it.
+#[derive(Clone)]
 pub struct Surface {
     pub w: usize,
     pub d: usize,

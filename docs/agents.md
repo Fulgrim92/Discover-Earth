@@ -168,6 +168,25 @@ fix it there with `overrides`: `{"remove_streams": {"at": [x, z], "radius_m": r}
 or `{"add_stream": {"path": [[x, z], ...], "catchment_km2": a}}` (world metres, x east, z south). `map.png` draws our
 streams and lakes in deep blue over WorldCover's water in pale blue, waterfalls as numbered red rings, and
 `water.md` says how much of WorldCover's inland water we cover and lists the biggest blobs we miss.
+## Grass (`rules.json` `grass`)
+
+Grass is scattered by rules, not painted: `de_world::grass` reads the satellite land cover (tufts per m² per WorldCover
+class), thins it on steep ground, high up and on exposed ridges, and keeps it off the beach. The island is cut into
+16 m chunks, each scattered from its own seed, and every tuft has a `keep` number; a view far away draws only tufts
+whose `keep` is under its level of detail, so near views are a superset of far ones and nothing pops. The client
+(`crates/de_client/src/grass.rs`, `grass.wesl`) grows the chunks around the camera and bends the blades in the vertex
+shader with gusts that roll across the meadow along `look.clouds.wind`. Blades take the ground's normal and the
+grass layer's average colour, so a meadow matches the ground under it.
+
+```
+de-shot content/shots/grass.json out/grass        # ground-level shots and a wind clip
+cargo test -p de_world grass -- --nocapture       # budget: most tufts any view draws
+```
+
+Grass only shows within `far_m` (40 m) of the camera, so aerial shots are unchanged. Keep the depth prepass shader
+(`grass_prepass.wesl`) in step with `grass.wesl`: the clouds, mist and atmosphere read its depth, and a blade the
+prepass doesn't know about comes out white.
+
 ## Ground truth (real photos)
 
 The satellite says what colour the ground is; photos say what the place looks like from the ground: sky, haze, light,
