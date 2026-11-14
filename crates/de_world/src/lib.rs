@@ -13,6 +13,7 @@ pub mod photo;
 pub mod rng;
 pub mod sense;
 pub mod steps;
+pub mod sun;
 pub mod terrain;
 pub mod truth;
 pub mod water;

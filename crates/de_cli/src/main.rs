@@ -156,6 +156,10 @@ enum PhotoCmd {
         /// An earlier `de photo match --out` folder: adds its renders as "before" and the change in gap.
         #[arg(long = "ref")]
         reference: Option<PathBuf>,
+        /// Light each render as its photo was: the sun at the photo's time and place, and the
+        /// camera's exposure from its EXIF (`light` in references.json).
+        #[arg(long)]
+        photo_light: bool,
     },
 }
 
@@ -291,8 +295,8 @@ fn main() -> ExitCode {
         Cmd::Photo { cmd } => {
             let res = match cmd {
                 PhotoCmd::Solve { ids, island, out } => photo::solve(&content, &island, &ids, &out),
-                PhotoCmd::Match { island, sets, width, out, reference } => {
-                    photo::run(&content, &photo::MatchArgs { island, sets, width, out, reference })
+                PhotoCmd::Match { island, sets, width, out, reference, photo_light } => {
+                    photo::run(&content, &photo::MatchArgs { island, sets, width, out, reference, photo_light })
                 }
             };
             match res {

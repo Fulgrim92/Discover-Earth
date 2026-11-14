@@ -7,12 +7,17 @@ Reads content/references/<island>/references.json; for every photo it looks up t
 (`commons`), refuses anything that is not CC0, public domain or CC BY / CC BY-SA, saves a copy
 `--width` pixels wide as `<id>.jpg`, and writes `source` (page, author, licence, date, GPS tag,
 focal length, credit line) back into references.json. Hand-written fields (`guess`,
-`ignore_columns`, `camera`) are kept. Needs Pillow. Commons rate-limits often; the script waits
+`ignore_columns`, `camera`) are kept. It also writes `light` from the photo's EXIF: when it was
+taken (UTC, from local Faroese time) and the camera's exposure (EV100 from shutter, aperture and
+ISO), so `de photo match --photo-light` can light each render as the place was. `--meta` refreshes
+only that, without downloading images again. Needs Pillow. Commons rate-limits often; the script waits
 and retries, and skips photos it already has unless --force.
 """
 
 import argparse
+import datetime
 import html
+import math
 import io
 import json
 import os
@@ -67,11 +72,76 @@ def focal_35mm(meta):
         return None
 
 
+def last_sunday(year, month):
+    d = datetime.date(year, month + 1, 1) - datetime.timedelta(days=1) if month < 12 else datetime.date(year, 12, 31)
+    return d - datetime.timedelta(days=(d.weekday() + 1) % 7)
+
+
+def to_utc(local):
+    """Faroese local time (WET, WEST in summer: EU rules) to UTC."""
+    start = datetime.datetime.combine(last_sunday(local.year, 3), datetime.time(1))
+    end = datetime.datetime.combine(last_sunday(local.year, 10), datetime.time(1))
+    summer = start <= local < end
+    return local - datetime.timedelta(hours=1 if summer else 0)
+
+
+def ratio(v):
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str) and "/" in v:
+        a, b = v.split("/", 1)
+        return float(a) / float(b) if float(b) else None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def light(meta, ext_date):
+    """`light` for references.json from EXIF (`meta`) and Commons' date text, or None."""
+    exif = {m["name"]: m["value"] for m in meta or [] if isinstance(m.get("value"), (str, int, float))}
+    local, known = None, False
+    raw = exif.get("DateTimeOriginal")
+    if raw:
+        try:
+            local, known = datetime.datetime.strptime(raw.strip(), "%Y:%m:%d %H:%M:%S"), True
+        except ValueError:
+            pass
+    if local is None:
+        m = re.search(r"(\d{1,2}) (\w+) (\d{4})", ext_date or "") or None
+        if m:
+            try:
+                day = datetime.datetime.strptime(f"{m.group(1)} {m.group(2)} {m.group(3)}", "%d %B %Y")
+                # Time unknown: assume early afternoon, when most tourist photos are taken.
+                local = day.replace(hour=14)
+            except ValueError:
+                pass
+        m = None if local else re.search(r"(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?", ext_date or "")
+        if m:
+            local = datetime.datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4) or 14), int(m.group(5) or 0))
+            known = m.group(4) is not None
+    if local is None:
+        return None
+    t, n = ratio(exif.get("ExposureTime")), ratio(exif.get("FNumber"))
+    iso = ratio(exif.get("ISOSpeedRatings") or exif.get("PhotographicSensitivity"))
+    bias = ratio(exif.get("ExposureBiasValue")) or 0.0
+    ev = None
+    if t and n and iso:
+        # EV100 of the exposure used; a positive bias means the camera exposed brighter than its
+        # meter, which is already in t, n and iso.
+        ev = round(math.log2(n * n / t) - math.log2(iso / 100.0), 2)
+    out = {"taken_utc": to_utc(local).strftime("%Y-%m-%dT%H:%M:%SZ"), "time_known": known}
+    if ev is not None:
+        out["exposure_ev100"] = ev
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("island")
     ap.add_argument("--width", type=int, default=1280, choices=WIDTHS)
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--meta", action="store_true", help="only refresh `light` from EXIF")
     a = ap.parse_args()
     from PIL import Image
 
@@ -80,6 +150,16 @@ def main():
     doc = json.load(open(path, encoding="utf-8"))
     for p in doc["photos"]:
         jpg = os.path.join(root, f"{p['id']}.jpg")
+        if a.meta:
+            page = info(p["commons"])
+            ii = page["imageinfo"][0]
+            ext = plain(ii.get("extmetadata", {}).get("DateTimeOriginal", {}).get("value"))
+            lt = light(ii.get("metadata"), ext)
+            if lt:
+                p["light"] = lt
+            print(f"{p['id']}: light {lt}")
+            time.sleep(1.0)
+            continue
         if os.path.exists(jpg) and p.get("source") and not a.force:
             print(f"{p['id']}: have it")
             continue
@@ -118,8 +198,9 @@ def main():
             "credit": f"{p['commons'].removeprefix('File:')} by {author}, {licence}, via Wikimedia Commons",
         }
         # Keep key order: id, commons, source, then the hand-written fields.
-        rest = {k: v for k, v in p.items() if k not in ("id", "commons", "source")}
-        new = {"id": p["id"], "commons": page["title"], "source": source, **rest}
+        rest = {k: v for k, v in p.items() if k not in ("id", "commons", "source", "light")}
+        lt = light(ii.get("metadata"), plain(m.get("DateTimeOriginal")))
+        new = {"id": p["id"], "commons": page["title"], "source": source, **({"light": lt} if lt else {}), **rest}
         p.clear()
         p.update(new)
         print(f"{p['id']}: {img.width}x{img.height}, {licence}, {author}")

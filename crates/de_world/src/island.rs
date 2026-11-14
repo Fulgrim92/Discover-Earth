@@ -79,7 +79,8 @@ pub struct Look {
     /// Sky colour straight up, linear RGB 0..1; the sky dome fades from `horizon` to this.
     pub zenith: Vec3,
     /// Brightness of the light from the whole sky (ambient, tinted `horizon`), cd/m². Raises
-    /// shadows: overcast days light the land mostly from the sky.
+    /// shadows: overcast days light the land mostly from the sky. With `cinema.atmosphere` it is
+    /// the value for a sun 35° up and follows the sun's height (see [`Look::sky_light_now`]).
     pub sky_light: f32,
     /// Distance in metres at which fog hides half the scene.
     pub fog_half_m: f32,
@@ -112,6 +113,20 @@ pub struct Look {
     pub clouds: crate::clouds::Clouds,
 }
 
+impl Look {
+    /// The sky light for the sun's current height. With the physical atmosphere the sky dims as
+    /// the sun sinks (diffuse light goes roughly with the sine of its elevation), scaled so the
+    /// value fitted to the midday reference photos (sun about 35° up) is `sky_light` itself;
+    /// without it, `sky_light` as given.
+    pub fn sky_light_now(&self) -> f32 {
+        if !self.cinema.atmosphere {
+            return self.sky_light;
+        }
+        let k = self.sun_elevation_deg.to_radians().sin().max(0.02) / 35f32.to_radians().sin();
+        self.sky_light * k.min(1.6)
+    }
+}
+
 /// How the camera films the island. Every field has a default (off / neutral).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
@@ -123,6 +138,9 @@ pub struct Cinema {
     /// Sun illuminance above the atmosphere when `atmosphere` is on, lux (sunlight is ~130000;
     /// the atmosphere dims and reddens it near the horizon). `sun_lux` is used otherwise.
     pub sun_lux: f32,
+    /// Strength of the light the physical sky throws on the land (its environment map), when
+    /// `atmosphere` is on: 1 as Bevy computes it. `sky_light` adds to it.
+    pub sky_env: f32,
     /// Camera exposure, EV100 (higher is darker): 15 for a sunny day, 12 overcast.
     pub exposure_ev100: f32,
     /// tony (TonyMcMapface), agx, aces, filmic (Blender Filmic), reinhard or none.
@@ -148,6 +166,7 @@ impl Default for Cinema {
         Self {
             atmosphere: false,
             sun_lux: 130_000.0,
+            sky_env: 1.0,
             exposure_ev100: 12.0,
             tonemapper: "tony".into(),
             bloom: 0.0,

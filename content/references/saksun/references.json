@@ -42,6 +42,11 @@
         "fov_y_deg": 34.83,
         "median_error_deg": 0.074,
         "inliers": 0.975
+      },
+      "light": {
+        "taken_utc": "2017-09-17T13:00:00Z",
+        "time_known": false,
+        "cover": 0.6
       }
     },
     {
@@ -85,6 +90,12 @@
         "fov_y_deg": 46.4,
         "median_error_deg": 0.101,
         "inliers": 0.75
+      },
+      "light": {
+        "taken_utc": "2017-04-14T10:47:40Z",
+        "time_known": true,
+        "exposure_ev100": 14.84,
+        "cover": 0.35
       }
     },
     {
@@ -128,6 +139,12 @@
         "fov_y_deg": 39.97,
         "median_error_deg": 0.186,
         "inliers": 0.656
+      },
+      "light": {
+        "taken_utc": "2019-05-20T16:54:07Z",
+        "time_known": true,
+        "exposure_ev100": 12.97,
+        "cover": 1.0
       }
     },
     {
@@ -171,6 +188,11 @@
         "fov_y_deg": 27.43,
         "median_error_deg": 0.044,
         "inliers": 0.969
+      },
+      "light": {
+        "taken_utc": "2019-05-23T13:00:00Z",
+        "time_known": false,
+        "cover": 0.75
       }
     },
     {
@@ -214,6 +236,12 @@
         "fov_y_deg": 25.99,
         "median_error_deg": 0.126,
         "inliers": 0.825
+      },
+      "light": {
+        "taken_utc": "2016-08-12T11:56:13Z",
+        "time_known": true,
+        "exposure_ev100": 13.32,
+        "cover": 0.95
       }
     }
   ]

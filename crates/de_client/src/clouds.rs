@@ -62,7 +62,7 @@ impl CloudParams {
         let zenith = Vec3::from(look.zenith);
         let horizon = Vec3::from(look.horizon);
         // Cloud tops see the open sky; bellies see the sky's horizon and the dark land below.
-        let sky = look.sky_light;
+        let sky = look.sky_light_now();
         // Plus sunlight that has scattered many times inside the deck and comes out everywhere:
         // it follows the sun's height, which is why a noon overcast glows and an evening one
         // goes grey. It comes out nearly white (a grey of the sunlight's brightness, tinted by
@@ -77,15 +77,21 @@ impl CloudParams {
             layer: Vec4::new(c.base_m, c.top_m, c.scale_m, c.density),
             shape: Vec4::new(c.cover, c.detail, c.wind[0], c.wind[1]),
             sun_dir: to_sun.extend(c.steps as f32),
-            // The single-plus-octaves scattering in `clouds.wesl` leaves thick cloud about half
-            // as bright as in the reference photos; this calibrates it, so `light` 1 matches them.
-            sun: sun.extend(c.light * 2.0),
+            // The single-plus-octaves scattering in `clouds.wesl` leaves thick cloud darker than
+            // in the reference photos; this calibrates it so `light` 1 matches them. Fitted with
+            // `de photo match --photo-light` (each photo at its own sun, exposure and cover).
+            // It is fitted on midday photos; a low sun lights the deck from the side and through
+            // more air, so the calibration follows the sun's height like the sky light does.
+            sun: sun.extend(c.light * CLOUD_LIGHT * (to_sun.y / 35f32.to_radians().sin()).clamp(0.25, 1.0)),
             sky_top: top.extend(c.reach_m),
             sky_bottom: bottom.extend(c.shadows),
             mist: Vec4::new(cine.mist, cine.mist_top_m.max(1.0), MIST_REACH_M, MIST_STEPS),
         }
     }
 }
+
+/// Cloud brightness calibration, fitted to the reference photos (see `CloudParams::new`).
+const CLOUD_LIGHT: f32 = 6.75;
 
 /// How far along each ray the mist is marched, and in how many steps.
 const MIST_REACH_M: f32 = 12_000.0;
