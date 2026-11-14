@@ -745,6 +745,74 @@ impl Water {
     }
 }
 
+/// Signed metres from each heightmap cell to the shore line: positive out at sea (where the
+/// water is shallow and waves break near zero), negative inland. The shore is taken half a cell
+/// from the last land cell, so the field crosses zero between land and sea and a texture of it,
+/// sampled bilinearly, finds the water's edge between cells. Two-pass chamfer distance
+/// (Borgefors 1986), exact to a few percent. Cells of `h` at or below [`SEA_CELL_M`] plus
+/// `tide_m` are sea.
+pub fn shore_distance(field: &Heightfield, tide_m: f32) -> Vec<f32> {
+    let land: Vec<bool> = field.heights.iter().map(|&h| h > SEA_CELL_M + tide_m).collect();
+    let to_land = chamfer(field, |i| land[i]);
+    let to_sea = chamfer(field, |i| !land[i]);
+    let half = 0.5 * field.spacing[0].min(field.spacing[1]);
+    land.iter()
+        .enumerate()
+        .map(|(i, &l)| if l { -(to_sea[i] - half).max(0.0) } else { (to_land[i] - half).max(0.0) })
+        .collect()
+}
+
+/// Give the sea floor a slope. Elevation models flatten the sea to 0 m, so a falling tide
+/// would bare a flat plain out to the horizon; instead each sea cell (at or below
+/// [`SEA_CELL_M`]) sinks [`SEABED_SLOPE`] metres per metre from the coast, down to
+/// [`SEABED_MAX_M`], and a low tide uncovers a strip of beach.
+pub fn shape_seabed(field: &mut Heightfield) {
+    let to_land = chamfer(field, |i| field.heights[i] > SEA_CELL_M);
+    for (h, d) in field.heights.iter_mut().zip(to_land) {
+        if *h <= SEA_CELL_M && d.is_finite() {
+            *h = h.min(-(0.3 + SEABED_SLOPE * d).min(SEABED_MAX_M));
+        }
+    }
+}
+
+/// How fast the sea floor falls away from the coast (a sandy beach is about 1:30 to 1:50).
+pub const SEABED_SLOPE: f32 = 0.025;
+/// The deepest the shaped sea floor goes, metres below sea level.
+pub const SEABED_MAX_M: f32 = 40.0;
+
+/// Metres from each cell to the nearest cell where `seed` holds (0 there; infinite with no seed).
+fn chamfer(field: &Heightfield, seed: impl Fn(usize) -> bool) -> Vec<f32> {
+    let (w, d) = (field.width, field.depth);
+    let (sx, sz) = (field.spacing[0], field.spacing[1]);
+    let diag = sx.hypot(sz);
+    let mut dist: Vec<f32> = (0..w * d).map(|i| if seed(i) { 0.0 } else { f32::INFINITY }).collect();
+    let pass = |dist: &mut Vec<f32>, c: usize, r: usize, nb: &[(i32, i32, f32)]| {
+        let i = r * w + c;
+        for &(dc, dr, cost) in nb {
+            let (cc, rr) = (c as i32 + dc, r as i32 + dr);
+            if cc >= 0 && rr >= 0 && cc < w as i32 && rr < d as i32 {
+                let v = dist[rr as usize * w + cc as usize] + cost;
+                if v < dist[i] {
+                    dist[i] = v;
+                }
+            }
+        }
+    };
+    let fwd = [(-1, 0, sx), (0, -1, sz), (-1, -1, diag), (1, -1, diag)];
+    let bwd = [(1, 0, sx), (0, 1, sz), (1, 1, diag), (-1, 1, diag)];
+    for r in 0..d {
+        for c in 0..w {
+            pass(&mut dist, c, r, &fwd);
+        }
+    }
+    for r in (0..d).rev() {
+        for c in (0..w).rev() {
+            pass(&mut dist, c, r, &bwd);
+        }
+    }
+    dist
+}
+
 /// Smooth a cell path into a stream: Chaikin corners, points every [`POINT_STEP_M`], water
 /// never running uphill.
 fn make_stream(id: usize, raw: &[Vec3], km2: &[f32], end: &str, field: &Heightfield, rules: &WaterRules) -> Stream {
@@ -976,6 +1044,38 @@ mod tests {
         assert!(w.channel(at[0], at[1], 0.0).is_none());
         assert!(w.streams.iter().any(|s| s.ends_in == "gap"));
         assert!(w.streams.iter().any(|s| s.ends_in == "added"));
+    }
+
+    #[test]
+    fn shore_distance_grows_out_to_sea() {
+        let f = valley();
+        let dist = shore_distance(&f, 0.0);
+        // Row 58 of the sea strip (column 20) lies between walls one cell away.
+        assert!(dist[30 * f.width + 5] < 0.0, "land is inland of the shore: {}", dist[30 * f.width + 5]);
+        // The shore line lies half a cell out from the last land cell.
+        let sea = 58 * f.width + 20;
+        let half = 0.5 * f.spacing[0].min(f.spacing[1]);
+        assert!((dist[sea] - (30.0 - half)).abs() < 1.0, "{}", dist[sea]);
+        assert!(dist[sea] > 0.0 && dist[sea + 1] < 0.0, "zero between sea and land");
+        // A high tide floods the lowest land, so the sea reaches further.
+        let high = shore_distance(&f, 7.0);
+        assert!(high[57 * f.width + 21] > 0.0);
+    }
+
+    #[test]
+    fn seabed_falls_away_from_the_coast() {
+        // A coast: land 10 m high in the first 5 rows, then a sea the DEM left flat at 0 m.
+        let (w, d) = (20, 30);
+        let heights = (0..w * d).map(|i| if i / w < 5 { 10.0 } else { 0.0 }).collect();
+        let mut f = Heightfield { width: w, depth: d, spacing: [30.0, 30.0], heights };
+        shape_seabed(&mut f);
+        let near = f.heights[5 * w + 10];
+        let far = f.heights[25 * w + 10];
+        assert!(near < 0.0 && far < near, "near {near}, far {far}");
+        assert_eq!(f.heights[4 * w + 10], 10.0, "land is untouched");
+        // A low tide now bares the cells nearest the coast, and only those.
+        let low = shore_distance(&f, -2.0);
+        assert!(low[5 * w + 10] < 0.0 && low[10 * w + 10] > 0.0, "{} {}", low[5 * w + 10], low[10 * w + 10]);
     }
 
     #[test]

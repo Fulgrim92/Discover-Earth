@@ -129,7 +129,8 @@ impl<'a> World<'a> {
 
     /// Cast one ray. Returns (distance, class, normal), or None for sky.
     pub fn cast(&self, o: Vec3, d: Vec3, max_t: f32) -> Option<(f32, Class, Vec3)> {
-        let t_sea = if d[1] < -1e-6 { (SEA_LEVEL_M - o[1]) / d[1] } else { f32::INFINITY };
+        let sea = SEA_LEVEL_M + self.look().tide_m;
+        let t_sea = if d[1] < -1e-6 { (sea - o[1]) / d[1] } else { f32::INFINITY };
         let t_sea = if t_sea >= 0.0 { t_sea } else { f32::INFINITY };
         let end = t_sea.min(max_t);
         let at = |t: f32| [o[0] + d[0] * t, o[1] + d[1] * t, o[2] + d[2] * t];

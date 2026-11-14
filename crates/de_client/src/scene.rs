@@ -117,9 +117,12 @@ fn spawn_scene(
         MeshMaterial3d(terrain_materials.add(terrain_material(&look, &source.content, &mut images, clouds, noise))),
     ));
 
-    let wm = crate::water::meshes(&water, &field, &surface);
-    let water_mat = water_materials.add(crate::water::material(&look, false));
-    let mist_mat = water_materials.add(crate::water::material(&look, true));
+    let sea_level = SEA_LEVEL_M + look.tide_m;
+    let shore = images.add(crate::water::shore_image(&field, look.tide_m));
+    let wm = crate::water::meshes(&water, &field, &surface, sea_level);
+    let water_mat =
+        water_materials.add(crate::water::material(&look, crate::water::Kind::Fresh, shore.clone(), [w, d]));
+    let mist_mat = water_materials.add(crate::water::material(&look, crate::water::Kind::Mist, shore.clone(), [w, d]));
     for (name, b, mat) in
         [("streams", wm.streams, water_mat.clone()), ("lakes", wm.lakes, water_mat), ("mist", wm.mist, mist_mat)]
     {
@@ -128,20 +131,18 @@ fn spawn_scene(
         }
     }
 
-    // Sea: one large plane, slightly see-through so the seabed darkens it near the shore.
-    let sea = Color::linear_rgba(look.sea[0], look.sea[1], look.sea[2], look.sea_alpha);
+    // Sea: one large plane at the tide's level, with wind waves and foam along the shore.
     commands.spawn((
         Name::new("sea"),
         NotShadowCaster,
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(sea_reach, sea_reach))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: sea,
-            perceptual_roughness: 0.12,
-            reflectance: 0.6,
-            alpha_mode: AlphaMode::Blend,
-            ..default()
-        })),
-        Transform::from_xyz(0.0, SEA_LEVEL_M, 0.0),
+        Mesh3d(meshes.add(crate::water::sea_mesh(sea_reach))),
+        MeshMaterial3d(water_materials.add(crate::water::material(
+            &look,
+            crate::water::Kind::Sea,
+            shore.clone(),
+            [w, d],
+        ))),
+        Transform::from_xyz(0.0, sea_level, 0.0),
     ));
 
     // Sky: an unlit dome, horizon colour at the bottom fading to a deeper blue overhead; or, with

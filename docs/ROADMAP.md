@@ -41,8 +41,10 @@ verdict.
 ## Step 4: Water from the land's own data
 
 First slice done (streams, waterfalls and lakes from the DEM, `rules.json` with overrides, `de water` with a map
-against WorldCover and a waterfall sheet), with moving water, foam, sky reflection and mist at the falls. Still to
-do: the lagoon with tide, an FFT sea with shore foam, and the cached generation graph.
+against WorldCover and a waterfall sheet), with moving water, foam, sky reflection and mist at the falls. Second
+slice: the sea with wind waves that turn and steepen towards the shore, surf and wash from a shore-distance field,
+shallows, and a tide (`look.tide_m`) that moves the shore line and the lagoon. Still to do: an FFT sea and the
+cached generation graph.
 
 - **Game:** the real streams of Saksun, found from the DEM; waterfalls where they drop over cliffs; the lagoon with
   tide; an FFT sea with foam on the shore.

@@ -136,6 +136,12 @@ impl WorldModule {
             c("world.schema.rules", Schema, "JSON schema for content/islands/<id>/rules.json"),
             c("tool.water", Command, "de water: water report, map vs WorldCover water, a shot list per waterfall"),
             c(
+                "world.water.shore",
+                System,
+                "Metres from each sea cell to land at the current tide (chamfer distance), for surf and shallows",
+            ),
+            c("world.look.tide", Content, "look.tide_m: sea level above mean; moves the sea, shore line and lagoon"),
+            c(
                 "world.truth.photos",
                 Content,
                 "Per island: CC-licensed reference photos with credit and solved cameras (content/references/)",
