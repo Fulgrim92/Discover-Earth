@@ -126,7 +126,7 @@
       "sky_brightness": 2.5
     },
     "clouds": {
-      "cover": 0.55,
+      "cover": 0.45,
       "base_m": 750.0,
       "top_m": 1500.0,
       "scale_m": 6000.0,
