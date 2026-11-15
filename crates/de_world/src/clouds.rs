@@ -104,6 +104,7 @@ impl Clouds {
         let z = (p[2] - self.wind[1] * t) / self.scale_m;
         let y = p[1] / self.scale_m;
         let weather = noise.sample([x * 0.25, 0.5, z * 0.25])[2];
+        let [x, z] = warp(noise, x, z);
         let s = noise.sample([x, y, z]);
         let d = self.shape(weather, s[0], h);
         if d <= 0.0 {
@@ -217,6 +218,22 @@ impl Noise {
         }
         out
     }
+}
+
+/// How far [`warp`] pushes the shapes, in tiles.
+pub const WARP_TILES: f32 = 0.5;
+
+/// The cloud shapes' horizontal coordinates (in tiles) pushed about by a slow field that is
+/// turned and scaled against the tile, so the shape tile never repeats in a grid or lines up
+/// into straight channels. The same as `warp` in `clouds.wesl`.
+pub fn warp(noise: &Noise, x: f32, z: f32) -> [f32; 2] {
+    const COS: f32 = 0.825_336;
+    const SIN: f32 = 0.564_642; // 0.6 rad
+    let u = (COS * x - SIN * z) * 0.17 + 0.37;
+    let v = (SIN * x + COS * z) * 0.17 + 0.71;
+    let wx = noise.sample([u, 0.2, v])[2] - 0.5;
+    let wz = noise.sample([u, 0.8, v])[2] - 0.5;
+    [x + 2.0 * WARP_TILES * wx, z + 2.0 * WARP_TILES * wz]
 }
 
 /// A seed for an island's clouds from its id, so every island gets its own sky.
@@ -407,6 +424,25 @@ mod tests {
         assert!(last > 0.95, "overcast covers {last}");
         assert_eq!(c.density_at(n, [0.0, c.base_m - 1.0, 0.0], 0.0), 0.0);
         assert_eq!(c.density_at(n, [0.0, c.top_m + 1.0, 0.0], 0.0), 0.0);
+    }
+
+    #[test]
+    fn the_shapes_do_not_repeat_from_tile_to_tile() {
+        // One tile apart, the raw noise is the same; the warped shapes must not be, or the
+        // layer reads as a grid with straight channels to the horizon.
+        let noise = Noise::new(seed("saksun"));
+        let c = Clouds { cover: 0.55, base_m: 750.0, top_m: 1500.0, ..Default::default() };
+        let (mut same, mut n) = (0.0, 0.0);
+        for i in 0..40 {
+            for j in 0..40 {
+                let p = [i as f32 * 150.0, 1000.0, j as f32 * 150.0];
+                let q = [p[0], p[1], p[2] - c.scale_m];
+                let (a, b) = (c.density_at(&noise, p, 0.0), c.density_at(&noise, q, 0.0));
+                same += (a - b).abs();
+                n += a.max(b);
+            }
+        }
+        assert!(same > 0.5 * n, "tiles differ by only {same} of {n}");
     }
 
     #[test]
