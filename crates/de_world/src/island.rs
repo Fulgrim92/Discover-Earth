@@ -144,6 +144,11 @@ pub struct Cinema {
     /// Strength of the light the physical sky throws on the land (its environment map), when
     /// `atmosphere` is on: 1 as Bevy computes it. `sky_light` adds to it.
     pub sky_env: f32,
+    /// Haziness of the analytic daylight sky drawn behind the clouds (`de_world::sky`,
+    /// Preetham 1999) with `atmosphere` on: 2 very clear .. 3 clear .. 6 hazy. 0 keeps Bevy's sky.
+    pub sky_turbidity: f32,
+    /// Brightness of that sky against the physical value (1).
+    pub sky_brightness: f32,
     /// Camera exposure, EV100 (higher is darker): 15 for a sunny day, 12 overcast.
     pub exposure_ev100: f32,
     /// tony (TonyMcMapface), agx, aces, filmic (Blender Filmic), reinhard or none.
@@ -170,6 +175,8 @@ impl Default for Cinema {
             atmosphere: false,
             sun_lux: 130_000.0,
             sky_env: 1.0,
+            sky_turbidity: 0.0,
+            sky_brightness: 1.0,
             exposure_ev100: 12.0,
             tonemapper: "tony".into(),
             bloom: 0.0,

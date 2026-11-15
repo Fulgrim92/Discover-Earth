@@ -13,6 +13,7 @@ pub mod pack;
 pub mod photo;
 pub mod rng;
 pub mod sense;
+pub mod sky;
 pub mod steps;
 pub mod sun;
 pub mod terrain;

@@ -120,7 +120,9 @@
       "mist": 0.00015,
       "mist_top_m": 150.0,
       "sun_lux": 24000.0,
-      "sky_env": 0.25
+      "sky_env": 0.25,
+      "sky_turbidity": 3.0,
+      "sky_brightness": 2.5
     },
     "clouds": {
       "cover": 0.55,
