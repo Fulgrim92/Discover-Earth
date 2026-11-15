@@ -189,6 +189,24 @@ impl WorldModule {
                 "de photo match --photo-light: each render at its photo's sun, EXIF exposure and cloud cover",
             ),
             c("tool.taste", Command, "de taste: record a look decision in docs/taste.jsonl"),
+            c(
+                "world.budget",
+                Content,
+                "content/budget.json: priorities (look, frame pacing, size), reference machine, frame and size limits",
+            ),
+            c("world.schema.budget", Schema, "JSON schema for content/budget.json"),
+            c(
+                "tool.bench",
+                Command,
+                "de-shot --bench: fly a step list unsaved; frame, per-pass GPU and allocation stats in bench.json",
+            ),
+            c("tool.size", Command, "de size: shipped content size by folder against the budget (JSON)"),
+            c(
+                "tool.critic",
+                Command,
+                "de critic pack|check: renders-only folder and brief for a blind reviewer; gate on its critic.json",
+            ),
+            c("world.no_alloc", System, "Test: drone flight, ground and cloud sampling allocate nothing per frame"),
         ]
     }
 }

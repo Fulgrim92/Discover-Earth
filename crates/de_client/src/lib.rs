@@ -4,6 +4,7 @@
 //! what an agent captures is what a player sees. Game code here only spawns entities and
 //! moves the camera; it never touches the GPU directly.
 
+pub mod bench;
 pub mod capture;
 pub mod clouds;
 pub mod drone;

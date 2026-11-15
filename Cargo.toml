@@ -25,6 +25,7 @@ clap = { version = "4.6", features = ["derive"] }
 png = "0.18"
 nv-flip = "0.1.2"
 zune-jpeg = "0.5"
+stats_alloc = "0.1"
 
 de_world = { path = "crates/de_world" }
 de_client = { path = "crates/de_client" }
