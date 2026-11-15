@@ -33,6 +33,13 @@ struct CloudParams {
     sky_bottom: vec4<f32>,
     // valley mist: density per metre at sea level, height it thins over (metres), reach, steps
     mist: vec4<f32>,
+    // daylight sky (de_world::sky): Perez A..D for luminance, x, y; E for each and brightness;
+    // each channel's zenith scale
+    sky_y: vec4<f32>,
+    sky_x: vec4<f32>,
+    sky_c: vec4<f32>,
+    sky_e: vec4<f32>,
+    sky_scale: vec4<f32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> clouds: CloudParams;
@@ -225,6 +232,36 @@ fn march_clouds(ro: vec3<f32>, rd: vec3<f32>, t_land: f32, jitter: f32) -> vec4<
     return vec4(mix(haze * alpha, light, fade), alpha);
 }
 
+// The Perez formula (Preetham 1999), as `de_world::sky::perez`.
+fn perez(abcd: vec4<f32>, e: f32, cos_t: f32, gamma: f32) -> f32 {
+    let cg = cos(gamma);
+    return (1.0 + abcd.x * exp(abcd.y / cos_t)) * (1.0 + abcd.z * exp(abcd.w * gamma) + e * cg * cg);
+}
+
+// The clear daylight sky in a direction, with the sun's disc: linear RGB luminance (cd/m²),
+// as `de_world::sky::Sky::rgb`.
+fn sky_radiance(rd: vec3<f32>) -> vec3<f32> {
+    let to_sun = clouds.sun_dir.xyz;
+    let cos_t = max(rd.y, 0.01);
+    let mu = clamp(dot(rd, to_sun), -1.0, 1.0);
+    let gamma = acos(mu);
+    let lum = clouds.sky_scale.x * perez(clouds.sky_y, clouds.sky_e.x, cos_t, gamma);
+    let x = clouds.sky_scale.y * perez(clouds.sky_x, clouds.sky_e.y, cos_t, gamma);
+    let y = max(clouds.sky_scale.z * perez(clouds.sky_c, clouds.sky_e.z, cos_t, gamma), 1e-4);
+    let xyz = vec3(x / y * lum, lum, (1.0 - x - y) / y * lum);
+    let rgb = max(vec3(
+        3.2406 * xyz.x - 1.5372 * xyz.y - 0.4986 * xyz.z,
+        -0.9689 * xyz.x + 1.8758 * xyz.y + 0.0415 * xyz.z,
+        0.0557 * xyz.x - 0.2040 * xyz.y + 1.0570 * xyz.z,
+    ), vec3(0.0));
+    // The sun: its illuminance spread over its disc (0.53° across, 6.8e-5 sr), edge softened
+    // over a pixel or so.
+    let r = 0.0046;
+    let disc = 1.0 - smoothstep(r * 0.8, r * 1.2, gamma);
+    let sun = clouds.sun.rgb / 6.8e-5 * disc * f32(rd.y > 0.0);
+    return rgb * clouds.sky_e.w + sun;
+}
+
 // Mist along a ray up to `t_land`: in-scattered light (before exposure) and transmittance.
 // Thick near the sea and thinning with height, lit by the sun where the ridges and clouds let
 // it through, which draws the shafts, and by the sky everywhere.
@@ -288,9 +325,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Where the land is along this ray (none: the sky).
     var t_land = max(clouds.sky_top.w, clouds.mist.z);
+    var open_sky = true;
     @if(DEPTH_PREPASS) {
         let depth = prepass_depth(in.position, 0u);
         if depth > 0.0 {
+            open_sky = false;
             let fwd = normalize(-view.world_from_view[2].xyz);
             t_land = min(t_land, -depth_ndc_to_view_z(depth) / max(dot(rd, fwd), 1e-4));
         }
@@ -298,6 +337,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let jitter = ign(in.position.xy);
     let cloud = march_clouds(ro, rd, t_land, jitter);
     let mist = march_mist(ro, rd, t_land, jitter);
+    // Where nothing is in the way, draw our own daylight sky (and the sun) behind the clouds.
+    if open_sky && clouds.sky_e.w > 0.0 {
+        let behind = sky_radiance(rd);
+        let seen = cloud.rgb + (1.0 - cloud.a) * behind;
+        return vec4((mist.rgb + mist.a * seen) * view.exposure, 1.0);
+    }
     // Mist lies in front of the clouds: its light, then the clouds seen through it.
     let rgb = mist.rgb + mist.a * cloud.rgb;
     let alpha = 1.0 - mist.a * (1.0 - cloud.a);

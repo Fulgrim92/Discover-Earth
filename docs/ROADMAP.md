@@ -35,6 +35,12 @@ verdict.
 - **Status:** clouds first: `look.clouds`, a ray-marched layer of seeded Perlin-Worley cloud with wind and shadows on
   the ground, stopping at the land so it can sit on the ridges. It brings every reference photo closer: mean photo gap
   16.8 to 15.8 with the evening look, and 19.1 to 16.6 at the photos' own time of day (`docs/shots/clouds/`).
+  Valley mist (PR #10) took the evening gap to 15.2. `de photo match --photo-light` now renders each photo with
+  its own sun (from its date, time and place), EXIF exposure and cloud cover; light levels fitted that way took the
+  fair gap from 20.0 to 15.7 (`docs/shots/photo-light/`). Bevy's physical sky drew a twilight that ignored the
+  sun (tan cloud gaps), so the sky behind the clouds is now our own Preetham daylight sky (`cinema.sky_turbidity`),
+  fitted to the photos: 16.1 to 15.3 after the sea and grass landed. Still off: the lagoon sea is far too dark
+  (water), Bevy's aerial perspective still tints the far horizon, and cloud edges dither at low resolution.
   Left: fog banks below the ridges, a weather block that drives several values at once, and time-of-day sheets as a
   command.
 

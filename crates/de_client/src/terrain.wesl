@@ -181,15 +181,16 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr_input);
     // Cloud shadows dim only the direct sun: estimate its share of this pixel's light (sun on
-    // the slope against the sky's light) and take the shaded part of that away, less the part
-    // the cloud lets through as diffuse light (about 40% for stratocumulus).
+    // the slope against the sky's light) and take the shaded part of that away. The light the
+    // cloud passes on diffusely is already in the sky light; fitting `shadows` to the photos at
+    // their own sun and exposure (`de photo match --photo-light`) put it at the full share.
     let shade = 1.0 - cloud_shadow(p);
     if shade > 0.0 {
         let sun_lum = dot(clouds.sun.rgb, vec3(0.2126, 0.7152, 0.0722));
         let sky_lum = dot(clouds.sky_top.rgb, vec3(0.2126, 0.7152, 0.0722));
         let direct = sun_lum * max(dot(pbr_input.N, clouds.sun_dir.xyz), 0.0) / 3.14159;
         let share = direct / max(direct + sky_lum, 1e-3);
-        out.color = vec4(out.color.rgb * (1.0 - clouds.sky_bottom.w * share * shade * 0.6), out.color.a);
+        out.color = vec4(out.color.rgb * (1.0 - min(clouds.sky_bottom.w * share * shade, 1.0)), out.color.a);
     }
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     return out;

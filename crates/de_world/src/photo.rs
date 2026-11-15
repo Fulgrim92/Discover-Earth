@@ -60,6 +60,35 @@ pub struct Photo {
     /// The solved camera, written by `de photo solve`.
     #[serde(default)]
     pub camera: Option<Solved>,
+    /// When the photo was taken and how it was exposed, from its EXIF (`photos.py --meta`), so a
+    /// render can be lit as the place was (`de photo match --photo-light`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light: Option<PhotoLight>,
+}
+
+/// The light a photo was taken in.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PhotoLight {
+    /// When, in UTC (`2019-05-20T16:54:07Z`).
+    pub taken_utc: String,
+    /// False when only the date is known and the time is a guess (early afternoon).
+    pub time_known: bool,
+    /// The camera's exposure as EV100 (from shutter, aperture and ISO), if the EXIF has it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exposure_ev100: Option<f32>,
+    /// Cloud cover in the photo, 0 clear .. 1 overcast, written by hand from looking at it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover: Option<f32>,
+}
+
+impl PhotoLight {
+    /// The sun's compass azimuth and elevation, degrees, seen from `lat_lon` at `taken_utc`.
+    pub fn sun(&self, lat_lon: [f64; 2]) -> Result<(f32, f32), String> {
+        let when = crate::sun::Utc::parse(&self.taken_utc)?;
+        let (az, el) = crate::sun::position(lat_lon[0], lat_lon[1], &when);
+        Ok((az as f32, el as f32))
+    }
 }
 
 /// Where the photo comes from and the credit its licence asks for.
@@ -195,6 +224,11 @@ impl References {
                     p.id, self.island
                 ));
             }
+            if let Some(l) = &p.light
+                && let Err(e) = crate::sun::Utc::parse(&l.taken_utc)
+            {
+                out.push(format!("{at}: light.taken_utc: {e}"));
+            }
             if p.source.is_none() {
                 out.push(format!(
                     "{at}: no `source` (licence and author); run `python3 scripts/truth/photos.py {}`",
@@ -228,7 +262,8 @@ impl References {
     }
 }
 
-fn guess_lat_lon(p: &Photo) -> Option<[f64; 2]> {
+/// Where the photo was taken from: the hand guess, else its GPS tag.
+pub fn guess_lat_lon(p: &Photo) -> Option<[f64; 2]> {
     p.guess.lat_lon.or_else(|| p.source.as_ref().and_then(|s| s.gps))
 }
 
@@ -950,6 +985,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn photo_light_gives_the_sun_and_the_saksun_photos_have_it() {
+        let l = PhotoLight {
+            taken_utc: "2019-05-20T16:54:07Z".into(),
+            time_known: true,
+            exposure_ev100: Some(13.0),
+            cover: Some(1.0),
+        };
+        let (az, el) = l.sun([62.25, -7.18]).unwrap();
+        // Late afternoon in May at 62 N: west and fairly high.
+        assert!((240.0..280.0).contains(&az) && (20.0..35.0).contains(&el), "az {az} el {el}");
+        let content = crate::content_dir();
+        let refs = References::load(&content, "saksun").unwrap().expect("saksun has references");
+        let lit: Vec<_> = refs.photos.iter().filter_map(|p| p.light.as_ref()).collect();
+        assert_eq!(lit.len(), refs.photos.len(), "every reference photo has its light");
+        assert!(lit.iter().all(|l| crate::sun::Utc::parse(&l.taken_utc).is_ok()));
+    }
+
+    #[test]
     fn basis_is_orthonormal_and_points_where_asked() {
         let (f, u, r) = basis(90.0, 10.0, 5.0);
         let dot = |a: Vec3, b: Vec3| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -1074,6 +1127,7 @@ mod tests {
             },
             ignore_columns: vec![],
             camera: None,
+            light: None,
         };
         let got = solve(&island, &field, &photo, &img).unwrap().camera;
         assert!((got.heading_deg - truth.heading_deg).abs() < 1.0, "{got:?}");
