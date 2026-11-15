@@ -60,6 +60,35 @@ pub struct Photo {
     /// The solved camera, written by `de photo solve`.
     #[serde(default)]
     pub camera: Option<Solved>,
+    /// When the photo was taken and how it was exposed, from its EXIF (`photos.py --meta`), so a
+    /// render can be lit as the place was (`de photo match --photo-light`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light: Option<PhotoLight>,
+}
+
+/// The light a photo was taken in.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PhotoLight {
+    /// When, in UTC (`2019-05-20T16:54:07Z`).
+    pub taken_utc: String,
+    /// False when only the date is known and the time is a guess (early afternoon).
+    pub time_known: bool,
+    /// The camera's exposure as EV100 (from shutter, aperture and ISO), if the EXIF has it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exposure_ev100: Option<f32>,
+    /// Cloud cover in the photo, 0 clear .. 1 overcast, written by hand from looking at it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover: Option<f32>,
+}
+
+impl PhotoLight {
+    /// The sun's compass azimuth and elevation, degrees, seen from `lat_lon` at `taken_utc`.
+    pub fn sun(&self, lat_lon: [f64; 2]) -> Result<(f32, f32), String> {
+        let when = crate::sun::Utc::parse(&self.taken_utc)?;
+        let (az, el) = crate::sun::position(lat_lon[0], lat_lon[1], &when);
+        Ok((az as f32, el as f32))
+    }
 }
 
 /// Where the photo comes from and the credit its licence asks for.
@@ -195,6 +224,11 @@ impl References {
                     p.id, self.island
                 ));
             }
+            if let Some(l) = &p.light
+                && let Err(e) = crate::sun::Utc::parse(&l.taken_utc)
+            {
+                out.push(format!("{at}: light.taken_utc: {e}"));
+            }
             if p.source.is_none() {
                 out.push(format!(
                     "{at}: no `source` (licence and author); run `python3 scripts/truth/photos.py {}`",
@@ -228,7 +262,8 @@ impl References {
     }
 }
 
-fn guess_lat_lon(p: &Photo) -> Option<[f64; 2]> {
+/// Where the photo was taken from: the hand guess, else its GPS tag.
+pub fn guess_lat_lon(p: &Photo) -> Option<[f64; 2]> {
     p.guess.lat_lon.or_else(|| p.source.as_ref().and_then(|s| s.gps))
 }
 
@@ -793,6 +828,21 @@ pub const REGIONS: [&str; 4] = ["sky", "sea", "land_near", "land_far"];
 
 /// Land closer than this is "near", metres: past it fog and haze start to show.
 pub const NEAR_M: f32 = 1500.0;
+/// Region index of pixels measured in no region (see [`regions`]).
+pub const SKIPPED: u8 = 255;
+
+/// Whether a sea ray from `eye` to `hit` passes low enough over grassland near the camera for
+/// the grass (de_world::grass) to stand in its way.
+fn grass_hides_sea(world: &World, g: &crate::grass::GrassRules, eye: [f32; 3], hit: [f32; 3]) -> bool {
+    let tallest = g.height_m[1].max(g.sheltered_height_m);
+    world.clearance(eye, direction(eye, hit), g.far_m, g.above_sea_m) < tallest
+}
+
+fn direction(from: [f32; 3], to: [f32; 3]) -> [f32; 3] {
+    let d = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+    let l = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt().max(1e-6);
+    [d[0] / l, d[1] / l, d[2] / l]
+}
 
 /// How a render compares with a photo from the same camera.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -827,12 +877,15 @@ pub struct RegionMatch {
     pub lightness_gap: f32,
 }
 
-/// Region index per pixel of `cam` at `w` wide (see [`REGIONS`]), from the sensor ray cast.
-pub fn regions(world: &World, cam: &CameraShot, w: u32) -> (u32, u32, Vec<u8>) {
+/// Region index per pixel of `cam` at `w` wide (see [`REGIONS`]; [`SKIPPED`] for none), from the sensor ray cast.
+pub fn regions(world: &World, cam: &CameraShot, w: u32, grass: &crate::grass::GrassRules) -> (u32, u32, Vec<u8>) {
     let buf = world.buffers(cam, w);
     let reg = (0..buf.class.len())
         .map(|i| match buf.class[i] {
             Class::Sky => 0,
+            // Sea seen just over a grassy bank near the camera is grass in the render (blades
+            // stand up into it), so it is not measured as sea.
+            Class::Sea if grass_hides_sea(world, grass, cam.pos, buf.pos[i]) => SKIPPED,
             Class::Sea => 1,
             _ if buf.depth[i] < NEAR_M => 2,
             _ => 3,
@@ -948,6 +1001,24 @@ pub fn from_lab(l: Vec3) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn photo_light_gives_the_sun_and_the_saksun_photos_have_it() {
+        let l = PhotoLight {
+            taken_utc: "2019-05-20T16:54:07Z".into(),
+            time_known: true,
+            exposure_ev100: Some(13.0),
+            cover: Some(1.0),
+        };
+        let (az, el) = l.sun([62.25, -7.18]).unwrap();
+        // Late afternoon in May at 62 N: west and fairly high.
+        assert!((240.0..280.0).contains(&az) && (20.0..35.0).contains(&el), "az {az} el {el}");
+        let content = crate::content_dir();
+        let refs = References::load(&content, "saksun").unwrap().expect("saksun has references");
+        let lit: Vec<_> = refs.photos.iter().filter_map(|p| p.light.as_ref()).collect();
+        assert_eq!(lit.len(), refs.photos.len(), "every reference photo has its light");
+        assert!(lit.iter().all(|l| crate::sun::Utc::parse(&l.taken_utc).is_ok()));
+    }
 
     #[test]
     fn basis_is_orthonormal_and_points_where_asked() {
@@ -1074,6 +1145,7 @@ mod tests {
             },
             ignore_columns: vec![],
             camera: None,
+            light: None,
         };
         let got = solve(&island, &field, &photo, &img).unwrap().camera;
         assert!((got.heading_deg - truth.heading_deg).abs() < 1.0, "{got:?}");

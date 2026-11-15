@@ -14,7 +14,10 @@ pub mod pack;
 pub mod photo;
 pub mod rng;
 pub mod sense;
+pub mod sky;
 pub mod steps;
+pub mod sun;
+pub mod surface;
 pub mod terrain;
 pub mod truth;
 pub mod water;
@@ -24,6 +27,7 @@ pub use island::{Island, LoadError, Vec3, View};
 pub use module::{Capability, CapabilityKind, Module, WorldModule};
 pub use rng::Rng;
 pub use steps::{Step, StepList};
+pub use surface::Surface;
 pub use terrain::Heightfield;
 
 use std::path::{Path, PathBuf};

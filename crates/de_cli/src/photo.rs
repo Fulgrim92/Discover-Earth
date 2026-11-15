@@ -78,6 +78,9 @@ pub struct MatchArgs {
     pub width: u32,
     pub out: PathBuf,
     pub reference: Option<PathBuf>,
+    /// Light each render as the place was when its photo was taken: the sun from the photo's
+    /// time and place, the exposure from its EXIF (where known).
+    pub photo_light: bool,
 }
 
 pub fn run(content: &Path, a: &MatchArgs) -> Result<String, String> {
@@ -121,7 +124,16 @@ pub fn run(content: &Path, a: &MatchArgs) -> Result<String, String> {
         })
         .transpose()?;
 
-    let world = World::new(&isl, &field);
+    let rules = de_world::water::Rules::load(content, &a.island)?;
+    let water = de_world::water::Water::find(&field, &rules.water);
+    let surface = de_world::Surface::new(&field, &isl.look, &a.island, Some((&water, rules.water.channel_depth_m)));
+    let world = World::new(&isl, &field).with_water(&water).with_surface(&surface);
+    let mut lit = Vec::new();
+    // Photos without an exposure in their EXIF get the median of the others: a daylight camera
+    // exposure, not the look's (which may be set for an evening).
+    let mut evs: Vec<f32> = refs.photos.iter().filter_map(|p| p.light.as_ref()?.exposure_ev100).collect();
+    evs.sort_by(f32::total_cmp);
+    let typical_ev = evs.get(evs.len() / 2).copied();
     let mut results = Vec::new();
     let mut rows = Vec::new();
     for p in &refs.photos {
@@ -152,6 +164,34 @@ pub fn run(content: &Path, a: &MatchArgs) -> Result<String, String> {
         if !a.sets.is_empty() {
             cmd.env("DE_OVERLAY", &overlay);
         }
+        if a.photo_light
+            && let (Some(l), Some(ll)) = (&p.light, photo::guess_lat_lon(p))
+        {
+            // This photo's own sun and exposure, on top of the --set look.
+            let (az, el) = l.sun(ll)?;
+            let mut own = doc.clone();
+            set_path(&mut own, "look.sun_azimuth_deg", Value::from(az))?;
+            set_path(&mut own, "look.sun_elevation_deg", Value::from(el.max(0.5)))?;
+            if let Some(ev) = l.exposure_ev100.or(typical_ev) {
+                set_path(&mut own, "look.cinema.exposure_ev100", Value::from(ev))?;
+            }
+            if let Some(c) = l.cover {
+                set_path(&mut own, "look.clouds.cover", Value::from(c))?;
+            }
+            let dir = a.out.join(format!("overlay-{}", p.id)).join("islands").join(&a.island);
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            std::fs::write(dir.join("terrain.json"), serde_json::to_string_pretty(&own).expect("serialises"))
+                .map_err(|e| e.to_string())?;
+            cmd.env("DE_OVERLAY", a.out.join(format!("overlay-{}", p.id)));
+            let ev = match (l.exposure_ev100, typical_ev) {
+                (Some(e), _) => format!("EV {e:.1}"),
+                (None, Some(e)) => format!("EV {e:.1} (median of the others)"),
+                (None, None) => "look's EV".into(),
+            };
+            let time = if l.time_known { "" } else { ", time guessed" };
+            let cover = l.cover.map_or("look's".into(), |c| format!("{c:.2}"));
+            lit.push(format!("| {} | {} | {az:.0}° | {el:.1}° | {ev}{time} | {cover} |", p.id, l.taken_utc));
+        }
         let status = cmd
             .stdout(std::process::Stdio::null())
             .stderr(std::fs::File::create(&log).map_err(|e| e.to_string())?)
@@ -161,8 +201,9 @@ pub fn run(content: &Path, a: &MatchArgs) -> Result<String, String> {
             return Err(format!("{}: de-shot failed, see {}", p.id, log.display()));
         }
         let render = Rgba::load(&a.out.join(format!("{}.png", p.id)))?;
-        let (rw, rh, reg) = photo::regions(&world, &cam.shot(&p.id, [w, h]), 320);
+        let (rw, rh, reg) = photo::regions(&world, &cam.shot(&p.id, [w, h]), 320, &rules.grass);
         let m = photo::compare(&p.id, &img, &render, rw, rh, &reg);
+        regions_overlay(&img, &render, rw, rh, &reg).save(&a.out.join(format!("{}.regions.png", p.id)))?;
         let old = before.as_ref().and_then(|b| b.iter().find(|o| o.id == p.id));
         let old_render = a.reference.as_ref().and_then(|r| Rgba::load(&r.join(format!("{}.png", p.id))).ok());
         let credit = p.source.as_ref().map(|s| s.credit.clone()).unwrap_or_default();
@@ -191,6 +232,11 @@ pub fn run(content: &Path, a: &MatchArgs) -> Result<String, String> {
     let mut md = format!("# Renders vs photos: {}\n\n", isl.name);
     if !a.sets.is_empty() {
         md.push_str(&format!("With {}.\n\n", a.sets.join(", ")));
+    }
+    if !lit.is_empty() {
+        md.push_str("Each render is lit as its photo was (`--photo-light`):\n\n| photo | taken (UTC) | sun azimuth | sun elevation | exposure | cloud cover |\n| --- | --- | --- | --- | --- | --- |\n");
+        md.push_str(&lit.join("\n"));
+        md.push_str("\n\n");
     }
     md.push_str(
         "Gap = mean of region colour ΔE, lightness (L*) distribution distance and palette ΔE; lower is closer to the photo.\n\n",
@@ -234,6 +280,29 @@ pub fn run(content: &Path, a: &MatchArgs) -> Result<String, String> {
     md.push_str(&format!("\n\nSheet: {}\n", a.out.join("sheet.png").display()));
     std::fs::write(a.out.join("match.md"), &md).map_err(|e| e.to_string())?;
     Ok(md)
+}
+
+/// Photo | render, each tinted by the region it is measured in (sky blue, sea cyan, land near
+/// green, land far orange; skipped pixels dark), so a wrong region split shows before its numbers are trusted.
+fn regions_overlay(photo: &Rgba, render: &Rgba, w: u32, h: u32, reg: &[u8]) -> Rgba {
+    const TINT: [[f32; 3]; 4] = [[80.0, 140.0, 255.0], [0.0, 230.0, 230.0], [60.0, 220.0, 60.0], [255.0, 150.0, 40.0]];
+    let tint = |img: &Rgba| {
+        let mut out = img.resize(w, h);
+        for (px, &k) in out.pixels.iter_mut().zip(reg) {
+            let Some(t) = TINT.get(k as usize) else {
+                *px = [px[0] / 3, px[1] / 3, px[2] / 3, 255];
+                continue;
+            };
+            for c in 0..3 {
+                px[c] = (0.55 * px[c] as f32 + 0.45 * t[c]) as u8;
+            }
+        }
+        out
+    };
+    let mut sheet = Rgba::new(2 * w + 4, h, [24, 24, 28, 255]);
+    sheet.blit(&tint(photo), 0, 0);
+    sheet.blit(&tint(render), w + 4, 0);
+    sheet
 }
 
 /// One photo's card: photo | (before) | render on top, then per-region colours and palettes.

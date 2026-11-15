@@ -19,7 +19,7 @@ use bevy::{
     },
     shader::ShaderRef,
 };
-use de_world::{clouds::Noise, island::Look};
+use de_world::{clouds::Noise, island::Look, sky::Sky};
 
 use crate::CameraRig;
 
@@ -41,6 +41,13 @@ pub struct CloudParams {
     /// Valley mist: density per metre at sea level, the height over which it thins (metres),
     /// how far it is marched (metres), and the march steps. Density 0 turns it off.
     pub mist: Vec4,
+    /// The daylight sky (`de_world::sky`): Perez A..D for luminance, x and y; then E for each
+    /// and the brightness (0: Bevy's sky shows instead); then each channel's zenith scale.
+    pub sky_y: Vec4,
+    pub sky_x: Vec4,
+    pub sky_c: Vec4,
+    pub sky_e: Vec4,
+    pub sky_scale: Vec4,
 }
 
 impl CloudParams {
@@ -62,7 +69,7 @@ impl CloudParams {
         let zenith = Vec3::from(look.zenith);
         let horizon = Vec3::from(look.horizon);
         // Cloud tops see the open sky; bellies see the sky's horizon and the dark land below.
-        let sky = look.sky_light;
+        let sky = look.sky_light_now();
         // Plus sunlight that has scattered many times inside the deck and comes out everywhere:
         // it follows the sun's height, which is why a noon overcast glows and an evening one
         // goes grey. It comes out nearly white (a grey of the sunlight's brightness, tinted by
@@ -73,28 +80,41 @@ impl CloudParams {
         let diffuse = Vec3::splat(lum * to_sun.y.max(0.0) * 0.5) * tint;
         let top = (zenith * 0.6 + horizon * 0.4) * sky + diffuse;
         let bottom = horizon * sky * 0.35 + diffuse * 0.6;
+        let sky = Sky::new(look.sun_elevation_deg, cine.sky_turbidity.max(1.7));
+        let sky_on = if cine.atmosphere && cine.sky_turbidity > 0.0 { cine.sky_brightness.max(0.0) } else { 0.0 };
         Self {
             layer: Vec4::new(c.base_m, c.top_m, c.scale_m, c.density),
             shape: Vec4::new(c.cover, c.detail, c.wind[0], c.wind[1]),
             sun_dir: to_sun.extend(c.steps as f32),
-            // The single-plus-octaves scattering in `clouds.wesl` leaves thick cloud about half
-            // as bright as in the reference photos; this calibrates it, so `light` 1 matches them.
-            sun: sun.extend(c.light * 2.0),
+            // The single-plus-octaves scattering in `clouds.wesl` leaves thick cloud darker than
+            // in the reference photos; this calibrates it so `light` 1 matches them. Fitted with
+            // `de photo match --photo-light` (each photo at its own sun, exposure and cover).
+            // It is fitted on midday photos; a low sun lights the deck from the side and through
+            // more air, so the calibration follows the sun's height like the sky light does.
+            sun: sun.extend(c.light * CLOUD_LIGHT * (to_sun.y / 35f32.to_radians().sin()).clamp(0.25, 1.0)),
             sky_top: top.extend(c.reach_m),
             sky_bottom: bottom.extend(c.shadows),
             mist: Vec4::new(cine.mist, cine.mist_top_m.max(1.0), MIST_REACH_M, MIST_STEPS),
+            sky_y: Vec4::from_slice(&sky.y[..4]),
+            sky_x: Vec4::from_slice(&sky.cx[..4]),
+            sky_c: Vec4::from_slice(&sky.cy[..4]),
+            sky_e: Vec4::new(sky.y[4], sky.cx[4], sky.cy[4], sky_on),
+            sky_scale: Vec3::from(sky.scale).extend(0.0),
         }
     }
 }
+
+/// Cloud brightness calibration, fitted to the reference photos (see `CloudParams::new`).
+const CLOUD_LIGHT: f32 = 6.75;
 
 /// How far along each ray the mist is marched, and in how many steps.
 const MIST_REACH_M: f32 = 12_000.0;
 const MIST_STEPS: f32 = 40.0;
 
 impl CloudParams {
-    /// Whether the box needs drawing at all: clouds, mist, or both.
+    /// Whether the box needs drawing at all: clouds, mist or the daylight sky.
     pub fn any(&self) -> bool {
-        self.shape.x > 0.0 || self.mist.x > 0.0
+        self.shape.x > 0.0 || self.mist.x > 0.0 || self.sky_e.w > 0.0
     }
 }
 

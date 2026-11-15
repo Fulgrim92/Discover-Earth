@@ -79,7 +79,8 @@ pub struct Look {
     /// Sky colour straight up, linear RGB 0..1; the sky dome fades from `horizon` to this.
     pub zenith: Vec3,
     /// Brightness of the light from the whole sky (ambient, tinted `horizon`), cd/m². Raises
-    /// shadows: overcast days light the land mostly from the sky.
+    /// shadows: overcast days light the land mostly from the sky. With `cinema.atmosphere` it is
+    /// the value for a sun 35° up and follows the sun's height (see [`Look::sky_light_now`]).
     pub sky_light: f32,
     /// Distance in metres at which fog hides half the scene.
     pub fog_half_m: f32,
@@ -93,6 +94,9 @@ pub struct Look {
     /// Sea colour, linear RGB, and how see-through it is (0..1).
     pub sea: Vec3,
     pub sea_alpha: f32,
+    /// How rough the sea's surface reads (0 mirror .. 1 matte). Wind-roughened sea reflects
+    /// far less of the sky at a low angle than a mirror does.
+    pub sea_roughness: f32,
     /// Tide: metres the sea stands above mean sea level (negative at low water). The Faroes
     /// range about ±1 m.
     pub tide_m: f32,
@@ -115,6 +119,20 @@ pub struct Look {
     pub clouds: crate::clouds::Clouds,
 }
 
+impl Look {
+    /// The sky light for the sun's current height. With the physical atmosphere the sky dims as
+    /// the sun sinks (diffuse light goes roughly with the sine of its elevation), scaled so the
+    /// value fitted to the midday reference photos (sun about 35° up) is `sky_light` itself;
+    /// without it, `sky_light` as given.
+    pub fn sky_light_now(&self) -> f32 {
+        if !self.cinema.atmosphere {
+            return self.sky_light;
+        }
+        let k = self.sun_elevation_deg.to_radians().sin().max(0.02) / 35f32.to_radians().sin();
+        self.sky_light * k.min(1.6)
+    }
+}
+
 /// How the camera films the island. Every field has a default (off / neutral).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
@@ -126,6 +144,14 @@ pub struct Cinema {
     /// Sun illuminance above the atmosphere when `atmosphere` is on, lux (sunlight is ~130000;
     /// the atmosphere dims and reddens it near the horizon). `sun_lux` is used otherwise.
     pub sun_lux: f32,
+    /// Strength of the light the physical sky throws on the land (its environment map), when
+    /// `atmosphere` is on: 1 as Bevy computes it. `sky_light` adds to it.
+    pub sky_env: f32,
+    /// Haziness of the analytic daylight sky drawn behind the clouds (`de_world::sky`,
+    /// Preetham 1999) with `atmosphere` on: 2 very clear .. 3 clear .. 6 hazy. 0 keeps Bevy's sky.
+    pub sky_turbidity: f32,
+    /// Brightness of that sky against the physical value (1).
+    pub sky_brightness: f32,
     /// Camera exposure, EV100 (higher is darker): 15 for a sunny day, 12 overcast.
     pub exposure_ev100: f32,
     /// tony (TonyMcMapface), agx, aces, filmic (Blender Filmic), reinhard or none.
@@ -151,6 +177,9 @@ impl Default for Cinema {
         Self {
             atmosphere: false,
             sun_lux: 130_000.0,
+            sky_env: 1.0,
+            sky_turbidity: 0.0,
+            sky_brightness: 1.0,
             exposure_ev100: 12.0,
             tonemapper: "tony".into(),
             bloom: 0.0,
@@ -194,6 +223,7 @@ impl Default for Look {
             rock_slope: 0.38,
             sea: [0.012, 0.045, 0.065],
             sea_alpha: 0.92,
+            sea_roughness: 0.06,
             tide_m: 0.0,
             stream: [0.02, 0.045, 0.05],
             foam: [0.55, 0.6, 0.62],
@@ -273,6 +303,9 @@ impl Island {
         out.extend(self.look.clouds.problems());
         if !(1..=4).contains(&self.look.subdivide) {
             out.push(format!("look.subdivide must be 1..=4, is {}", self.look.subdivide));
+        }
+        if !(0.0..=1.0).contains(&self.look.sea_roughness) {
+            out.push(format!("look.sea_roughness must be 0..=1, is {}", self.look.sea_roughness));
         }
         if self.views.is_empty() {
             out.push("no views: add at least one (the first is the spawn point)".into());

@@ -109,18 +109,35 @@ pub struct World<'a> {
     pub island: &'a Island,
     pub field: &'a Heightfield,
     pub water: Option<&'a crate::water::Water>,
+    /// The ground as the renderer draws it; the heightmap when none is given.
+    pub surface: Option<&'a crate::Surface>,
     top: f32,
 }
 
 impl<'a> World<'a> {
     pub fn new(island: &'a Island, field: &'a Heightfield) -> Self {
-        Self { island, field, water: None, top: field.max_height().max(1.0) }
+        Self { island, field, water: None, surface: None, top: field.max_height().max(1.0) }
     }
 
     /// Also see streams and lakes: ground under them is [`Class::Water`].
     pub fn with_water(mut self, water: &'a crate::water::Water) -> Self {
         self.water = Some(water);
         self
+    }
+
+    /// Cast against the render's ground ([`crate::Surface`]: smooth, with relief and water
+    /// cut in) instead of the bilinear heightmap, so labels and depth match the image.
+    pub fn with_surface(mut self, surface: &'a crate::Surface) -> Self {
+        self.surface = Some(surface);
+        self
+    }
+
+    /// Ground height at world x, z.
+    pub fn ground(&self, x: f32, z: f32) -> f32 {
+        match self.surface {
+            Some(s) => s.height(x, z),
+            None => self.field.height(x, z),
+        }
     }
 
     fn look(&self) -> &Look {
@@ -141,7 +158,7 @@ impl<'a> World<'a> {
             if !f.contains(p[0], p[2]) {
                 return None;
             }
-            let h = f.height(p[0], p[2]);
+            let h = self.ground(p[0], p[2]);
             if h <= 0.5 { None } else { Some(p[1] - h) }
         };
         let mut t = 0.0f32;
@@ -179,11 +196,31 @@ impl<'a> World<'a> {
         (t_sea <= max_t).then_some((t_sea, Class::Sea, [0.0, 1.0, 0.0]))
     }
 
+    /// How close a ray from `o` along `d` comes to land at least `above_m` over the sea within
+    /// its first `within_m` metres (least height above that land; infinite if it passes none).
+    pub fn clearance(&self, o: Vec3, d: Vec3, within_m: f32, above_m: f32) -> f32 {
+        let f = self.field;
+        let sea = SEA_LEVEL_M + self.look().tide_m;
+        let mut least = f32::INFINITY;
+        let mut t = 0.25;
+        while t < within_m {
+            let p = [o[0] + d[0] * t, o[1] + d[1] * t, o[2] + d[2] * t];
+            if f.contains(p[0], p[2]) {
+                let h = self.ground(p[0], p[2]);
+                if h > sea + above_m {
+                    least = least.min(p[1] - h);
+                }
+            }
+            t += 0.25 + t * 0.01;
+        }
+        least
+    }
+
     fn normal(&self, p: Vec3) -> Vec3 {
         let f = self.field;
         let (sx, sz) = (f.spacing[0], f.spacing[1]);
-        let (l, r) = (f.height(p[0] - sx, p[2]), f.height(p[0] + sx, p[2]));
-        let (u, dn) = (f.height(p[0], p[2] - sz), f.height(p[0], p[2] + sz));
+        let (l, r) = (self.ground(p[0] - sx, p[2]), self.ground(p[0] + sx, p[2]));
+        let (u, dn) = (self.ground(p[0], p[2] - sz), self.ground(p[0], p[2] + sz));
         let n = [(l - r) / (2.0 * sx), 1.0, (u - dn) / (2.0 * sz)];
         let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
         [n[0] / len, n[1] / len, n[2] / len]
