@@ -102,7 +102,7 @@ impl WorldModule {
             c(
                 "world.sense.pack",
                 System,
-                "Per shot: class, depth, normal and sun-shadow buffers, stats JSON and a text description (sense.md)",
+                "Per shot: class, depth, normal and sun-shadow buffers cast against the drawn ground, stats JSON and a text description (sense.md)",
             ),
             c(
                 "world.sense.motion",
@@ -144,14 +144,18 @@ impl WorldModule {
             c(
                 "world.grass.rules",
                 Content,
-                "rules.json grass: tufts per m² by land cover class, slope, altitude and exposure limits, LOD, budget",
+                "rules.json grass: tufts per m² by land cover class, slope, altitude and exposure limits; heather, moss and sheltered long grass shares; LOD, budget",
             ),
             c(
                 "world.grass.scatter",
                 System,
-                "Seeded grass tufts per 16 m chunk, nested levels of detail; a test keeps every view under the budget",
+                "Seeded grass, heather and moss tufts per 16 m chunk, nested levels of detail; a test keeps every view under the budget",
             ),
-            c("client.grass", System, "Grass blades around the camera, bent by the wind in the vertex shader"),
+            c(
+                "client.grass",
+                System,
+                "Grass, heather and moss around the camera, bent by the wind in the vertex shader (heather stiffer, moss still)",
+            ),
             c(
                 "world.truth.photos",
                 Content,
@@ -161,7 +165,7 @@ impl WorldModule {
             c(
                 "tool.photo.match",
                 Command,
-                "de photo match: render each photo's camera; colour, lightness and palette gap vs the photo",
+                "de photo match: render each photo's camera; colour, lightness and palette gap vs the photo per region (regions.png shows the split)",
             ),
             c(
                 "world.look.cinema",

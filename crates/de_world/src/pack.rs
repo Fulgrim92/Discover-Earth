@@ -28,7 +28,8 @@ pub fn write(out: &Path, content: &Path, island_id: &str) -> Result<String, Stri
     let field = island.heightfield(content, island_id).map_err(|e| e.to_string())?;
     let rules = crate::water::Rules::load(content, island_id)?;
     let water = crate::water::Water::find(&field, &rules.water);
-    let world = World::new(&island, &field).with_water(&water);
+    let surface = crate::Surface::new(&field, &island.look, island_id, Some((&water, rules.water.channel_depth_m)));
+    let world = World::new(&island, &field).with_water(&water).with_surface(&surface);
     let truth = crate::truth::Truth::load(content, island_id, &island)?;
 
     let mut md = format!("# Capture: {} ({island_id})\n\n", island.name);

@@ -86,6 +86,66 @@
       "shot": "meadow-backlit"
     },
     {
+      "camera": {
+        "pos": [
+          -2490,
+          313.0,
+          -3912
+        ],
+        "look_at": [
+          -2300,
+          300,
+          -3300
+        ]
+      }
+    },
+    {
+      "wait": 2
+    },
+    {
+      "shot": "heather"
+    },
+    {
+      "camera": {
+        "pos": [
+          475,
+          597.1,
+          603
+        ],
+        "look_at": [
+          -300,
+          560,
+          300
+        ]
+      }
+    },
+    {
+      "wait": 2
+    },
+    {
+      "shot": "moss-plateau"
+    },
+    {
+      "camera": {
+        "pos": [
+          -648,
+          71.2,
+          1623
+        ],
+        "look_at": [
+          -500,
+          76,
+          1200
+        ]
+      }
+    },
+    {
+      "wait": 2
+    },
+    {
+      "shot": "sheltered-hollow"
+    },
+    {
       "view": "lagoon"
     },
     {

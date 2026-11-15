@@ -56,7 +56,10 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     let along = dot(p.xz, dir);
     let gust = 0.5 + 0.5 * sin(0.3 * (along - speed * t));
     let flutter = 0.15 * sin(t * 6.3 + dot(p.xz, vec2(1.7, 2.3)) * 2.0);
-    let bend = grass.wind.w * (speed / 10.0) * h * up * up * (0.35 + 0.65 * gust + flutter);
+    var stiff = 1.0;
+    @if(VERTEX_COLORS)
+    stiff = vertex.color.a;
+    let bend = stiff * grass.wind.w * (speed / 10.0) * h * up * up * (0.35 + 0.65 * gust + flutter);
     p.x += dir.x * bend;
     p.z += dir.y * bend;
     p.y -= 0.5 * bend * bend / max(h, 0.05) * up;
