@@ -107,7 +107,7 @@
       0.66,
       0.75
     ],
-    "sky_light": 1500,
+    "sky_light": 3000.0,
     "sun_lux": 12000,
     "fog_half_m": 60000,
     "sea_roughness": 0.2,
@@ -115,11 +115,15 @@
     "sun_elevation_deg": 9,
     "cinema": {
       "atmosphere": true,
-      "exposure_ev100": 13,
+      "exposure_ev100": 11.3,
       "bloom": 0.15,
       "saturation": 1.1,
-      "mist": 0.0003,
-      "mist_top_m": 150.0
+      "mist": 0.00015,
+      "mist_top_m": 150.0,
+      "sun_lux": 24000.0,
+      "sky_env": 0.25,
+      "sky_turbidity": 3.0,
+      "sky_brightness": 2.5
     },
     "clouds": {
       "cover": 0.55,

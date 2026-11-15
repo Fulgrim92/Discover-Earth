@@ -202,6 +202,7 @@ photos, each with a rough `guess` of where it was taken (heading, how far off th
 
 ```
 python3 scripts/truth/photos.py saksun     # download photos and record author, licence, geotag, focal length
+python3 scripts/truth/photos.py saksun --meta   # refresh each photo's `light` (time, exposure) from its EXIF
 de photo solve [ids]                        # camera of each photo from its skyline -> references.json `camera`
 de photo match [--set look.x=v] [--ref <dir>] [--out <dir>]   # render each camera, measure against the photo
 ```
@@ -224,8 +225,15 @@ tinted by region (sky blue, sea cyan, land near green, land far orange, unmeasur
 region's numbers. The sensor casts against the ground as drawn (`de_world::Surface`: smooth, with relief and water
 cut in), and sea seen low over grassland within the grass's reach is left out, because grass stands in it in the render.
 
-Caveats: each photo has its own weather and hour, and the render has one look, so a gap never reaches zero; judge the
-mean and how many photos move. Houses, people and fences are in the photos and not in the island.
+**`--photo-light`** lights each render as its photo was: the sun at the photo's time and place (`de_world::sun`,
+NOAA's equations), the camera's real exposure (EV100 from the EXIF shutter, aperture and ISO) and the photo's cloud
+cover (`light.cover`, written by hand from looking at it). That turns the photos into a test of the light model
+itself, not of one look: light levels have to be physically right to match at the camera's own exposure. Photos
+without EXIF times get early afternoon (`time_known: false`) and keep the look's exposure. `match.md` lists what each
+render used.
+
+Caveats: without `--photo-light`, each photo has its own weather and hour and the render has one look, so a gap never
+reaches zero; judge the mean and how many photos move. Houses, people and fences are in the photos and not in the island.
 
 ## The live game (Bevy Remote Protocol)
 
