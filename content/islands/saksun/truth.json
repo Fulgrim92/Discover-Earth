@@ -1,0 +1,87 @@
+{
+  "grid": {
+    "size_px": [
+      1024,
+      1024
+    ],
+    "per_heightmap_px": 2,
+    "north_lat": 62.333056,
+    "west_lon": -7.305
+  },
+  "satellite": {
+    "file": "satellite.png",
+    "what": "per-pixel median surface reflectance (B04, B03, B02) of clear Sentinel-2 L2A summer scenes, sRGB-encoded",
+    "tile": "29VNK",
+    "scenes": [
+      {
+        "id": "S2C_29VNK_20250515_0_L2A",
+        "date": "2025-05-15",
+        "island_clear": 0.949
+      },
+      {
+        "id": "S2A_29VNK_20250514_0_L2A",
+        "date": "2025-05-14",
+        "island_clear": 0.949
+      },
+      {
+        "id": "S2A_29VNK_20230612_0_L2A",
+        "date": "2023-06-12",
+        "island_clear": 0.963
+      },
+      {
+        "id": "S2A_29VNK_20240904_0_L2A",
+        "date": "2024-09-04",
+        "island_clear": 0.948
+      },
+      {
+        "id": "S2A_29VNK_20250713_0_L2A",
+        "date": "2025-07-13",
+        "island_clear": 0.957
+      },
+      {
+        "id": "S2B_29VNK_20240826_0_L2A",
+        "date": "2024-08-26",
+        "island_clear": 0.783
+      },
+      {
+        "id": "S2C_29VNK_20250522_0_L2A",
+        "date": "2025-05-22",
+        "island_clear": 0.677
+      },
+      {
+        "id": "S2B_29VNK_20230613_0_L2A",
+        "date": "2023-06-13",
+        "island_clear": 0.954
+      },
+      {
+        "id": "S2B_29VNK_20230617_0_L2A",
+        "date": "2023-06-17",
+        "island_clear": 0.861
+      },
+      {
+        "id": "S2B_29VNK_20250815_0_L2A",
+        "date": "2025-08-15",
+        "island_clear": 0.975
+      },
+      {
+        "id": "S2B_29VNK_20230819_0_L2A",
+        "date": "2023-08-19",
+        "island_clear": 0.83
+      },
+      {
+        "id": "S2B_29VNK_20240810_0_L2A",
+        "date": "2024-08-10",
+        "island_clear": 0.76
+      }
+    ],
+    "never_clear": 0.0084,
+    "attribution": "Contains modified Copernicus Sentinel data 2023-2025"
+  },
+  "landcover": {
+    "file": "landcover.png",
+    "what": "ESA WorldCover 10 m 2021 v200 class codes",
+    "source": "ESA_WorldCover_10m_2021_v200_N60W009_Map.tif",
+    "attribution": "ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium",
+    "licence": "CC BY 4.0"
+  }
+}

@@ -47,14 +47,20 @@ step fmt     cargo fmt --check
 step clippy  cargo clippy --workspace --all-targets -- -D warnings
 step test    cargo test --workspace
 step content cargo run -q -p de_cli -- validate
+# Shipped content size against content/budget.json; the numbers go into summary.json.
+step size    bash -c "cargo run -q -p de_cli -- size > '$log/size.json'"
 if [[ $shots == 1 ]]; then
   rm -rf "$root/out/shots"
   step shots cargo run -q -p de_client --bin de-shot -- content/shots/smoke.json out/shots
+  # A shader that fails to compile only logs an error and draws nothing, so the capture still
+  # "passes". Fail on it here.
+  step shaders bash -c "! grep -E 'failed to create shader module|Shader .* parsing error' '$log/shots.log'"
   [[ -n "$ref" ]] && step diff compare
 fi
 
-printf '{"ok":%s,"first_failure":%s,"steps":{%s}}\n' \
+size_json="$(cat "$log/size.json" 2>/dev/null)"
+printf '{"ok":%s,"first_failure":%s,"steps":{%s},"size":%s}\n' \
   "$([[ -z "$failed" ]] && echo true || echo false)" \
   "$([[ -z "$failed" ]] && echo null || echo "\"$failed\"")" \
-  "$(IFS=,; echo "${results[*]}")" > "$log/summary.json"
+  "$(IFS=,; echo "${results[*]}")" "${size_json:-null}" > "$log/summary.json"
 [[ -z "$failed" ]]

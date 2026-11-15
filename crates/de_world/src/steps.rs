@@ -30,8 +30,17 @@ fn default_size() -> [u32; 2] {
 pub enum Step {
     /// Jump the camera to a named view of the island.
     View(String),
-    /// Jump the camera to a position, looking at a point.
-    Camera { pos: Vec3, look_at: Vec3 },
+    /// Jump the camera to a position, looking at a point. `fov_y_deg` changes the lens (vertical
+    /// field of view) from then on; `roll_deg` turns the camera about its view direction
+    /// (positive tips the right side down), e.g. to match a reference photo.
+    Camera {
+        pos: Vec3,
+        look_at: Vec3,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fov_y_deg: Option<f32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        roll_deg: Option<f32>,
+    },
     /// Let this many frames of game time pass.
     Wait(u32),
     /// Save the next frame as `<out>/<name>.png`.

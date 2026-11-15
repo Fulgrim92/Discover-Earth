@@ -76,5 +76,68 @@
       ]
     }
   ],
-  "look": {}
+  "look": {
+    "grass": [
+      0.079,
+      0.08,
+      0.05
+    ],
+    "rock": [
+      0.129,
+      0.14,
+      0.085
+    ],
+    "shore": [
+      0.117,
+      0.12,
+      0.096
+    ],
+    "moss": [
+      0.081,
+      0.076,
+      0.054
+    ],
+    "horizon": [
+      0.85,
+      0.88,
+      0.9
+    ],
+    "zenith": [
+      0.6,
+      0.66,
+      0.75
+    ],
+    "sky_light": 3000.0,
+    "sun_lux": 12000,
+    "fog_half_m": 60000,
+    "sea_roughness": 0.2,
+    "sun_azimuth_deg": 290,
+    "sun_elevation_deg": 9,
+    "cinema": {
+      "atmosphere": true,
+      "exposure_ev100": 11.3,
+      "bloom": 0.15,
+      "saturation": 1.1,
+      "mist": 0.00015,
+      "mist_top_m": 150.0,
+      "sun_lux": 24000.0,
+      "sky_env": 0.25,
+      "sky_turbidity": 3.0,
+      "sky_brightness": 2.5
+    },
+    "clouds": {
+      "cover": 0.55,
+      "base_m": 750.0,
+      "top_m": 1500.0,
+      "scale_m": 6000.0,
+      "density": 0.04,
+      "detail": 0.35,
+      "wind": [
+        6.0,
+        2.0
+      ],
+      "light": 1.0,
+      "shadows": 1.0
+    }
+  }
 }

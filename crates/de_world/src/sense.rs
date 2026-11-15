@@ -52,10 +52,13 @@ pub enum Class {
     Rock,
     Shore,
     Moss,
+    /// Streams and lakes (see [`crate::water`]).
+    Water,
 }
 
 impl Class {
-    pub const ALL: [Class; 6] = [Class::Sky, Class::Sea, Class::Grass, Class::Rock, Class::Shore, Class::Moss];
+    pub const ALL: [Class; 7] =
+        [Class::Sky, Class::Sea, Class::Grass, Class::Rock, Class::Shore, Class::Moss, Class::Water];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -65,6 +68,7 @@ impl Class {
             Class::Rock => "rock",
             Class::Shore => "shore",
             Class::Moss => "moss",
+            Class::Water => "water",
         }
     }
 
@@ -77,11 +81,12 @@ impl Class {
             Class::Rock => [140, 110, 90, 255],
             Class::Shore => [230, 210, 130, 255],
             Class::Moss => [30, 100, 40, 255],
+            Class::Water => [0, 200, 255, 255],
         }
     }
 
     pub fn is_land(self) -> bool {
-        matches!(self, Class::Grass | Class::Rock | Class::Shore | Class::Moss)
+        matches!(self, Class::Grass | Class::Rock | Class::Shore | Class::Moss | Class::Water)
     }
 }
 
@@ -95,18 +100,44 @@ pub struct Buffers {
     pub normal: Vec<Vec3>,
     /// Whether the land at this pixel is in the sun's shadow (terrain between it and the sun).
     pub shaded: Vec<bool>,
+    /// World position the ray hit; meaningless for sky.
+    pub pos: Vec<Vec3>,
 }
 
 /// The island as the sensor sees it.
 pub struct World<'a> {
     pub island: &'a Island,
     pub field: &'a Heightfield,
+    pub water: Option<&'a crate::water::Water>,
+    /// The ground as the renderer draws it; the heightmap when none is given.
+    pub surface: Option<&'a crate::Surface>,
     top: f32,
 }
 
 impl<'a> World<'a> {
     pub fn new(island: &'a Island, field: &'a Heightfield) -> Self {
-        Self { island, field, top: field.max_height().max(1.0) }
+        Self { island, field, water: None, surface: None, top: field.max_height().max(1.0) }
+    }
+
+    /// Also see streams and lakes: ground under them is [`Class::Water`].
+    pub fn with_water(mut self, water: &'a crate::water::Water) -> Self {
+        self.water = Some(water);
+        self
+    }
+
+    /// Cast against the render's ground ([`crate::Surface`]: smooth, with relief and water
+    /// cut in) instead of the bilinear heightmap, so labels and depth match the image.
+    pub fn with_surface(mut self, surface: &'a crate::Surface) -> Self {
+        self.surface = Some(surface);
+        self
+    }
+
+    /// Ground height at world x, z.
+    pub fn ground(&self, x: f32, z: f32) -> f32 {
+        match self.surface {
+            Some(s) => s.height(x, z),
+            None => self.field.height(x, z),
+        }
     }
 
     fn look(&self) -> &Look {
@@ -115,7 +146,8 @@ impl<'a> World<'a> {
 
     /// Cast one ray. Returns (distance, class, normal), or None for sky.
     pub fn cast(&self, o: Vec3, d: Vec3, max_t: f32) -> Option<(f32, Class, Vec3)> {
-        let t_sea = if d[1] < -1e-6 { (SEA_LEVEL_M - o[1]) / d[1] } else { f32::INFINITY };
+        let sea = SEA_LEVEL_M + self.look().tide_m;
+        let t_sea = if d[1] < -1e-6 { (sea - o[1]) / d[1] } else { f32::INFINITY };
         let t_sea = if t_sea >= 0.0 { t_sea } else { f32::INFINITY };
         let end = t_sea.min(max_t);
         let at = |t: f32| [o[0] + d[0] * t, o[1] + d[1] * t, o[2] + d[2] * t];
@@ -126,7 +158,7 @@ impl<'a> World<'a> {
             if !f.contains(p[0], p[2]) {
                 return None;
             }
-            let h = f.height(p[0], p[2]);
+            let h = self.ground(p[0], p[2]);
             if h <= 0.5 { None } else { Some(p[1] - h) }
         };
         let mut t = 0.0f32;
@@ -164,11 +196,31 @@ impl<'a> World<'a> {
         (t_sea <= max_t).then_some((t_sea, Class::Sea, [0.0, 1.0, 0.0]))
     }
 
+    /// How close a ray from `o` along `d` comes to land at least `above_m` over the sea within
+    /// its first `within_m` metres (least height above that land; infinite if it passes none).
+    pub fn clearance(&self, o: Vec3, d: Vec3, within_m: f32, above_m: f32) -> f32 {
+        let f = self.field;
+        let sea = SEA_LEVEL_M + self.look().tide_m;
+        let mut least = f32::INFINITY;
+        let mut t = 0.25;
+        while t < within_m {
+            let p = [o[0] + d[0] * t, o[1] + d[1] * t, o[2] + d[2] * t];
+            if f.contains(p[0], p[2]) {
+                let h = self.ground(p[0], p[2]);
+                if h > sea + above_m {
+                    least = least.min(p[1] - h);
+                }
+            }
+            t += 0.25 + t * 0.01;
+        }
+        least
+    }
+
     fn normal(&self, p: Vec3) -> Vec3 {
         let f = self.field;
         let (sx, sz) = (f.spacing[0], f.spacing[1]);
-        let (l, r) = (f.height(p[0] - sx, p[2]), f.height(p[0] + sx, p[2]));
-        let (u, dn) = (f.height(p[0], p[2] - sz), f.height(p[0], p[2] + sz));
+        let (l, r) = (self.ground(p[0] - sx, p[2]), self.ground(p[0] + sx, p[2]));
+        let (u, dn) = (self.ground(p[0], p[2] - sz), self.ground(p[0], p[2] + sz));
         let n = [(l - r) / (2.0 * sx), 1.0, (u - dn) / (2.0 * sz)];
         let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
         [n[0] / len, n[1] / len, n[2] / len]
@@ -176,6 +228,9 @@ impl<'a> World<'a> {
 
     /// The dominant ground layer at a point, by the same weights the terrain shader blends.
     fn ground_class(&self, p: Vec3) -> Class {
+        if self.water.is_some_and(|w| w.channel(p[0], p[2], 0.0).is_some()) {
+            return Class::Water;
+        }
         let n = self.normal(p);
         let w = layer_weights(p[1], 1.0 - n[1], self.top, self.look());
         let i = (0..4).max_by(|&a, &b| w[a].total_cmp(&w[b])).unwrap_or(0);
@@ -192,6 +247,7 @@ impl<'a> World<'a> {
         let mut depth = Vec::with_capacity((w * h) as usize);
         let mut normal = Vec::with_capacity((w * h) as usize);
         let mut shaded = Vec::with_capacity((w * h) as usize);
+        let mut pos = Vec::with_capacity((w * h) as usize);
         let sun = to_sun(self.look());
         for py in 0..h {
             for px in 0..w {
@@ -202,6 +258,7 @@ impl<'a> World<'a> {
                     Some((t, c, n)) => {
                         let p = add3(add3(cam.pos, scale(d, t)), scale(n, 2.0));
                         shaded.push(c.is_land() && (dot(n, sun) <= 0.0 || self.blocks(p, sun)));
+                        pos.push(add3(cam.pos, scale(d, t)));
                         class.push(c);
                         depth.push(t);
                         normal.push(n);
@@ -211,11 +268,12 @@ impl<'a> World<'a> {
                         depth.push(f32::INFINITY);
                         normal.push([0.0, 0.0, 0.0]);
                         shaded.push(false);
+                        pos.push([0.0; 3]);
                     }
                 }
             }
         }
-        Buffers { width: w, height: h, class, depth, normal, shaded }
+        Buffers { width: w, height: h, class, depth, normal, shaded, pos }
     }
 
     /// Whether terrain lies on the way from `p` towards `dir` (for sun shadows).
@@ -288,6 +346,9 @@ pub struct Report {
     pub fog: FogFacts,
     /// From the rendered PNG, when it exists.
     pub image: Option<ImageFacts>,
+    /// Against the satellite (`scripts/truth/fetch.py`), when the island has it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub truth: Option<crate::truth::ShotTruth>,
     /// The above as sentences.
     pub text: String,
 }
@@ -503,6 +564,7 @@ pub fn report(world: &World, cam: &CameraShot, buf: &Buffers, image: Option<&Rgb
         sun,
         fog,
         image,
+        truth: None,
         text: String::new(),
     };
     r.text = describe(&r);
@@ -623,6 +685,17 @@ pub fn describe(r: &Report) -> String {
             pct(m)
         )),
         None => s.push(format!("Fog keeps {} of a surface's colour at 1 km.", pct(r.fog.left_at_1km))),
+    }
+    if let Some(t) = &r.truth {
+        let mut cov: Vec<_> = t.cover.iter().filter(|(_, v)| **v >= 0.02).collect();
+        cov.sort_by(|a, b| b.1.total_cmp(a.1));
+        let gaps: Vec<String> = t.layers.iter().map(|(k, l)| format!("{k} ΔE {:.0}", l.delta_e)).collect();
+        s.push(format!(
+            "Satellite: the land in view is {} (WorldCover); our ground layers agree on {}. Colour gap to the satellite: {} (2 is barely visible, over 10 clearly different).",
+            cov.iter().map(|(k, v)| format!("{k} {}", pct(**v))).collect::<Vec<_>>().join(", "),
+            pct(t.cover_agree),
+            if gaps.is_empty() { "n/a".to_string() } else { gaps.join(", ") }
+        ));
     }
     if let Some(img) = &r.image {
         let mut parts: Vec<(String, f32)> = img.classes.iter().map(|(k, v)| (k.clone(), v.luma)).collect();

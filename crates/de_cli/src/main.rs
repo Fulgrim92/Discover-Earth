@@ -1,15 +1,19 @@
 //! `de`: Discover Earth's command line, the first thing an agent runs.
 //!
 //!   de capabilities [prefix] [--json]   what the engine and game can do
-//!   de schema terrain|steps|drone       JSON schema for a content file
+//!   de schema terrain|steps|drone|references      JSON schema for a content file
 //!   de validate                         check every island, drone.json and step list
 //!   de islands                          list islands with size and views
 //!   de sense <dir>                      rebuild sensor packs and clip reports for a capture
 //!   de sweep <view> --set a.b=1,2,3     render a view over values and lay them out as one sheet
 //!   de compare <ref-dir> <dir>          perceptual difference (FLIP) per shot, with heatmaps
 //!   de taste --sheet .. --pick ..       record a look decision in docs/taste.jsonl
+//!   de water [island]                   streams, waterfalls and lakes from the terrain, with a map
+//!   de photo solve|match                cameras of real photos from their skylines; render vs photo
 
 mod compare;
+mod critic;
+mod photo;
 mod sweep;
 
 use std::{
@@ -75,6 +79,42 @@ enum Cmd {
         #[arg(long)]
         report: bool,
     },
+    /// Compare an island's ground with the satellite (needs `scripts/truth/fetch.py <island>`):
+    /// layer albedos now vs fitted, land-cover agreement, and top-down maps in out/truth/<island>/.
+    /// With --apply, writes the fitted albedos into terrain.json.
+    Truth {
+        #[arg(default_value = "saksun")]
+        island: String,
+        #[arg(long)]
+        apply: bool,
+        #[arg(long, default_value = "out/truth")]
+        out: PathBuf,
+    },
+    /// Find an island's streams, waterfalls and lakes from its terrain under rules.json; writes
+    /// water.json, map.png (against WorldCover's water when truth data exists), water.md and
+    /// falls.steps.json (a step list with one shot per waterfall) to out/water/<island>/.
+    Water {
+        #[arg(default_value = "saksun")]
+        island: String,
+        #[arg(long, default_value = "out/water")]
+        out: PathBuf,
+        /// A folder where de-shot rendered falls.steps.json: lay its shots out as falls.sheet.png.
+        #[arg(long)]
+        shots: Option<PathBuf>,
+    },
+    /// Real photos of the island (content/references/<island>/): solve their cameras from the
+    /// skyline, then measure renders from those cameras against them.
+    Photo {
+        #[command(subcommand)]
+        cmd: PhotoCmd,
+    },
+    /// Blind visual review: pack only the renders for a fresh agent, then gate on its critic.json.
+    Critic {
+        #[command(subcommand)]
+        cmd: CriticCmd,
+    },
+    /// Shipped content size by folder against content/budget.json (JSON). Exit 1 if over.
+    Size,
     /// Append a look decision to docs/taste.jsonl, so later sessions know what was liked and why.
     Taste {
         /// The sheet the choice was made from.
@@ -95,6 +135,55 @@ enum Cmd {
     },
 }
 
+#[derive(Subcommand)]
+enum CriticCmd {
+    /// Copy a de-shot folder's shot PNGs, clip sheets and motion stats with a fixed brief into
+    /// --out (default out/critic). Give a fresh agent only that folder; it writes critic.json.
+    Pack {
+        shots: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Print critic.json's defects worst first; exit 1 while any is above `minor`.
+    Check { review: Option<PathBuf> },
+}
+
+#[derive(Subcommand)]
+enum PhotoCmd {
+    /// Find each photo's camera by fitting its skyline to the heightfield's; writes `camera`
+    /// into references.json and skyline overlays (photo red, heightfield green) to --out.
+    Solve {
+        /// Only these photo ids (default: all).
+        ids: Vec<String>,
+        #[arg(long, default_value = "saksun")]
+        island: String,
+        #[arg(long, default_value = "out/photo/solve")]
+        out: PathBuf,
+    },
+    /// Render every solved photo's camera and measure it against the photo (colour, lightness,
+    /// palette per sky/sea/land region). Writes <id>.match.png, sheet.png, match.json, match.md.
+    /// Example: de photo match --set look.fog_half_m=6000 --ref out/photo/before --out out/photo/after
+    Match {
+        #[arg(long, default_value = "saksun")]
+        island: String,
+        /// `path=value` into terrain.json, rendered through an overlay (content/ is untouched).
+        #[arg(long = "set")]
+        sets: Vec<String>,
+        /// Render width in pixels (height follows the photo).
+        #[arg(long, default_value_t = 960)]
+        width: u32,
+        #[arg(long, default_value = "out/photo/match")]
+        out: PathBuf,
+        /// An earlier `de photo match --out` folder: adds its renders as "before" and the change in gap.
+        #[arg(long = "ref")]
+        reference: Option<PathBuf>,
+        /// Light each render as its photo was: the sun at the photo's time and place, and the
+        /// camera's exposure from its EXIF (`light` in references.json).
+        #[arg(long)]
+        photo_light: bool,
+    },
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum SchemaKind {
     /// content/islands/<id>/terrain.json
@@ -103,6 +192,12 @@ enum SchemaKind {
     Steps,
     /// content/drone.json
     Drone,
+    /// content/islands/<id>/rules.json
+    Rules,
+    /// content/references/<island>/references.json
+    References,
+    /// content/budget.json
+    Budget,
 }
 
 /// Every module and capability, sorted by id.
@@ -133,6 +228,9 @@ fn main() -> ExitCode {
                 SchemaKind::Terrain => schemars::schema_for!(Island),
                 SchemaKind::Steps => schemars::schema_for!(StepList),
                 SchemaKind::Drone => schemars::schema_for!(DroneConfig),
+                SchemaKind::Rules => schemars::schema_for!(de_world::water::Rules),
+                SchemaKind::References => schemars::schema_for!(de_world::photo::References),
+                SchemaKind::Budget => schemars::schema_for!(de_world::budget::Budget),
             };
             println!("{}", serde_json::to_string_pretty(&schema).expect("serialises"));
             ExitCode::SUCCESS
@@ -198,6 +296,119 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Cmd::Truth { island, apply, out } => match truth(&content, &island, apply, &out.join(&island)) {
+            Ok(text) => {
+                print!("{text}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::FAILURE
+            }
+        },
+        Cmd::Water { island, out, shots } => match water(&content, &island, &out.join(&island), shots.as_deref()) {
+            Ok(text) => {
+                print!("{text}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::FAILURE
+            }
+        },
+        Cmd::Photo { cmd } => {
+            let res = match cmd {
+                PhotoCmd::Solve { ids, island, out } => photo::solve(&content, &island, &ids, &out),
+                PhotoCmd::Match { island, sets, width, out, reference, photo_light } => {
+                    photo::run(&content, &photo::MatchArgs { island, sets, width, out, reference, photo_light })
+                }
+            };
+            match res {
+                Ok(text) => {
+                    print!("{text}");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Cmd::Critic { cmd: CriticCmd::Pack { shots, out } } => {
+            let out = out.unwrap_or_else(critic::default_out);
+            match critic::pack(&shots, &out) {
+                Ok(files) => {
+                    let shown = std::fs::canonicalize(&out).unwrap_or(out);
+                    println!("{} files and brief.md in {}", files.len(), shown.display());
+                    println!("Give a fresh agent only that folder; it writes critic.json there.");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Cmd::Critic { cmd: CriticCmd::Check { review } } => {
+            let path = review.unwrap_or_else(|| critic::default_out().join("critic.json"));
+            match critic::check(&path) {
+                Ok((r, pass)) => {
+                    for d in &r.defects {
+                        println!(
+                            "{:<9} {:<28} {}: {}",
+                            format!("{:?}", d.severity).to_lowercase(),
+                            d.shot,
+                            d.place,
+                            d.what
+                        );
+                    }
+                    if !r.overall.is_empty() {
+                        println!("\n{}", r.overall);
+                    }
+                    println!(
+                        "{}",
+                        if pass { "pass: nothing above minor" } else { "fail: fix the defects above minor" }
+                    );
+                    if pass { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Cmd::Size => {
+            let budget = match de_world::budget::Budget::load(&content) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("{e}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let sizes = de_world::budget::content_sizes(&content);
+            let shipped: u64 = sizes.iter().filter(|(k, _)| !budget.calibration_only.contains(k)).map(|(_, v)| v).sum();
+            let mb = shipped as f64 / 1e6;
+            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+            let binaries: serde_json::Map<String, serde_json::Value> = ["release", "debug"]
+                .iter()
+                .flat_map(|p| ["discover-earth", "discover-earth.exe"].map(|b| (p, b)))
+                .filter_map(|(p, b)| {
+                    std::fs::metadata(root.join(p).join(b))
+                        .ok()
+                        .map(|m| (format!("{p}/{b}"), ((m.len() as f64 / 1e4).round() / 100.0).into()))
+                })
+                .collect();
+            let doc = serde_json::json!({
+                "content_mb": (mb * 100.0).round() / 100.0,
+                "budget_mb": budget.content_mb,
+                "within": mb <= budget.content_mb,
+                "by_folder_mb": sizes.iter().map(|(k, v)| (k.clone(), ((*v as f64 / 1e4).round() / 100.0).into())).collect::<serde_json::Map<_, _>>(),
+                "not_shipped": budget.calibration_only,
+                "binaries_mb": binaries,
+            });
+            println!("{}", serde_json::to_string(&doc).expect("serialises"));
+            if mb <= budget.content_mb { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+        }
         Cmd::Taste { sheet, pick, reject, why, by } => {
             let line = serde_json::json!({
                 "date": today(),
@@ -244,6 +455,139 @@ fn main() -> ExitCode {
     }
 }
 
+fn truth(content: &Path, id: &str, apply: bool, out: &Path) -> Result<String, String> {
+    use de_world::truth;
+    let island = Island::load(content, id).map_err(|e| e.to_string())?;
+    let field = island.heightfield(content, id).map_err(|e| e.to_string())?;
+    let t = truth::Truth::load(content, id, &island)?.ok_or_else(|| {
+        format!("islands/{id} has no satellite.png/landcover.png: run `python3 scripts/truth/fetch.py {id}`")
+    })?;
+    let fit = truth::fit(&island, &field, &t);
+    let agree = truth::agreement(&island, &field, &t);
+    std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
+    let fitted: [de_world::Vec3; 4] = std::array::from_fn(|i| fit.layers[truth::LAYERS[i]].fitted);
+    let [sat, now, after, cover] = truth::maps(&island, &field, &t, &fitted);
+    let cells = [
+        de_world::image::Cell { image: sat, label: "SATELLITE".into() },
+        de_world::image::Cell { image: now, label: format!("OURS NOW DE {:.1}", fit.mean_delta_e_now) },
+        de_world::image::Cell { image: after, label: format!("OURS FITTED DE {:.1}", fit.mean_delta_e_fitted) },
+        de_world::image::Cell { image: cover, label: format!("LAND COVER {:.0}% AGREE", agree.agree * 100.0) },
+    ];
+    de_world::image::sheet(&format!("{id}: ground from above"), &cells, 4, 400).save(&out.join("map.png"))?;
+    let report = serde_json::json!({ "fit": fit, "agreement": agree });
+    std::fs::write(out.join("truth.json"), serde_json::to_string_pretty(&report).expect("serialises"))
+        .map_err(|e| e.to_string())?;
+
+    let mut text = format!("# {} vs the satellite\n\n", island.name);
+    text.push_str(&format!(
+        "Mean colour gap over land (ΔE): {:.1} now, {:.1} with fitted albedos ({} samples).\n\n| layer | share | now | fitted | ΔE |\n| --- | --- | --- | --- | --- |\n",
+        fit.mean_delta_e_now, fit.mean_delta_e_fitted, fit.samples
+    ));
+    for l in truth::LAYERS {
+        let f = &fit.layers[l];
+        text.push_str(&format!(
+            "| {l} | {:.0}% | {:?} | {:?} | {:.1} |\n",
+            f.share * 100.0,
+            f.now,
+            f.fitted,
+            f.delta_e
+        ));
+    }
+    text.push_str(&format!("\nLand cover agrees with our layers on {:.0}% of land.\n", agree.agree * 100.0));
+    for (layer, under) in &agree.under {
+        let mut v: Vec<_> = under.iter().filter(|(_, s)| **s >= 0.02).collect();
+        v.sort_by(|a, b| b.1.total_cmp(a.1));
+        text.push_str(&format!(
+            "- where we draw {layer}: {}\n",
+            v.iter().map(|(k, s)| format!("{k} {:.0}%", **s * 100.0)).collect::<Vec<_>>().join(", ")
+        ));
+    }
+    text.push_str(&format!("\nMaps: {}\n", out.join("map.png").display()));
+    if apply {
+        let path = content.join("islands").join(id).join("terrain.json");
+        let mut doc: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
+        for (i, l) in truth::LAYERS.iter().enumerate() {
+            // Three decimals, written as the decimal you read (not the f32's binary expansion).
+            let v: Vec<f64> = fitted[i].iter().map(|&c| (f64::from(c) * 1000.0).round() / 1000.0).collect();
+            if doc.get("look").is_none() {
+                doc["look"] = serde_json::json!({});
+            }
+            doc["look"][*l] = serde_json::json!(v);
+        }
+        std::fs::write(&path, serde_json::to_string_pretty(&doc).expect("serialises") + "\n")
+            .map_err(|e| e.to_string())?;
+        text.push_str(&format!("Wrote the fitted albedos to {}.\n", path.display()));
+    }
+    std::fs::write(out.join("truth.md"), &text).map_err(|e| e.to_string())?;
+    Ok(text)
+}
+
+fn water(content: &Path, id: &str, out: &Path, shots: Option<&Path>) -> Result<String, String> {
+    use de_world::water::{Rules, Water};
+    let island = Island::load(content, id).map_err(|e| e.to_string())?;
+    let field = island.heightfield(content, id).map_err(|e| e.to_string())?;
+    let rules = Rules::load(content, id)?;
+    let water = Water::find(&field, &rules.water);
+    let truth = de_world::truth::Truth::load(content, id, &island)?;
+    std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
+    water.map(&field, truth.as_ref(), 2).save(&out.join("map.png"))?;
+    let check = truth.as_ref().map(|t| water.cover_check(&field, t));
+    let report = serde_json::json!({ "water": water, "cover_check": check });
+    std::fs::write(out.join("water.json"), serde_json::to_string_pretty(&report).expect("serialises"))
+        .map_err(|e| e.to_string())?;
+
+    // One shot per waterfall, for de-shot.
+    let views = water.fall_views(&field);
+    let mut steps = vec![];
+    for v in &views {
+        steps.push(serde_json::json!({ "camera": { "pos": v.pos, "look_at": v.look_at } }));
+        steps.push(serde_json::json!({ "wait": 2 }));
+        steps.push(serde_json::json!({ "shot": v.name }));
+    }
+    let list = serde_json::json!({ "island": id, "size": [960, 540], "steps": steps });
+    std::fs::write(out.join("falls.steps.json"), serde_json::to_string_pretty(&list).expect("serialises"))
+        .map_err(|e| e.to_string())?;
+
+    let mut text = format!("# Water of {}\n\n{}\n\n", island.name, water.text);
+    text.push_str(&format!("Streams end in: {:?}.\n", water.ends()));
+    if let Some(c) = &check {
+        text.push_str(&format!(
+            "WorldCover sees {:.0} m² of inland water; {:.0}% of it lies in our lakes or streams, and {:.0}% of our lake area is water there too.\n",
+            c.cover_water_m2,
+            c.ours_found * 100.0,
+            c.lakes_confirmed * 100.0
+        ));
+        for (at, area) in c.missed.iter().take(5) {
+            text.push_str(&format!("- missed: {area:.0} m² of water around ({:.0}, {:.0})\n", at[0], at[1]));
+        }
+    }
+    text.push_str(&format!(
+        "\nMap: {}\nWaterfall shots: cargo run -q -p de_client --bin de-shot -- {} out/falls\n",
+        out.join("map.png").display(),
+        out.join("falls.steps.json").display()
+    ));
+    if let Some(dir) = shots {
+        let mut cells = Vec::new();
+        for f in &water.falls {
+            let png = dir.join(format!("fall{}.png", f.id));
+            if let Ok(image) = de_world::image::Rgba::load(&png) {
+                let label = format!("FALL {} {:.0}M{}", f.id, f.drop_m, if f.into_sea { " INTO SEA" } else { "" });
+                cells.push(de_world::image::Cell { image, label });
+            }
+        }
+        if cells.is_empty() {
+            return Err(format!("no fall<N>.png in {}: render falls.steps.json there first", dir.display()));
+        }
+        let sheet = out.join("falls.sheet.png");
+        de_world::image::sheet(&format!("{id}: every waterfall the terrain makes"), &cells, 3, 480).save(&sheet)?;
+        text.push_str(&format!("Waterfall sheet: {}\n", sheet.display()));
+    }
+    std::fs::write(out.join("water.md"), &text).map_err(|e| e.to_string())?;
+    Ok(text)
+}
+
 /// Today's UTC date as YYYY-MM-DD.
 fn today() -> String {
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
@@ -280,7 +624,19 @@ fn validate(content: &Path) -> Vec<String> {
             Ok(h) => out.extend(island.check(&h).into_iter().map(|p| format!("islands/{id}: {p}"))),
             Err(e) => out.push(e.to_string()),
         }
+        if let Err(e) = de_world::water::Rules::load(content, id) {
+            out.push(format!("{e} (see `de schema rules`)"));
+        }
+        match de_world::photo::References::load(content, id) {
+            Ok(Some(r)) => out.extend(r.check(content, &island)),
+            Ok(None) => {}
+            Err(e) => out.push(e),
+        }
         islands.insert(id.clone(), island);
+    }
+    match de_world::budget::Budget::load(content) {
+        Ok(b) => out.extend(b.check()),
+        Err(e) => out.push(e),
     }
     let drone = match DroneConfig::load(content) {
         Ok(d) => {

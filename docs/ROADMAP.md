@@ -22,14 +22,35 @@ verdict.
   with palette and luminance metrics; Sentinel-2 ground colour as a check for distant terrain; `de probe`.
 - **Proof:** photo-match sheet before and after, with the metric going down on at least four of five photos.
 - **Cut if:** no usable CC photos can be matched; fall back to Sentinel-2 colour alone.
+- **Status:** satellite half in PR #6. Photo half: five Commons photos in `content/references/saksun/`, cameras
+  solved from their skylines (median error 0.04 to 0.19 degrees), `de photo match`; a fitted overcast look took the
+  mean photo gap from 19.2 to 14.4, closer on 5 of 5 (`docs/shots/photo/`). Left: `de probe`; the sky dome still
+  renders flatter and darker than the photos' skies, which is step 3's job.
 
 ## Step 3: Sky and weather
 
 - **Game:** a physically based sky and volumetric clouds and fog banks rolling over the ridges, at any time of day.
 - **Tool:** time-of-day and weather sheets; `look` gets a weather block (cloud cover, fog height, wind).
 - **Proof:** a six-time-of-day sheet and an overcast sheet against the photo references.
+- **Status:** clouds first: `look.clouds`, a ray-marched layer of seeded Perlin-Worley cloud with wind and shadows on
+  the ground, stopping at the land so it can sit on the ridges. It brings every reference photo closer: mean photo gap
+  16.8 to 15.8 with the evening look, and 19.1 to 16.6 at the photos' own time of day (`docs/shots/clouds/`).
+  Valley mist (PR #10) took the evening gap to 15.2. `de photo match --photo-light` now renders each photo with
+  its own sun (from its date, time and place), EXIF exposure and cloud cover; light levels fitted that way took the
+  fair gap from 20.0 to 15.7 (`docs/shots/photo-light/`). Bevy's physical sky drew a twilight that ignored the
+  sun (tan cloud gaps), so the sky behind the clouds is now our own Preetham daylight sky (`cinema.sky_turbidity`),
+  fitted to the photos: 16.1 to 15.3 after the sea and grass landed. Still off: the lagoon sea is far too dark
+  (water), Bevy's aerial perspective still tints the far horizon, and cloud edges dither at low resolution.
+  Left: fog banks below the ridges, a weather block that drives several values at once, and time-of-day sheets as a
+  command.
 
 ## Step 4: Water from the land's own data
+
+First slice done (streams, waterfalls and lakes from the DEM, `rules.json` with overrides, `de water` with a map
+against WorldCover and a waterfall sheet), with moving water, foam, sky reflection and mist at the falls. Second
+slice: the sea with wind waves that turn and steepen towards the shore, surf and wash from a shore-distance field,
+shallows, and a tide (`look.tide_m`) that moves the shore line and the lagoon. Still to do: an FFT sea and the
+cached generation graph.
 
 - **Game:** the real streams of Saksun, found from the DEM; waterfalls where they drop over cliffs; the lagoon with
   tide; an FFT sea with foam on the shore.
@@ -44,6 +65,11 @@ verdict.
 - **Tool:** vegetation rules from WorldCover plus slope, height and exposure; budgets as tests (frame time and
   instance counts) with a reference GPU profile, run on C's PC.
 - **Proof:** ground-level hero shots before and after, and a clip with wind; frame time inside the budget.
+
+First slice done: grass from WorldCover plus slope, altitude and exposure (`rules.json` `grass`), seeded per chunk
+with nested levels of detail, blades bent by travelling gusts, and a budget test over every view and a 2 km grid of
+standing points. Second slice done: heather on heath and drained upland slopes, moss on bare ground, the plateau and
+wet flats, and longer grass in sheltered hollows, all in clumps. Still to do: the frame-time budget on C's PC.
 
 ## Step 6: Life
 

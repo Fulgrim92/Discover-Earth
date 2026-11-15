@@ -73,7 +73,11 @@ impl WorldModule {
             c("world.schema.terrain", Schema, "JSON schema for content/islands/<id>/terrain.json"),
             c("world.schema.steps", Schema, "JSON schema for capture step lists (content/shots/*.json)"),
             c("world.steps.view", Command, "Step: jump the camera to a named view"),
-            c("world.steps.camera", Command, "Step: place the camera at a position looking at a point"),
+            c(
+                "world.steps.camera",
+                Command,
+                "Step: place the camera at a position looking at a point, optionally with fov and roll",
+            ),
             c("world.steps.wait", Command, "Step: let frames of game time pass"),
             c("world.steps.shot", Command, "Step: save the next frame as a PNG"),
             c("world.steps.fly", Command, "Step: fly to a view, saving every frame and an mp4"),
@@ -98,7 +102,7 @@ impl WorldModule {
             c(
                 "world.sense.pack",
                 System,
-                "Per shot: class, depth, normal and sun-shadow buffers, stats JSON and a text description (sense.md)",
+                "Per shot: class, depth, normal and sun-shadow buffers cast against the drawn ground, stats JSON and a text description (sense.md)",
             ),
             c(
                 "world.sense.motion",
@@ -108,7 +112,101 @@ impl WorldModule {
             c("world.sense.tiers", Command, "de-shot --tier sketch|check|hero: 320x180 without shadows, 720p, 1080p"),
             c("tool.sweep", Command, "de sweep: render a view over terrain.json values as one labelled sheet"),
             c("tool.compare", Command, "de compare: perceptual (FLIP) difference per shot with heatmaps"),
+            c(
+                "world.truth.satellite",
+                Content,
+                "Per island: Sentinel-2 ground albedo and ESA WorldCover land cover (scripts/truth/fetch.py)",
+            ),
+            c(
+                "world.truth.shot",
+                System,
+                "Per shot: view painted with satellite colour, land cover, per-layer colour gap (ΔE)",
+            ),
+            c("tool.truth", Command, "de truth: fit ground layer albedos to the satellite; maps and agreement"),
+            c(
+                "world.water.find",
+                System,
+                "Streams, waterfalls and lakes from the terrain: priority-flood fill, D8 flow, catchment area",
+            ),
+            c(
+                "world.water.rules",
+                Content,
+                "content/islands/<id>/rules.json: water thresholds and overrides (remove/add streams, drop lakes)",
+            ),
+            c("world.schema.rules", Schema, "JSON schema for content/islands/<id>/rules.json"),
+            c("tool.water", Command, "de water: water report, map vs WorldCover water, a shot list per waterfall"),
+            c(
+                "world.water.shore",
+                System,
+                "Metres from each sea cell to land at the current tide (chamfer distance), for surf and shallows",
+            ),
+            c("world.look.tide", Content, "look.tide_m: sea level above mean; moves the sea, shore line and lagoon"),
+            c(
+                "world.grass.rules",
+                Content,
+                "rules.json grass: tufts per m² by land cover class, slope, altitude and exposure limits; heather, moss and sheltered long grass shares; LOD, budget",
+            ),
+            c(
+                "world.grass.scatter",
+                System,
+                "Seeded grass, heather and moss tufts per 16 m chunk, nested levels of detail; a test keeps every view under the budget",
+            ),
+            c(
+                "client.grass",
+                System,
+                "Grass, heather and moss around the camera, bent by the wind in the vertex shader (heather stiffer, moss still)",
+            ),
+            c(
+                "world.truth.photos",
+                Content,
+                "Per island: CC-licensed reference photos with credit and solved cameras (content/references/)",
+            ),
+            c("tool.photo.solve", Command, "de photo solve: find a photo's camera by fitting its skyline to the DEM"),
+            c(
+                "tool.photo.match",
+                Command,
+                "de photo match: render each photo's camera; colour, lightness and palette gap vs the photo per region (regions.png shows the split)",
+            ),
+            c(
+                "world.look.cinema",
+                Content,
+                "Film look per island: physical atmosphere, tonemapper, bloom, grade, volumetric mist (look.cinema)",
+            ),
+            c(
+                "world.look.clouds",
+                Content,
+                "Volumetric cloud layer per island: cover, base/top height, wind, light, shadows on the ground (look.clouds)",
+            ),
+            c("world.sun", Content, "Sun azimuth and elevation for a place and a UTC time (de_world::sun, NOAA)"),
+            c(
+                "world.look.sky",
+                Content,
+                "Analytic daylight sky behind the clouds that follows the sun (de_world::sky, Preetham 1999; cinema.sky_turbidity)",
+            ),
+            c(
+                "tool.photo.light",
+                Command,
+                "de photo match --photo-light: each render at its photo's sun, EXIF exposure and cloud cover",
+            ),
             c("tool.taste", Command, "de taste: record a look decision in docs/taste.jsonl"),
+            c(
+                "world.budget",
+                Content,
+                "content/budget.json: priorities (look, frame pacing, size), reference machine, frame and size limits",
+            ),
+            c("world.schema.budget", Schema, "JSON schema for content/budget.json"),
+            c(
+                "tool.bench",
+                Command,
+                "de-shot --bench: fly a step list unsaved; frame, per-pass GPU and allocation stats in bench.json",
+            ),
+            c("tool.size", Command, "de size: shipped content size by folder against the budget (JSON)"),
+            c(
+                "tool.critic",
+                Command,
+                "de critic pack|check: renders-only folder and brief for a blind reviewer; gate on its critic.json",
+            ),
+            c("world.no_alloc", System, "Test: drone flight, ground and cloud sampling allocate nothing per frame"),
         ]
     }
 }

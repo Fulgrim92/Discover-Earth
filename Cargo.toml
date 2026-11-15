@@ -19,11 +19,13 @@ publish = false
 # Pinned exactly: Bevy's minor releases break APIs.
 bevy = { version = "=0.20.0", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0", features = ["float_roundtrip"] }
+serde_json = { version = "1.0", features = ["float_roundtrip", "preserve_order"] }
 schemars = "1.2"
 clap = { version = "4.6", features = ["derive"] }
 png = "0.18"
 nv-flip = "0.1.2"
+zune-jpeg = "0.5"
+stats_alloc = "0.1"
 
 de_world = { path = "crates/de_world" }
 de_client = { path = "crates/de_client" }

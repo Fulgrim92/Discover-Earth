@@ -5,17 +5,22 @@ use std::path::PathBuf;
 use bevy::{
     asset::RenderAssetUsages,
     camera::{Exposure, RenderTarget},
+    core_pipeline::tonemapping::Tonemapping,
+    light::{Atmosphere, AtmosphereEnvironmentMapLight, atmosphere::ScatteringMedium},
     light::{
         CascadeShadowConfigBuilder, DirectionalLightShadowMap, GlobalAmbientLight, NotShadowCaster, NotShadowReceiver,
     },
     mesh::{Indices, PrimitiveTopology},
-    pbr::{DistanceFog, FogFalloff},
+    pbr::{AtmosphereSettings, DistanceFog, FogFalloff},
+    post_process::bloom::Bloom,
     prelude::*,
+    render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection},
 };
-use de_world::Rng;
+pub use de_world::Surface;
 pub use de_world::island::layer_weights;
-use de_world::{Heightfield, Island, island::Look};
+use de_world::{Heightfield, Island, island::Look, water::Water};
 
+use crate::clouds::{CloudMaterial, CloudParams, CloudsPlugin};
 use crate::ground::{GroundPlugin, TerrainMaterial, terrain_material};
 
 /// Which island to load, and from which `content/` folder.
@@ -50,7 +55,7 @@ pub struct ScenePlugin;
 
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(GroundPlugin)
+        app.add_plugins((GroundPlugin, CloudsPlugin, crate::water::WaterPlugin, crate::grass::GrassPlugin))
             .register_type::<CameraRig>()
             .init_resource::<CameraTarget>()
             .add_systems(Startup, spawn_scene);
@@ -66,14 +71,22 @@ pub const FOV_Y_DEG: f32 = 55.0;
 /// Height of the sea surface in metres.
 pub const SEA_LEVEL_M: f32 = de_world::sense::SEA_LEVEL_M;
 
+/// The scene's material stores, grouped to keep `spawn_scene` within Bevy's parameter limit.
+type Materials<'w> = (
+    ResMut<'w, Assets<StandardMaterial>>,
+    ResMut<'w, Assets<TerrainMaterial>>,
+    ResMut<'w, Assets<CloudMaterial>>,
+    ResMut<'w, Assets<crate::water::WaterMaterial>>,
+    ResMut<'w, Assets<crate::grass::GrassMaterial>>,
+);
+
 fn spawn_scene(
     mut commands: Commands,
     source: Res<IslandSource>,
     (target, sketch): (Res<CameraTarget>, Option<Res<Sketch>>),
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
-    mut images: ResMut<Assets<Image>>,
+    (mut materials, mut terrain_materials, mut cloud_materials, mut water_materials, mut grass_materials): Materials,
+    (mut images, mut media): (ResMut<Assets<Image>>, ResMut<Assets<ScatteringMedium>>),
 ) {
     let island = Island::load(&source.content, &source.id).unwrap_or_else(|e| panic!("{e}"));
     let field = island.heightfield(&source.content, &source.id).unwrap_or_else(|e| panic!("{e}"));
@@ -82,44 +95,89 @@ fn spawn_scene(
     // The sea runs on to the horizon; fog hides where it ends.
     let sea_reach = 400_000.0;
 
+    // Clouds: the seeded noise volume, shared by the cloud layer and the terrain's shadows.
+    let clouds = CloudParams::new(&look);
+    let noise = images.add(if look.clouds.on() {
+        crate::clouds::noise_image(&de_world::clouds::Noise::new(de_world::clouds::seed(&source.id)))
+    } else {
+        crate::clouds::empty_noise_image()
+    });
+    if clouds.any() {
+        crate::clouds::spawn(&mut commands, &mut meshes, &mut cloud_materials, clouds, noise.clone());
+    }
+
+    // Streams, waterfalls and lakes, found in the terrain under the island's rules.
+    let rules = de_world::water::Rules::load(&source.content, &source.id).unwrap_or_else(|e| panic!("{e}"));
+    let water = Water::find(&field, &rules.water);
+    let surface = Surface::new(&field, &look, &source.id, Some((&water, rules.water.channel_depth_m)));
+
     // Terrain.
     commands.spawn((
         Name::new("terrain"),
-        Mesh3d(meshes.add(terrain_mesh(&field, &look, &source.id))),
-        MeshMaterial3d(terrain_materials.add(terrain_material(&look, &source.content, &mut images))),
+        Mesh3d(meshes.add(surface_mesh(&field, &look, &surface))),
+        MeshMaterial3d(terrain_materials.add(terrain_material(&look, &source.content, &mut images, clouds, noise))),
     ));
 
-    // Sea: one large plane, slightly see-through so the seabed darkens it near the shore.
-    let sea = Color::linear_rgba(look.sea[0], look.sea[1], look.sea[2], look.sea_alpha);
+    let sea_level = SEA_LEVEL_M + look.tide_m;
+    let shore = images.add(crate::water::shore_image(&field, look.tide_m));
+    let wm = crate::water::meshes(&water, &field, &surface, sea_level);
+    let water_mat =
+        water_materials.add(crate::water::material(&look, crate::water::Kind::Fresh, shore.clone(), [w, d]));
+    let mist_mat = water_materials.add(crate::water::material(&look, crate::water::Kind::Mist, shore.clone(), [w, d]));
+    for (name, b, mat) in
+        [("streams", wm.streams, water_mat.clone()), ("lakes", wm.lakes, water_mat), ("mist", wm.mist, mist_mat)]
+    {
+        if !b.is_empty() {
+            commands.spawn((Name::new(name), NotShadowCaster, Mesh3d(meshes.add(b.mesh())), MeshMaterial3d(mat)));
+        }
+    }
+
+    // Grass where the land cover and the terrain say, grown around the camera as it moves.
+    let truth = de_world::truth::Truth::load(&source.content, &source.id, &island).unwrap_or_else(|e| panic!("{e}"));
+    commands.insert_resource(crate::grass::Meadow::new(
+        rules.grass.clone(),
+        (field.clone(), truth, surface.clone()),
+        &look,
+        crate::ground::grass_ground_colour(&source.content, &look),
+        sea_level,
+        &mut grass_materials,
+    ));
+
+    // Sea: one large plane at the tide's level, with wind waves and foam along the shore.
     commands.spawn((
         Name::new("sea"),
         NotShadowCaster,
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(sea_reach, sea_reach))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: sea,
-            perceptual_roughness: 0.12,
-            reflectance: 0.6,
-            alpha_mode: AlphaMode::Blend,
-            ..default()
-        })),
-        Transform::from_xyz(0.0, SEA_LEVEL_M, 0.0),
+        Mesh3d(meshes.add(crate::water::sea_mesh(sea_reach))),
+        MeshMaterial3d(water_materials.add(crate::water::material(
+            &look,
+            crate::water::Kind::Sea,
+            shore.clone(),
+            [w, d],
+        ))),
+        Transform::from_xyz(0.0, sea_level, 0.0),
     ));
 
-    // Sky: an unlit dome, horizon colour at the bottom fading to a deeper blue overhead.
-    commands.spawn((
-        Name::new("sky"),
-        // The dome surrounds the sun's shadow camera; casting would put the world in shade.
-        NotShadowCaster,
-        NotShadowReceiver,
-        Mesh3d(meshes.add(sky_mesh(sea_reach * 0.45, &look))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            unlit: true,
-            fog_enabled: false,
-            cull_mode: None,
-            ..default()
-        })),
-    ));
+    // Sky: an unlit dome, horizon colour at the bottom fading to a deeper blue overhead; or, with
+    // `cinema.atmosphere`, a physically based atmosphere (the dome would read as far terrain).
+    let cine = &look.cinema;
+    if cine.atmosphere {
+        commands.spawn((Name::new("atmosphere"), Atmosphere::earth(media.add(ScatteringMedium::default()))));
+    } else {
+        commands.spawn((
+            Name::new("sky"),
+            // The dome surrounds the sun's shadow camera; casting would put the world in shade.
+            NotShadowCaster,
+            NotShadowReceiver,
+            Mesh3d(meshes.add(sky_mesh(sea_reach * 0.45, &look))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                unlit: true,
+                fog_enabled: false,
+                cull_mode: None,
+                ..default()
+            })),
+        ));
+    }
 
     // Sun.
     let (el, az) = (look.sun_elevation_deg.to_radians(), look.sun_azimuth_deg.to_radians());
@@ -128,7 +186,7 @@ fn spawn_scene(
     commands.spawn((
         Name::new("sun"),
         DirectionalLight {
-            illuminance: look.sun_lux,
+            illuminance: if cine.atmosphere { cine.sun_lux } else { look.sun_lux },
             color: Color::srgb(1.0, 0.95, 0.86),
             shadow_maps_enabled: sketch.is_none(),
             // Metres-scale terrain seen from hundreds of metres away: a larger normal bias
@@ -148,7 +206,7 @@ fn spawn_scene(
     commands.insert_resource(DirectionalLightShadowMap { size: 4096 });
     commands.insert_resource(GlobalAmbientLight {
         color: Color::linear_rgb(look.horizon[0], look.horizon[1], look.horizon[2]),
-        brightness: 500.0,
+        brightness: look.sky_light_now(),
         ..default()
     });
 
@@ -170,7 +228,12 @@ fn spawn_scene(
             far: sea_reach,
             ..default()
         }),
-        Exposure { ev100: 12.0 },
+        Exposure { ev100: cine.exposure_ev100 },
+        tonemapper(&cine.tonemapper),
+        ColorGrading::with_identical_sections(
+            ColorGradingGlobal { temperature: cine.temperature, ..default() },
+            ColorGradingSection { saturation: cine.saturation, contrast: cine.contrast, ..default() },
+        ),
         DistanceFog {
             color: horizon,
             directional_light_color: Color::srgba(1.0, 0.92, 0.75, 0.35),
@@ -182,35 +245,47 @@ fn spawn_scene(
     if let Some(image) = &target.0 {
         camera.insert(RenderTarget::Image(image.clone().into()));
     }
+    if cine.atmosphere {
+        camera.insert((
+            AtmosphereSettings { aerial_view_lut_max_distance: 60_000.0, ..default() },
+            AtmosphereEnvironmentMapLight { intensity: cine.sky_env, ..default() },
+        ));
+    }
+    if clouds.any() {
+        // The clouds and mist stop their rays at the land, which they read from the depth prepass.
+        camera.insert(bevy::core_pipeline::prepass::DepthPrepass);
+    }
+    if cine.bloom > 0.0 {
+        camera.insert(Bloom { intensity: cine.bloom, ..Bloom::NATURAL });
+    }
 
     commands.insert_resource(Ground { island, field });
 }
 
-/// The heightfield as one mesh, `look.subdivide` vertices per pixel along each side: heights
-/// follow the heightmap smoothly (Catmull-Rom) plus `look.relief_m` of seeded small relief.
-/// Vertex colours carry the ground layer weights (r grass, g rock, b shore, a moss) that the
-/// terrain shader blends.
-pub fn terrain_mesh(h: &Heightfield, look: &Look, seed_name: &str) -> Mesh {
-    let sub = look.subdivide.clamp(1, 4) as usize;
-    let (w, d) = ((h.width - 1) * sub + 1, (h.depth - 1) * sub + 1);
-    let step = [h.spacing[0] / sub as f32, h.spacing[1] / sub as f32];
-    let seed = seed_name.bytes().fold(2166136261u32, |a, b| (a ^ u32::from(b)).wrapping_mul(16777619));
-    let relief = relief(w, d, seed);
-
-    let [ew, ed] = h.extent();
-    let mut heights = vec![0.0f32; w * d];
-    for row in 0..d {
-        for col in 0..w {
-            let (fx, fz) = (col as f32 / sub as f32, row as f32 / sub as f32);
-            let y0 = bicubic(h, fx, fz);
-            // Relief only on land, fading in above the shoreline.
-            let r = relief[row * w + col] * look.relief_m * (y0 / 8.0).clamp(0.0, 1.0);
-            heights[row * w + col] = y0 + r;
-        }
+/// The tonemapper named in `look.cinema.tonemapper` (checked by `Island::check`).
+fn tonemapper(name: &str) -> Tonemapping {
+    match name {
+        "agx" => Tonemapping::AgX,
+        "aces" => Tonemapping::AcesFitted,
+        "filmic" => Tonemapping::BlenderFilmic,
+        "reinhard" => Tonemapping::ReinhardLuminance,
+        "none" => Tonemapping::None,
+        _ => Tonemapping::TonyMcMapface,
     }
-    let at = |c: usize, r: usize| heights[r.min(d - 1) * w + c.min(w - 1)];
-    let top = h.max_height().max(1.0);
+}
 
+/// The heightfield as one mesh, `look.subdivide` vertices per pixel along each side (see
+/// [`Surface`]). Vertex colours carry the ground layer weights (r grass, g rock, b shore, a moss)
+/// that the terrain shader blends.
+pub fn terrain_mesh(h: &Heightfield, look: &Look, seed_name: &str) -> Mesh {
+    surface_mesh(h, look, &Surface::new(h, look, seed_name, None))
+}
+
+pub fn surface_mesh(h: &Heightfield, look: &Look, s: &Surface) -> Mesh {
+    let (w, d, step) = (s.w, s.d, s.step);
+    let [ew, ed] = s.extent;
+    let at = |c: usize, r: usize| s.at(c, r);
+    let top = h.max_height().max(1.0);
     let mut positions = Vec::with_capacity(w * d);
     let mut normals = Vec::with_capacity(w * d);
     let mut weights = Vec::with_capacity(w * d);
@@ -243,46 +318,10 @@ pub fn terrain_mesh(h: &Heightfield, look: &Look, seed_name: &str) -> Mesh {
         .with_inserted_indices(Indices::U32(indices))
 }
 
-/// Height at fractional pixel (fx, fz), Catmull-Rom in both directions.
-fn bicubic(h: &Heightfield, fx: f32, fz: f32) -> f32 {
-    let (c, r) = (fx.floor() as isize, fz.floor() as isize);
-    let (tx, tz) = (fx - c as f32, fz - r as f32);
-    let px = |c: isize, r: isize| h.at(c.max(0) as usize, r.max(0) as usize);
-    let cr = |p0: f32, p1: f32, p2: f32, p3: f32, t: f32| {
-        p1 + 0.5 * t * (p2 - p0 + t * (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3 + t * (3.0 * (p1 - p2) + p3 - p0)))
-    };
-    let rows: Vec<f32> =
-        (-1..=2).map(|dr| cr(px(c - 1, r + dr), px(c, r + dr), px(c + 1, r + dr), px(c + 2, r + dr), tx)).collect();
-    cr(rows[0], rows[1], rows[2], rows[3], tz)
-}
-
-/// Smooth seeded relief in -1..1 on a w x d grid: random values blurred twice.
-fn relief(w: usize, d: usize, seed: u32) -> Vec<f32> {
-    let mut rng = Rng::new(seed);
-    let mut v: Vec<f32> = (0..w * d).map(|_| rng.next_f64() as f32 * 2.0 - 1.0).collect();
-    for _ in 0..2 {
-        let src = v.clone();
-        for r in 0..d {
-            for c in 0..w {
-                let mut sum = 0.0;
-                for (dc, dr) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (0, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
-                    let cc = (c as isize + dc).clamp(0, w as isize - 1) as usize;
-                    let rr = (r as isize + dr).clamp(0, d as isize - 1) as usize;
-                    sum += src[rr * w + cc];
-                }
-                v[r * w + c] = sum / 9.0;
-            }
-        }
-    }
-    // Blurring shrinks the range; stretch it back to roughly -1..1.
-    let max = v.iter().fold(0.0f32, |m, x| m.max(x.abs())).max(1e-6);
-    v.iter().map(|x| x / max).collect()
-}
-
 /// A hemisphere-and-a-bit, seen from inside, coloured from the horizon up to the zenith.
 fn sky_mesh(radius: f32, look: &Look) -> Mesh {
     let mut mesh = Sphere::new(radius).mesh().uv(48, 24);
-    let zenith = [0.10, 0.24, 0.52];
+    let zenith = look.zenith;
     let positions: Vec<[f32; 3]> = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
         Some(bevy::mesh::VertexAttributeValues::Float32x3(p)) => p.clone(),
         _ => unreachable!("sphere meshes have Float32x3 positions"),

@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, path::Path};
 
 use crate::{
     Island,
-    image::Rgba,
+    image::{Cell, Rgba, sheet},
     motion,
     sense::{self, CameraShot, SEA_LEVEL_M, World},
 };
@@ -26,7 +26,11 @@ pub fn write(out: &Path, content: &Path, island_id: &str) -> Result<String, Stri
     let cams: Vec<CameraShot> = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", manifest.display()))?;
     let island = Island::load(content, island_id).map_err(|e| e.to_string())?;
     let field = island.heightfield(content, island_id).map_err(|e| e.to_string())?;
-    let world = World::new(&island, &field);
+    let rules = crate::water::Rules::load(content, island_id)?;
+    let water = crate::water::Water::find(&field, &rules.water);
+    let surface = crate::Surface::new(&field, &island.look, island_id, Some((&water, rules.water.channel_depth_m)));
+    let world = World::new(&island, &field).with_water(&water).with_surface(&surface);
+    let truth = crate::truth::Truth::load(content, island_id, &island)?;
 
     let mut md = format!("# Capture: {} ({island_id})\n\n", island.name);
     let mut clips: BTreeMap<String, Vec<CameraShot>> = BTreeMap::new();
@@ -38,8 +42,23 @@ pub fn write(out: &Path, content: &Path, island_id: &str) -> Result<String, Stri
         let png = out.join(format!("{}.png", cam.name));
         let image = Rgba::load(&png).ok();
         let buf = world.buffers(cam, SENSE_MAX_W);
-        let report = sense::report(&world, cam, &buf, image.as_ref());
+        let mut report = sense::report(&world, cam, &buf, image.as_ref());
         let base = |ext: &str| out.join(format!("{}.{ext}", cam.name));
+        if let Some(t) = &truth {
+            report.truth = Some(crate::truth::shot(&island, &field, t, &buf));
+            report.text = sense::describe(&report);
+            let (painted, cover) = crate::truth::paint(&island, &field, t, &buf, image.as_ref());
+            painted.save(&base("satellite.png"))?;
+            cover.save(&base("cover.png"))?;
+            if let Some(img) = &image {
+                let cells = [
+                    Cell { image: img.clone(), label: "RENDER".into() },
+                    Cell { image: painted, label: "SATELLITE COLOUR".into() },
+                    Cell { image: cover, label: "LAND COVER".into() },
+                ];
+                sheet(&format!("{}: render vs satellite", cam.name), &cells, 3, 480).save(&base("truth.png"))?;
+            }
+        }
         std::fs::write(base("sense.json"), serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
         buf.labels_png().save(&base("labels.png"))?;

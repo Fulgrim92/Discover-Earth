@@ -2374,7 +2374,9 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "de_world",
+ "half",
  "serde_json",
+ "stats_alloc",
 ]
 
 [[package]]
@@ -2385,6 +2387,8 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "stats_alloc",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -4799,6 +4803,8 @@ version = "1.0.154"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6"
 dependencies = [
+ "foldhash 0.2.0",
+ "indexmap",
  "itoa",
  "memchr",
  "serde",
@@ -4946,6 +4952,12 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "stats_alloc"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c0e04424e733e69714ca1bbb9204c1a57f09f5493439520f9f68c132ad25eec"
 
 [[package]]
 name = "strsim"

@@ -19,6 +19,8 @@ use bevy::{
 };
 use de_world::island::Look;
 
+use crate::clouds::CloudParams;
+
 /// Ground layer names, in the order of the vertex weights (r, g, b, a) and the texture array.
 pub const LAYERS: [&str; 4] = ["grass", "rock", "shore", "moss"];
 
@@ -34,6 +36,12 @@ pub struct TerrainExt {
     #[texture(103, dimension = "2d_array")]
     #[sampler(104)]
     pub normal: Handle<Image>,
+    /// The cloud layer, for cloud shadows (cover 0: none).
+    #[uniform(105)]
+    pub clouds: CloudParams,
+    #[texture(106, dimension = "3d")]
+    #[sampler(107)]
+    pub cloud_noise: Handle<Image>,
 }
 
 #[derive(ShaderType, Clone, Copy, Debug)]
@@ -63,7 +71,13 @@ impl Plugin for GroundPlugin {
 
 /// The terrain material for an island's look, with scanned textures if `content/materials`
 /// has all four layers.
-pub fn terrain_material(look: &Look, content: &Path, images: &mut Assets<Image>) -> TerrainMaterial {
+pub fn terrain_material(
+    look: &Look,
+    content: &Path,
+    images: &mut Assets<Image>,
+    clouds: CloudParams,
+    cloud_noise: Handle<Image>,
+) -> TerrainMaterial {
     let v = |c: [f32; 3]| Vec4::new(c[0], c[1], c[2], 1.0);
     let scanned = load_layers(content, "albedo.jpg", true).zip(load_layers(content, "normal.jpg", false));
     let has = scanned.is_some();
@@ -84,6 +98,8 @@ pub fn terrain_material(look: &Look, content: &Path, images: &mut Assets<Image>)
             },
             albedo,
             normal,
+            clouds,
+            cloud_noise,
         },
     }
 }
@@ -186,6 +202,47 @@ fn halve(px: &[u8], w: u32, h: u32, srgb: bool) -> (Vec<u8>, u32, u32) {
     (out, nw, nh)
 }
 
+/// The average colour (linear) the terrain shader draws for the grass layer: the scanned
+/// texture's mean with the shader's tint towards `look.grass`, or the noise colour's mean when
+/// there is no texture. Grass blades use it so a meadow and the ground under it match.
+pub fn grass_ground_colour(content: &Path, look: &Look) -> [f32; 3] {
+    let base = look.grass;
+    let path = content.join("materials").join("grass").join("albedo.jpg");
+    let mean = std::fs::read(&path).ok().and_then(|bytes| {
+        let img = Image::from_buffer(
+            &bytes,
+            ImageType::Extension("jpg"),
+            default(),
+            true,
+            ImageSampler::Default,
+            RenderAssetUsages::RENDER_WORLD,
+        )
+        .ok()?
+        .convert(TextureFormat::Rgba8UnormSrgb)?;
+        let data = img.data?;
+        let n = (data.len() / 4) as f32;
+        let lin = |v: u8| {
+            let c = f32::from(v) / 255.0;
+            if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        };
+        let mut sum = [0.0f32; 3];
+        for px in data.chunks_exact(4) {
+            for i in 0..3 {
+                sum[i] += lin(px[i]);
+            }
+        }
+        Some(sum.map(|s| s / n))
+    });
+    match mean {
+        Some(tex) => {
+            let avg = ((base[0] + base[1] + base[2]) / 3.0).max(0.001);
+            std::array::from_fn(|i| tex[i] * (0.75 + 0.25 * base[i] / avg))
+        }
+        // Noise mean: (0.6 + 0.6 * 0.5) * (0.6 + 0.8 * 0.5).
+        None => base.map(|c| c * 0.9),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,7 +258,13 @@ mod tests {
     #[test]
     fn no_textures_means_noise_layers() {
         let mut images = Assets::<Image>::default();
-        let m = terrain_material(&Look::default(), Path::new("/nonexistent"), &mut images);
+        let m = terrain_material(
+            &Look::default(),
+            Path::new("/nonexistent"),
+            &mut images,
+            CloudParams::default(),
+            Handle::default(),
+        );
         assert_eq!(m.extension.params.flags.x, 0.0);
     }
 }

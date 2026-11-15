@@ -13,6 +13,10 @@ Discover Earth is a Rust game with **Bevy 0.20** drawing in 3D; it builds from t
 - Clips: look at `<clip>.sheet.png` and read `<clip>.motion.json` (flicker, jumps), never only the mp4.
 - Look decisions: compare options with `de sweep <view> --set <path>=a,b,c` instead of guessing one value. Read
   `docs/taste.jsonl` before changing the look, and record every pick with `de taste`.
+- Ground colour: check it against the real place with `de truth <island>` (satellite albedo and land cover; see
+  `docs/agents.md`) rather than by eye. Shots of an island with truth data get `<shot>.truth.png`.
+- Sky, light, haze and water: check them against real photos with `de photo match` (see `docs/agents.md`); try a
+  change with `--set` and `--ref` before writing it to `terrain.json`.
 - Fast loop: `de-shot <steps> <out> --tier sketch` (320x180, no shadows) for layout; `hero` for PR images.
 - Content is JSON in `content/` with schemas from the Rust types (`de schema terrain|steps`). Edit it directly, then
   `de validate`. Errors name the file, the field and the fix.
@@ -21,9 +25,14 @@ Discover Earth is a Rust game with **Bevy 0.20** drawing in 3D; it builds from t
 - Ground look: layer colours, relief and detail are `look` in `terrain.json`; blending is `crates/de_client/src/terrain.wesl`.
   Scanned textures come from `python3 scripts/materials/fetch.py` (ids in `content/materials.json`); without them the
   shader draws each layer from noise, so check both if you change it.
+- Water (streams, waterfalls, lakes) is found in the terrain by `crates/de_world/src/water.rs` under
+  `content/islands/<id>/rules.json`; fix wrong water with its `overrides`, not by hand-drawing. Check with `de water`.
 - Flight feel is data in `content/drone.json` (`de schema drone`) and code in `crates/de_world/src/drone.rs`. Keep it
   like a real stabilised camera drone (mode-2 sticks, braking hover, level gimbal); fly `content/shots/drone.json`
   and read its `state` lines after changing it.
+- Priorities when goals conflict: look, then frame pacing on the reference machine, then size (`content/budget.json`).
+  A look change is done when `de critic` (a fresh agent that sees only the renders) reports nothing above minor and
+  `de-shot --bench` on the reference machine is inside the frame budget; see `docs/agents.md`.
 - If you add a capability, add it to the capability list (`crates/de_world/src/module.rs`).
 
 ## Rules

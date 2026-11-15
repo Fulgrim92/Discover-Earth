@@ -21,6 +21,31 @@ This page says what "designed for an LLM" means. [STUDY.md](STUDY.md) lists what
 3. **Study just in time.** A topic is studied when its roadmap step starts, not up front. A study that doesn't end in
    a visible improvement within one step gets parked.
 
+## Priorities and constraints
+
+When two goals conflict, this order decides (it is also `priorities` in `content/budget.json`):
+
+1. **Visual quality.**
+2. **Stable frame pacing on the reference machine** (`reference` in `content/budget.json`).
+3. **Small build and content size.**
+
+Constraints, adapted from the brief behind Abyssal Garden (see [STUDY.md](STUDY.md)) to a native Bevy game of real
+places:
+
+- **Our own rendering on an open engine.** Bevy draws through wgpu, the WebGPU API; we write the look in our own
+  shaders and keep `de_world` free of any engine. We don't add closed engines or scene libraries on top.
+- **Procedural art, real data.** No authored models or hand-painted art: shapes, plants, water and sky come from
+  code and rules. What is shipped as data is the real place (elevation, satellite colour, land cover) and optional
+  scanned ground materials, which the shader can replace with noise. Reference photos calibrate the look and are
+  not shipped (`calibration_only`).
+- **Report the size.** `de size` writes shipped content per folder, and `scripts/check.sh` puts it in the summary;
+  over `content_mb` fails the check.
+- **No heap work in steady frames.** World code that runs every frame allocates nothing (`crates/de_world/tests/no_alloc.rs`),
+  and `de-shot --bench` reports allocations per frame for the whole client, so new per-frame allocations show up
+  as a number.
+- **Done when both gates pass.** A look change is done when the blind critic (`de critic`) reports nothing above
+  `minor`, and the bench on the reference machine is inside the frame budget (`de-shot --bench`).
+
 ## Why an LLM needs a different tool
 
 Human tools assume a person who watches the screen continuously, drags sliders, remembers what the scene looked like

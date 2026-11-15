@@ -12,6 +12,10 @@ serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
 png.workspace = true
+zune-jpeg.workspace = true
+
+[dev-dependencies]
+stats_alloc.workspace = true
 
 [lints]
 workspace = true

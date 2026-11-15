@@ -23,6 +23,8 @@ surface sits at 0.6 m. Ground the DEM marks as sea is pushed down to -25 m so th
   generated half from a Copernicus GLO-30 tile; `views` (named cameras, the first is the spawn) and `look` (sun,
   fog, ground and sea colours) are written by hand and survive re-imports.
 - `content/islands/<id>/height.png`: 16-bit greyscale, row 0 north, mapped linearly onto `height_range_m`.
+- `content/references/<id>/`: CC-licensed reference photos with credit, a hand-written guess of where each was taken
+  and the camera `de photo solve` found (`de schema references`).
 - `content/shots/*.json`: step lists for captures (`de schema steps`).
 - `content/drone.json`: the drone's flight modes, clearance, gimbal, dead zone and wind (`de schema drone`).
 
@@ -42,9 +44,17 @@ of seeded small relief). Vertex colours carry ground layer weights (grass, rock,
 `terrain.wesl` extends Bevy's PBR to blend the layers, from scanned CC0 textures in `content/materials/` when they
 exist (triplanar, at two scales) and from seeded noise otherwise, with basalt banding on rock, patches of browner
 grass, and fine detail normals that fade with distance. Then a large
-sea plane, an unlit sky dome, a sun with cascaded shadows, exponential distance fog and Bevy's PBR. The same
-`ScenePlugin` runs in the window and offscreen. The sky dome and sea never cast shadows (the dome encloses the sun's
-shadow camera).
+sea plane, an unlit sky dome, a sun with cascaded shadows, exponential distance fog and Bevy's PBR.
+
+`look.cinema` films it: with `atmosphere` on, Bevy's physically based atmosphere (Hillaire 2020) replaces the dome, so
+the sky's colour, the haze over far ridges and the sky light on the land (an environment map generated from the
+atmosphere) all follow the sun. Then the tonemapper (TonyMcMapface by default, now with its LUTs), bloom, and a grade
+(white balance, saturation, contrast). `mist` adds a valley haze that thins with height, marched in the cloud shader
+with the sun's shadow map, so ridges and clouds cast shafts through it. `look.clouds` adds a layer of volumetric
+cloud: a box that follows the camera ray-marches seeded Perlin-Worley noise (`de_world::clouds`, the same density on
+the CPU for tests), stopping each ray at the land read from the depth prepass, so clouds can sit on the ridges; the
+terrain shader samples the same noise along the sun for cloud shadows. The same `ScenePlugin` runs in the window and
+offscreen. The sky dome and sea never cast shadows (the dome encloses the sun's shadow camera).
 
 ## Decisions
 

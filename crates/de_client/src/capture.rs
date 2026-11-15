@@ -42,6 +42,9 @@ pub struct Capture {
     /// `shots.json` and builds sensor packs and clip reports from it.
     pub cameras: Arc<std::sync::Mutex<Vec<CameraShot>>>,
     pub frame: u64,
+    /// A bench run (`de-shot --bench`): the camera moves as usual, but nothing is saved, so
+    /// screenshots don't stall the frames being timed.
+    pub bench: bool,
 }
 
 struct Piloting {
@@ -74,6 +77,7 @@ impl Capture {
             clips: Arc::default(),
             cameras: Arc::default(),
             frame: 0,
+            bench: false,
         }
     }
 }
@@ -87,7 +91,10 @@ impl Plugin for CapturePlugin {
 }
 
 /// Save the next frame as `<out>/<name>.png` and record where the camera was.
-fn shoot(commands: &mut Commands, cap: &Capture, name: String, cam: &Transform) {
+fn shoot(commands: &mut Commands, cap: &Capture, name: String, cam: &Transform, fov_y_deg: f32) {
+    if cap.bench {
+        return;
+    }
     let path = cap.out.join(format!("{name}.png"));
     let (f, u, r) = (cam.forward(), cam.up(), cam.right());
     cap.cameras.lock().expect("cameras lock").push(CameraShot {
@@ -97,7 +104,7 @@ fn shoot(commands: &mut Commands, cap: &Capture, name: String, cam: &Transform) 
         forward: f.to_array(),
         up: u.to_array(),
         right: r.to_array(),
-        fov_y_deg: crate::scene::FOV_Y_DEG,
+        fov_y_deg,
         size: cap.steps.size,
     });
     cap.pending.fetch_add(1, Ordering::SeqCst);
@@ -114,11 +121,15 @@ fn play(
     mut cap: ResMut<Capture>,
     ground: Res<Ground>,
     mut drone: ResMut<Drone>,
-    mut cams: Query<&mut Transform, With<CameraRig>>,
+    mut cams: Query<(&mut Transform, &mut Projection), With<CameraRig>>,
     mut exit: MessageWriter<AppExit>,
 ) {
     cap.frame += 1;
-    let Ok(mut cam) = cams.single_mut() else { return };
+    let Ok((mut cam, mut projection)) = cams.single_mut() else { return };
+    let fov = match &*projection {
+        Projection::Perspective(p) => p.fov.to_degrees(),
+        _ => crate::scene::FOV_Y_DEG,
+    };
 
     if let Some(mut fly) = cap.fly.take() {
         fly.at += 1;
@@ -126,9 +137,11 @@ fn play(
         let s = t * t * (3.0 - 2.0 * t);
         cam.translation = fly.from.translation.lerp(fly.to.translation, s);
         cam.rotation = fly.from.rotation.slerp(fly.to.rotation, s);
-        shoot(&mut commands, &cap, format!("{}/frame_{:04}", fly.name, fly.at), &cam);
+        shoot(&mut commands, &cap, format!("{}/frame_{:04}", fly.name, fly.at), &cam, fov);
         if fly.at >= fly.frames {
-            cap.clips.lock().expect("clips lock").push((fly.name, fly.frames));
+            if !cap.bench {
+                cap.clips.lock().expect("clips lock").push((fly.name, fly.frames));
+            }
             drone.place(&cam);
         } else {
             cap.fly = Some(fly);
@@ -141,10 +154,10 @@ fn play(
         d.state.step(&d.cfg, Some(&ground.field), p.sticks, 1.0 / 60.0);
         *cam = d.camera();
         if let Some(clip) = &p.clip {
-            shoot(&mut commands, &cap, format!("{clip}/frame_{:04}", p.at), &cam);
+            shoot(&mut commands, &cap, format!("{clip}/frame_{:04}", p.at), &cam, fov);
         }
         if p.at >= p.frames {
-            if let Some(clip) = p.clip {
+            if let Some(clip) = p.clip.filter(|_| !cap.bench) {
                 cap.clips.lock().expect("clips lock").push((clip, p.frames));
             }
         } else {
@@ -173,27 +186,36 @@ fn play(
             *cam = view(&name);
             drone.place(&cam);
         }
-        Step::Camera { pos, look_at } => {
+        Step::Camera { pos, look_at, fov_y_deg, roll_deg } => {
             *cam = crate::look(pos, look_at);
+            if let Some(roll) = roll_deg {
+                // Positive roll tips the right side down: turn about the view axis (local -Z).
+                cam.rotation *= Quat::from_rotation_z(-roll.to_radians());
+            }
+            if let (Some(f), Projection::Perspective(p)) = (fov_y_deg, &mut *projection) {
+                p.fov = f.to_radians();
+            }
             drone.place(&cam);
         }
         Step::Drone { frames, sticks, mode, clip } => {
             if let Some(m) = mode {
                 drone.state.mode = drone.cfg.mode(&m).unwrap_or_else(|| panic!("no flight mode `{m}` in drone.json"));
             }
-            if let Some(c) = &clip {
+            if let Some(c) = clip.as_ref().filter(|_| !cap.bench) {
                 std::fs::create_dir_all(cap.out.join(c)).expect("create clip folder");
             }
             cap.piloting = Some(Piloting { sticks, frames: frames.max(1), at: 0, clip });
         }
         Step::Wait(frames) => cap.wait = frames,
         Step::Shot(name) => {
-            shoot(&mut commands, &cap, name, &cam);
+            shoot(&mut commands, &cap, name, &cam, fov);
             // One frame for the shot to be taken before the camera moves again.
             cap.wait = 1;
         }
         Step::Fly { name, to, frames } => {
-            std::fs::create_dir_all(cap.out.join(&name)).expect("create clip folder");
+            if !cap.bench {
+                std::fs::create_dir_all(cap.out.join(&name)).expect("create clip folder");
+            }
             cap.fly = Some(Fly { name, from: *cam, to: view(&to), frames: frames.max(1), at: 0 });
         }
         Step::State => {

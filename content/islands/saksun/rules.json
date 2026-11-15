@@ -1,0 +1,14 @@
+{
+  "water": {
+    "min_catchment_km2": 0.4,
+    "width_m": [1.2, 14.0],
+    "width_per_sqrt_km2": 2.5,
+    "channel_depth_m": 1.2,
+    "fall_min_gradient": 0.9,
+    "fall_min_drop_m": 15.0,
+    "lake_min_area_m2": 8000.0,
+    "lake_flat_m": 0.1,
+    "lake_min_depth_m": 0.5,
+    "overrides": []
+  }
+}
