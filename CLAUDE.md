@@ -30,6 +30,9 @@ Discover Earth is a Rust game with **Bevy 0.20** drawing in 3D; it builds from t
 - Flight feel is data in `content/drone.json` (`de schema drone`) and code in `crates/de_world/src/drone.rs`. Keep it
   like a real stabilised camera drone (mode-2 sticks, braking hover, level gimbal); fly `content/shots/drone.json`
   and read its `state` lines after changing it.
+- Priorities when goals conflict: look, then frame pacing on the reference machine, then size (`content/budget.json`).
+  A look change is done when `de critic` (a fresh agent that sees only the renders) reports nothing above minor and
+  `de-shot --bench` on the reference machine is inside the frame budget; see `docs/agents.md`.
 - If you add a capability, add it to the capability list (`crates/de_world/src/module.rs`).
 
 ## Rules

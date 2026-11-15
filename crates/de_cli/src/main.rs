@@ -12,6 +12,7 @@
 //!   de photo solve|match                cameras of real photos from their skylines; render vs photo
 
 mod compare;
+mod critic;
 mod photo;
 mod sweep;
 
@@ -107,6 +108,13 @@ enum Cmd {
         #[command(subcommand)]
         cmd: PhotoCmd,
     },
+    /// Blind visual review: pack only the renders for a fresh agent, then gate on its critic.json.
+    Critic {
+        #[command(subcommand)]
+        cmd: CriticCmd,
+    },
+    /// Shipped content size by folder against content/budget.json (JSON). Exit 1 if over.
+    Size,
     /// Append a look decision to docs/taste.jsonl, so later sessions know what was liked and why.
     Taste {
         /// The sheet the choice was made from.
@@ -125,6 +133,19 @@ enum Cmd {
         #[arg(long, default_value = "C")]
         by: String,
     },
+}
+
+#[derive(Subcommand)]
+enum CriticCmd {
+    /// Copy a de-shot folder's shot PNGs, clip sheets and motion stats with a fixed brief into
+    /// --out (default out/critic). Give a fresh agent only that folder; it writes critic.json.
+    Pack {
+        shots: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Print critic.json's defects worst first; exit 1 while any is above `minor`.
+    Check { review: Option<PathBuf> },
 }
 
 #[derive(Subcommand)]
@@ -171,6 +192,8 @@ enum SchemaKind {
     Rules,
     /// content/references/<island>/references.json
     References,
+    /// content/budget.json
+    Budget,
 }
 
 /// Every module and capability, sorted by id.
@@ -203,6 +226,7 @@ fn main() -> ExitCode {
                 SchemaKind::Drone => schemars::schema_for!(DroneConfig),
                 SchemaKind::Rules => schemars::schema_for!(de_world::water::Rules),
                 SchemaKind::References => schemars::schema_for!(de_world::photo::References),
+                SchemaKind::Budget => schemars::schema_for!(de_world::budget::Budget),
             };
             println!("{}", serde_json::to_string_pretty(&schema).expect("serialises"));
             ExitCode::SUCCESS
@@ -305,6 +329,81 @@ fn main() -> ExitCode {
                     ExitCode::FAILURE
                 }
             }
+        }
+        Cmd::Critic { cmd: CriticCmd::Pack { shots, out } } => {
+            let out = out.unwrap_or_else(critic::default_out);
+            match critic::pack(&shots, &out) {
+                Ok(files) => {
+                    let shown = std::fs::canonicalize(&out).unwrap_or(out);
+                    println!("{} files and brief.md in {}", files.len(), shown.display());
+                    println!("Give a fresh agent only that folder; it writes critic.json there.");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Cmd::Critic { cmd: CriticCmd::Check { review } } => {
+            let path = review.unwrap_or_else(|| critic::default_out().join("critic.json"));
+            match critic::check(&path) {
+                Ok((r, pass)) => {
+                    for d in &r.defects {
+                        println!(
+                            "{:<9} {:<28} {}: {}",
+                            format!("{:?}", d.severity).to_lowercase(),
+                            d.shot,
+                            d.place,
+                            d.what
+                        );
+                    }
+                    if !r.overall.is_empty() {
+                        println!("\n{}", r.overall);
+                    }
+                    println!(
+                        "{}",
+                        if pass { "pass: nothing above minor" } else { "fail: fix the defects above minor" }
+                    );
+                    if pass { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Cmd::Size => {
+            let budget = match de_world::budget::Budget::load(&content) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("{e}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let sizes = de_world::budget::content_sizes(&content);
+            let shipped: u64 = sizes.iter().filter(|(k, _)| !budget.calibration_only.contains(k)).map(|(_, v)| v).sum();
+            let mb = shipped as f64 / 1e6;
+            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+            let binaries: serde_json::Map<String, serde_json::Value> = ["release", "debug"]
+                .iter()
+                .flat_map(|p| ["discover-earth", "discover-earth.exe"].map(|b| (p, b)))
+                .filter_map(|(p, b)| {
+                    std::fs::metadata(root.join(p).join(b))
+                        .ok()
+                        .map(|m| (format!("{p}/{b}"), ((m.len() as f64 / 1e4).round() / 100.0).into()))
+                })
+                .collect();
+            let doc = serde_json::json!({
+                "content_mb": (mb * 100.0).round() / 100.0,
+                "budget_mb": budget.content_mb,
+                "within": mb <= budget.content_mb,
+                "by_folder_mb": sizes.iter().map(|(k, v)| (k.clone(), ((*v as f64 / 1e4).round() / 100.0).into())).collect::<serde_json::Map<_, _>>(),
+                "not_shipped": budget.calibration_only,
+                "binaries_mb": binaries,
+            });
+            println!("{}", serde_json::to_string(&doc).expect("serialises"));
+            if mb <= budget.content_mb { ExitCode::SUCCESS } else { ExitCode::FAILURE }
         }
         Cmd::Taste { sheet, pick, reject, why, by } => {
             let line = serde_json::json!({
@@ -530,6 +629,10 @@ fn validate(content: &Path) -> Vec<String> {
             Err(e) => out.push(e),
         }
         islands.insert(id.clone(), island);
+    }
+    match de_world::budget::Budget::load(content) {
+        Ok(b) => out.extend(b.check()),
+        Err(e) => out.push(e),
     }
     let drone = match DroneConfig::load(content) {
         Ok(d) => {

@@ -17,6 +17,7 @@ Licences marked "check" must be confirmed before any code is reused.
 | RenderDoc, MIT | Frame captures readable from its Python API: an agent can inspect draw calls and textures of a bad frame |
 | Tracy profiler, BSD-3 | Zone timings exportable as data, for frame budgets as tests |
 | Bevy Remote Protocol (already in use) and Model Context Protocol | Wrap the live game and `de` as MCP tools |
+| Abyssal Garden (Noniv), MIT, its `prompt.txt` brief | Priorities in a fixed order, a target machine with a GPU budget, a blind critic that sees only renders and a timed fly-through as the "done when" gates (now `content/budget.json`, `de-shot --bench`, `de critic`) |
 
 ## 2. Terrain: from 30 m data to ground you can walk on
 
@@ -38,6 +39,8 @@ Licences marked "check" must be confirmed before any code is reused.
 | "Wakes, Explosions and Lighting: Interactive Water Simulation in Atlas" (GDC 2019) | Combining FFT ocean with local interaction and shoreline |
 | Crest ocean v4 (Unity), MIT | Shoreline foam, depth-based colour, LOD for water; v5 is commercial, ideas only |
 | Vlachos, "Water Flow in Portal 2" (SIGGRAPH 2010) | Flow maps for rivers and streams |
+| FableFlight (Rolandjg), no licence: ideas only | Surf height from how open a shore is and the upwind fetch; FFT sea with JONSWAP, three cascades sized to nest, foam from folding crests, time quantised to a period; LOD jitter and dithered crossfades |
+| Abyssal Garden (Noniv), MIT | A cheap iterated-sine caustic and per-channel absorption for shallow water |
 | O'Callaghan and Mark (1984) D8 flow, Barnes et al. Priority-Flood (2014) | Derive the real stream network and catchments from the DEM, so streams and waterfalls are where they really are |
 | Lagarde, "Water drop" blog series (2012-13) | Wet surfaces, puddles, rain on materials |
 

@@ -1,0 +1,7 @@
+{
+  "priorities": ["visual quality", "stable frame pacing on the reference machine", "small build and content size"],
+  "reference": { "gpu": "RX 6650 XT", "size": [1920, 1080], "refresh_hz": 60.0, "confirmed": false },
+  "frame": { "gpu_avg_ms": 11.0, "gpu_max_ms": 16.7, "frame_p99_ms": 16.7 },
+  "content_mb": 8.0,
+  "calibration_only": ["references"]
+}

@@ -217,6 +217,47 @@ earlier run as "before" and counts on how many photos the gap went down.
 Caveats: each photo has its own weather and hour, and the render has one look, so a gap never reaches zero; judge the
 mean and how many photos move. Houses, people and fences are in the photos and not in the island.
 
+## Budgets: frame time, size, allocations
+
+`content/budget.json` (`de schema budget`) holds the priorities (look, then frame pacing, then size), the reference
+machine (GPU name, size, refresh rate) and the limits. Until `reference.confirmed` is true the reference numbers are
+a first guess, not C's.
+
+```
+cargo run --release -p de_client --bin de-shot -- content/shots/drone.json out/bench --bench --tier hero
+```
+
+`--bench` flies the step list without saving any image and writes `out/bench/bench.json`: whole-frame time
+(`frame_ms`: avg, p50, p99, max), GPU time from timestamp queries (`gpu_ms`, the sum of the top-level passes),
+mean GPU ms per pass slowest first (`passes`), the frames over the GPU limit (`slow_frames`) and heap allocations per
+frame (`allocs_per_frame`). The first 60 frames are left out. Pass `--tier` or a step list `size` that matches
+`reference.size`. The verdict is `pass` or `fail` only on the reference GPU at the reference size; anywhere else,
+including the software renderer in the cloud, it is `not_judged` and the numbers are only for comparing runs on the
+same machine. Use a release build; debug numbers mean nothing.
+
+`de size` prints shipped content per folder against `content_mb` (reference photos are left out), and
+`scripts/check.sh` copies it into `out/check/summary.json`. `crates/de_world/tests/no_alloc.rs` flies the drone for a
+second, sampling ground and clouds, and fails on any heap allocation: keep per-frame world code allocation free.
+
+## The blind critic
+
+A reviewer that sees only the renders finds what the author no longer sees, and can't be argued into agreeing.
+
+```
+scripts/check.sh --shots
+cargo run -q -p de_cli -- critic pack out/shots        # out/critic/: shot PNGs, clip sheets, motion.json, brief.md
+```
+
+Then start a fresh agent (a subagent with no other context) and give it only the folder: "Read out/critic/brief.md,
+look at every file it lists and write out/critic/critic.json." Don't tell it what changed or why. Then:
+
+```
+cargo run -q -p de_cli -- critic check                 # defects worst first; exit 1 while any is above minor
+```
+
+Fix, capture again, pack again and use a new critic each round, until the check passes. Put the final review in the
+PR.
+
 ## The live game (Bevy Remote Protocol)
 
 `discover-earth` listens on `http://127.0.0.1:15702` (JSON-RPC). Find the camera and read where it is:
