@@ -158,6 +158,9 @@ pub struct CloudMaterial {
     #[texture(1, dimension = "3d")]
     #[sampler(2)]
     pub noise: Handle<Image>,
+    /// x: 0 for the draw that writes each pixel's samples like its first, 1 for the rest.
+    #[uniform(3)]
+    pub pass: Vec4,
 }
 
 impl Material for CloudMaterial {
@@ -228,15 +231,24 @@ pub fn spawn(
     params: CloudParams,
     noise: Handle<Image>,
 ) {
-    commands.spawn((
-        Name::new("clouds"),
-        CloudBox,
-        NotShadowCaster,
-        NotShadowReceiver,
-        bevy::camera::visibility::NoFrustumCulling,
-        Mesh3d(meshes.add(screen_triangle())),
-        MeshMaterial3d(materials.add(CloudMaterial { params, noise })),
-    ));
+    // Twice: on a skyline under multisampling, once for the samples like each pixel's first
+    // and once for the others (see `fragment` in `clouds.wesl`).
+    let mesh = meshes.add(screen_triangle());
+    for pass in [0.0, 1.0] {
+        commands.spawn((
+            Name::new("clouds"),
+            CloudBox,
+            NotShadowCaster,
+            NotShadowReceiver,
+            bevy::camera::visibility::NoFrustumCulling,
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(materials.add(CloudMaterial {
+                params,
+                noise: noise.clone(),
+                pass: Vec4::new(pass, 0.0, 0.0, 0.0),
+            })),
+        ));
+    }
 }
 
 /// Keeps the triangle at the camera: see-through things draw farthest first by where their

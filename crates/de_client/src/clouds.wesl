@@ -46,6 +46,14 @@ struct CloudParams {
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> clouds: CloudParams;
 @group(constants::MATERIAL_BIND_GROUP) @binding(1) var noise_tex: texture_3d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(2) var noise_smp: sampler;
+// x: which samples of each pixel this draw writes (see `fragment`): 0 those like the first,
+// 1 the rest.
+@group(constants::MATERIAL_BIND_GROUP) @binding(3) var<uniform> cloud_pass: vec4<f32>;
+
+struct CloudOut {
+    @location(0) color: vec4<f32>,
+    @builtin(sample_mask) mask: u32,
+}
 
 const PI: f32 = 3.14159265;
 // The deck's mean density beyond the march's reach, as a share of cover times peak density.
@@ -409,14 +417,27 @@ fn layer_entry(ro: vec3<f32>, rd: vec3<f32>) -> f32 {
     return 0.0;
 }
 
-// The mean over this pixel's 2x2 quad, from the fine derivatives: the per-pixel jitter
-// leaves soft edges as a checker of hits and misses (there is no temporal filter to average
-// it), and four neighbouring offsets averaged read as the soft edge they sample.
-fn quad_mean(v: vec4<f32>, px: vec2<f32>) -> vec4<f32> {
-    let sx = select(-0.5, 0.5, (u32(px.x) & 1u) == 0u);
-    let h = v + sx * dpdxFine(v);
-    let sy = select(-0.5, 0.5, (u32(px.y) & 1u) == 0u);
-    return h + sy * dpdyFine(h);
+// The mean over this pixel's 2x2 quad of the pixels that see about as far as this one (`t`,
+// to the land or the sky), from the fine derivatives. The per-pixel jitter leaves soft edges
+// as a checker of hits and misses (there is no temporal filter to average it), and the
+// neighbouring offsets averaged read as the soft edge they sample. Pixels across a skyline
+// are left out of each other's mean: mixing them drew the ridge's light into the sky, and
+// not averaging there at all left the sky's own noise as a row of dots along every ridge.
+fn quad_mean(v: vec4<f32>, t: f32, px: vec2<f32>) -> vec4<f32> {
+    let sx = select(-1.0, 1.0, (u32(px.x) & 1u) == 0u);
+    let sy = select(-1.0, 1.0, (u32(px.y) & 1u) == 0u);
+    // The other three pixels' values: across, above or below, and diagonal.
+    let vh = v + sx * dpdxFine(v);
+    let vv = v + sy * dpdyFine(v);
+    let vd = vv + sx * dpdxFine(vv);
+    let th = t + sx * dpdxFine(t);
+    let tv = t + sy * dpdyFine(t);
+    let td = tv + sx * dpdxFine(tv);
+    let near = 0.05 * t;
+    let wh = select(0.0, 1.0, abs(th - t) <= near);
+    let wv = select(0.0, 1.0, abs(tv - t) <= near);
+    let wd = select(0.0, 1.0, abs(td - t) <= near);
+    return (v + wh * vh + wv * vv + wd * vd) / (1.0 + wh + wv + wd);
 }
 
 // One triangle that covers the screen (and more), so no triangle edge crosses the picture,
@@ -431,23 +452,54 @@ fn vertex(@builtin(vertex_index) i: u32) -> VertexOutput {
     return out;
 }
 
+// With multisampling a pixel on a skyline holds land in some samples and sky in others, and
+// one colour for all of them is wrong for one kind: the sky's samples took the land's
+// see-through mist over the sky drawn underneath, a bright dot on every ridge. So the clouds
+// are drawn twice: the first draw writes the samples that see what the pixel's first sample
+// sees, the second the others (and discards everywhere but on edges).
 @fragment
-fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fragment(in: VertexOutput) -> CloudOut {
     let ro = view.world_position;
     let ndc = frag_coord_to_ndc(in.position);
     let rd = normalize(position_ndc_to_world(vec3(ndc.xy, 0.5)) - ro);
+    let second = cloud_pass.x > 0.5;
 
     // Where the land is along this ray (none: the sky).
     // Open sky: as far as a deck at cloud height stays above the horizon on the curved earth.
     var t_land = 300000.0;
     var open_sky = true;
+    var mask = 0xffffffffu;
     @if(DEPTH_PREPASS) {
-        let depth = prepass_depth(in.position, 0u);
+        let first = prepass_depth(in.position, 0u);
+        var depth = first;
+        var n = 1u;
+        @if(MULTISAMPLED) {
+            n = textureNumSamples(bevy_pbr::render::mesh_view_bindings::depth_prepass_texture);
+        }
+        var same = 0u;
+        var other = 0.0;
+        for (var i = 0u; i < n; i++) {
+            let d = prepass_depth(in.position, i);
+            if (d > 0.0) == (first > 0.0) {
+                same |= 1u << i;
+            } else {
+                other = d;
+            }
+        }
+        if second {
+            mask = ~same & ((1u << n) - 1u);
+            depth = other;
+        } else {
+            mask = same;
+        }
         if depth > 0.0 {
             open_sky = false;
             let fwd = normalize(-view.world_from_view[2].xyz);
             t_land = min(t_land, -depth_ndc_to_view_z(depth) / max(dot(rd, fwd), 1e-4));
         }
+    }
+    if second && mask == 0u {
+        discard;
     }
     // The sea is see-through, so it leaves no depth: past the land's edge a ray down would
     // count as open sky, and the sky was drawn over the far sea as a bright band. Meet it here.
@@ -462,11 +514,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
     let jitter = ign(in.position.xy);
-    // Average only where the whole quad sees the same thing behind (no skyline in the quad),
-    // or a ridge's edge picks up the sky's light as a dotted line.
-    let edge = fwidthFine(t_land) > 0.05 * t_land;
+    // The second draw covers single samples on skylines; its neighbours are not drawn.
     let cloud_px = march_clouds(ro, rd, t_land, jitter);
-    var cloud = select(quad_mean(cloud_px, in.position.xy), cloud_px, edge);
+    var cloud = select(quad_mean(cloud_px, t_land, in.position.xy), cloud_px, second);
     // The scene's distance fog, as the ground and sea get it, from where the ray enters the
     // layer: without it far cloud kept its own grey while the sea under it faded to the fog's
     // colour, and the two met in a hard line at the horizon.
@@ -482,12 +532,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
     let mist_px = march_mist(ro, rd, t_land, jitter);
-    let mist = select(quad_mean(mist_px, in.position.xy), mist_px, edge);
+    let mist = select(quad_mean(mist_px, t_land, in.position.xy), mist_px, second);
     // Where nothing is in the way, draw our own daylight sky (and the sun) behind the clouds.
     if open_sky && clouds.sky_e.w > 0.0 {
         let behind = sky_radiance(rd);
         let seen = cloud.rgb + (1.0 - cloud.a) * behind;
-        return vec4((mist.rgb + mist.a * seen) * view.exposure, 1.0);
+        return CloudOut(vec4((mist.rgb + mist.a * seen) * view.exposure, 1.0), mask);
     }
     // Mist lies in front of the clouds: its light, then the clouds seen through it.
     let rgb = mist.rgb + mist.a * cloud.rgb;
@@ -495,5 +545,5 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if alpha <= 0.0 {
         discard;
     }
-    return vec4(rgb * view.exposure, alpha);
+    return CloudOut(vec4(rgb * view.exposure, alpha), mask);
 }
