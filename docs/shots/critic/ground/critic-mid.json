@@ -1,0 +1,33 @@
+{
+  "defects": [
+    { "shot": "overview.png", "severity": "blocker", "where": "whole frame",
+      "what": "No island is visible: the view is an endless flat plain covered in large opaque white fuzzy blobs (clouds lying on or clipping into the ground, or ground covered in white fur) with dark grey-brown channels between, running to a ruler-straight horizon with no sea. It should read as an overview of green islands, dark cliffs and grey-green sea, with any low cloud sitting above the land as soft translucent volumes, not as hard-edged white sheets glued to the terrain." },
+    { "shot": "overview.png", "severity": "major", "where": "horizon line, top, full width",
+      "what": "The ground ends in a hard horizontal edge with small rectangular steps where the far terrain meets the sky (looks like the edge of a tiled plane). It should fade into haze or sea with no visible edge or steps." },
+    { "shot": "lagoon.png", "severity": "major", "where": "whole set of landscape shots, ground colour (clearest here, right-hand slope)",
+      "what": "The grass is a warm ochre/olive-brown, like autumn moorland or dry savanna under orange light, not the saturated cool green of Faroese slopes. No dark basalt cliffs or rock bands appear anywhere; every slope is smooth grass. It should be vivid green turf with exposed dark basalt ledges and scree on steep faces." },
+    { "shot": "valley.png", "severity": "major", "where": "sky, clouds across the top half",
+      "what": "Clouds are grey, blurry blobs with sharp flat bottoms and smeared edges that look like out-of-focus cut-outs; they do not share the light of the scene (the ground is lit warm and low from one side while the clouds are flat grey with no lit rims matching that sun). Clouds should have soft, detailed edges and shading consistent with the sun direction lighting the slopes." },
+    { "shot": "valley.png", "severity": "moderate", "where": "sky behind the left ridge, left of centre near the horizon",
+      "what": "Bright sun-lit cloud band breaks into blocky pixel noise and a row of regularly spaced bright dots (undersampled cloud raymarch). It should be a smooth glowing gradient." },
+    { "shot": "tjornuvik.png", "severity": "moderate", "where": "clouds above the horizon, left and right",
+      "what": "Clouds have vertical streaks/smears and hard rectangular step edges (top left cloud is streaked vertically, mid-left bank has a stair-stepped outline, right bank has vertical smearing). They should be soft, continuous volumes." },
+    { "shot": "lagoon.png", "severity": "moderate", "where": "right ridge, near top right edge (x~1250, y~215)",
+      "what": "A small bright grey-white fuzzy blob floats against the hillside, like a stray cloud puff or sprite intersecting the ground. It should not be there, or should be a proper cloud above the land." },
+    { "shot": "tjornuvik.png", "severity": "moderate", "where": "right headland, mid right",
+      "what": "Regular parallel contour-like stripes run across the grass slope, like terracing or a heightmap staircase. Real slopes have irregular sheep paths and rock bands, not evenly spaced banding." },
+    { "shot": "tjornuvik.png", "severity": "moderate", "where": "left hillside, left third",
+      "what": "Faint bluish horizontal bands/blotches cover the shaded hillside, like a misaligned texture layer or fog banding. The shaded slope should be continuous green with natural variation." },
+    { "shot": "tjornuvik.png", "severity": "moderate", "where": "fog over the bay and hills, centre",
+      "what": "Haze is a uniform grey wash that flattens everything below the horizon equally; the sea is a flat grey sheet with no reflections of the bright sky. Haze should thicken with distance and the sea should be grey-green with sky reflection and texture." },
+    { "shot": "tjornuvik.png", "severity": "minor", "where": "shoreline in the bay, centre",
+      "what": "The surf line is a thin, evenly repeated white ribbon with parallel concentric wave rings following the coast exactly; it reads as a procedural outline. It should vary in width and break irregularly against the beach." },
+    { "shot": "lagoon-after-flying.png", "severity": "minor", "where": "whole frame, ground close-up",
+      "what": "Close-up grass is a uniform repeating clumpy noise pattern with no blades, rocks or variation in colour; reads as a bumpy carpet. It should have tussocks, small stones and variation in hue." },
+    { "shot": "valley.png", "severity": "minor", "where": "ridge silhouettes against the sky, left and centre",
+      "what": "Ridge edges against the bright sky are stair-stepped (visible aliasing). They should be clean soft lines." },
+    { "shot": "lagoon.png", "severity": "minor", "where": "stream on the left slope",
+      "what": "The stream is a constant-width pale grey ribbon draped over the slope like a road, with no banks or variation; it reads as a path rather than water. It should narrow and widen, sit in a cut, and show darker water with highlights." }
+  ],
+  "overall": "The overview shot is broken (white fuzzy sheets covering a flat plain, no islands or sea). The other views have a believable layout and soft light, but they look like warm brown moorland under painted grey cloud cut-outs rather than green, basalt-banded Faroese slopes, and they show cloud sampling noise and terrain banding."
+}

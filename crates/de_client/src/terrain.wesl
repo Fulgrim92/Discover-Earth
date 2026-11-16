@@ -148,7 +148,12 @@ fn layer_colour(i: u32, base: vec3<f32>, p: vec3<f32>, n: vec3<f32>, fade: f32) 
         // satellite's albedo does (`de photo match` gap 15.9 with the hue, worse without).
         let mean = max(textureSampleLevel(albedo_tex, albedo_smp, vec2(0.5), i, 16.0).rgb, vec3(1e-3));
         let lum_w = vec3(0.2126, 0.7152, 0.0722);
-        let c = tex * (dot(base, lum_w) / max(dot(mean, lum_w), 1e-4));
+        var c = tex * (dot(base, lum_w) / max(dot(mean, lum_w), 1e-4));
+        if i == 1u {
+            // The rock scan is a blue-grey basalt; its hue drew bluish blotches over shaded
+            // slopes, so rock keeps only the scan's light and dark, in the fitted colour.
+            c = base * (dot(tex, lum_w) / max(dot(mean, lum_w), 1e-4));
+        }
         return select(c, pasture(c, p, fade), i == 0u);
     }
     // No scanned textures: tint the layer colour with noise at metre and decametre scales.
