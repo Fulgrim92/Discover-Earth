@@ -118,6 +118,22 @@ fn triplanar(tex: texture_2d_array<f32>, smp: sampler, layer: u32, p: vec3<f32>,
     return x * w.x + y * w.y + z * w.z;
 }
 
+// Pasture is a patchwork, not a lawn: on top of the layer's colour, patches a few metres to a
+// few tens of metres across run greener or more straw-coloured, darker tussocks clump at
+// about a metre, and a few stones show through. Brightness and hue average out to 1, so the
+// layer keeps its satellite-fitted albedo. Small things fade out with distance (`fade`).
+fn pasture(c: vec3<f32>, p: vec3<f32>, fade: f32) -> vec3<f32> {
+    let big = fbm(p * 0.05 + vec3(31.0, 0.0, 7.0), 1.0);
+    let mid = fbm(p * 0.22 + vec3(3.0, 0.0, 19.0), 1.0);
+    let hue = smoothstep(0.3, 0.7, 0.6 * big + 0.4 * mid);
+    var out = c * mix(vec3(0.88, 1.03, 1.1), vec3(1.12, 0.97, 0.9), hue);
+    out *= 0.8 + 0.4 * smoothstep(0.25, 0.75, mid);
+    let tussock = smoothstep(0.5, 0.8, noise3(p * vec3(1.6, 0.8, 1.6)));
+    out *= 1.0 - 0.3 * tussock * fade;
+    let stone = smoothstep(0.82, 0.88, noise3(p * 0.7 + vec3(5.0, 1.0, 9.0))) * fade;
+    return mix(out, terrain.rock.rgb * (0.8 + 0.5 * mid), stone);
+}
+
 fn layer_colour(i: u32, base: vec3<f32>, p: vec3<f32>, n: vec3<f32>, fade: f32) -> vec3<f32> {
     if terrain.flags.x > 0.5 {
         let tile = terrain.tile_m[i];
@@ -125,8 +141,15 @@ fn layer_colour(i: u32, base: vec3<f32>, p: vec3<f32>, n: vec3<f32>, fade: f32) 
         let near = triplanar(albedo_tex, albedo_smp, i, p, n, tile).rgb;
         let far = triplanar(albedo_tex, albedo_smp, i, p, n, tile * 7.3).rgb;
         let tex = mix(far, near, 0.5 + 0.5 * fade);
-        // A light tint towards the island's look keeps layers in one palette.
-        return tex * mix(vec3(1.0), base / max(dot(base, vec3(0.333)), 0.001), 0.25);
+        // The scan gives the detail and the hue, the layer's albedo (fitted to the satellite,
+        // `de truth`) the brightness: the scan is scaled by the albedo's luminance over its
+        // own mean's (the last mip). Without it the rock scan, a near-black basalt, drew every
+        // cliff black. The scans' hue stays: the photos see the grass yellower than the
+        // satellite's albedo does (`de photo match` gap 15.9 with the hue, worse without).
+        let mean = max(textureSampleLevel(albedo_tex, albedo_smp, vec2(0.5), i, 16.0).rgb, vec3(1e-3));
+        let lum_w = vec3(0.2126, 0.7152, 0.0722);
+        let c = tex * (dot(base, lum_w) / max(dot(mean, lum_w), 1e-4));
+        return select(c, pasture(c, p, fade), i == 0u);
     }
     // No scanned textures: tint the layer colour with noise at metre and decametre scales.
     let fine = fbm(p * (1.3 + f32(i) * 0.37), fade);
@@ -140,6 +163,7 @@ fn layer_colour(i: u32, base: vec3<f32>, p: vec3<f32>, n: vec3<f32>, fade: f32) 
     if i == 0u {
         // Grass browns where it is drier and higher.
         c = mix(c, c * vec3(1.35, 1.05, 0.7), smoothstep(0.45, 0.8, broad));
+        c = pasture(c, p, fade);
     }
     return c;
 }
