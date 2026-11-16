@@ -1,0 +1,31 @@
+{
+  "defects": [
+    { "shot": "overview.png", "severity": "blocker", "where": "whole cloud layer, foreground to horizon",
+      "what": "the low cloud is a repeating grid of identical flat-topped blobs with straight gaps between them, like a tiled texture. A long straight light channel runs to the horizon at centre and there are hard rectangular cuts (centre, just below the horizon). It should be one continuous, irregular stratus deck with soft, uneven breaks and no visible repeat or straight edges" },
+    { "shot": "overview.png", "severity": "major", "where": "every cloud edge against the ground, and the far cloud band near the horizon",
+      "what": "cloud edges are a dithered checkerboard/halftone fringe, and the far band breaks into horizontal stipple lines. Edges should fade smoothly into the ground and far cloud should resolve to a soft continuous band" },
+    { "shot": "tjornuvik.png", "severity": "major", "where": "horizon band across the full width, behind the headlands",
+      "what": "a flat, uniform cream strip with a ruler-straight top edge cuts the cloud deck off from the sea. The cloud base stops in a hard horizontal line instead of thinning toward the horizon, so sky and sea look like separate layers. It should be a gradual brightening under a cloud base that fades in perspective" },
+    { "shot": "valley.png", "severity": "major", "where": "bright cloud rims, upper left and centre top, and the far cloud bands at right",
+      "what": "sunlit cloud edges have stair-stepped, combed streaks and hatching, and the far cloud bands show horizontal line artifacts. Rims should be soft, smoothly lit gradients" },
+    { "shot": "lagoon.png", "severity": "major", "where": "cloud break above the far notch, centre, and the bright patch upper left",
+      "what": "the bright break shows diagonal hatching and dithered edges, and the clouds read as smeared blurry blobs. They should have fine wispy structure with clean soft edges" },
+    { "shot": "lagoon-after-flying.png", "severity": "major", "where": "entire slope, foreground to mid",
+      "what": "the grass is a uniform lumpy noise, like crumpled foil or orange-peel, at one scale everywhere, olive-mustard in colour, with no tussocks, rock, wet patches or colour variation. Close up it should be uneven Faroese turf, bluer green with darker damp hollows and scattered stones" },
+    { "shot": "valley.png", "severity": "major", "where": "right-hand slope and sunlit faces throughout the set",
+      "what": "sunlit grass reads as mustard/ochre, more like dry autumn moorland than Faroese pasture, under an overcast grey sky that doesn't explain such warm direct light. Slopes should be a cooler, saturated green with softer, less orange light" },
+    { "shot": "tjornuvik.png", "severity": "major", "where": "slopes and cliffs on both sides of the fjord, and the islet at right",
+      "what": "there is no exposed basalt: no dark cliff bands, scree or terraced ledges, just smooth rounded grass hills. Faroese valley walls and sea stacks should show dark stepped basalt layers, especially at steep edges and along the coast" },
+    { "shot": "lagoon.png", "severity": "moderate", "where": "stream along the left and bottom left",
+      "what": "the stream is a pale grey-white ribbon of uniform width that draws over the slope like a painted road, with a faint stippled texture. Some segments run along the hillside where water can't flow. It should be a thin, dark, reflective channel that narrows and widens, sits in a cut, and shows white only at riffles" },
+    { "shot": "lagoon.png", "severity": "moderate", "where": "right edge, upper slope near x=1250,y=215",
+      "what": "a small bright white blob floats on the hillside with no apparent source. It looks like a stray sprite or a specular spike. It should not be there" },
+    { "shot": "tjornuvik.png", "severity": "moderate", "where": "bay shoreline, centre",
+      "what": "surf is a set of evenly spaced parallel white rings that follow the shore exactly, like contour lines. The sea surface is flat grey with concentric banding. Breakers should be broken and irregular, and the open water should show wind texture" },
+    { "shot": "valley.png", "severity": "moderate", "where": "left and middle hillsides",
+      "what": "the slopes are almost featureless smooth gradients, plastic-looking with no gullies, outcrops or detail between the ridge and the stream. They should show drainage gullies, rock steps and turf texture" },
+    { "shot": "valley.png", "severity": "minor", "where": "distant ridges and lake, centre",
+      "what": "the haze is even and grey across all distances, so depth reads weakly. Aerial perspective should increase more with distance and pick up the sky's colour" }
+  ],
+  "overall": "The overview's cloud deck is visibly tiled and dithered, which breaks the picture. Cloud edges and rims show hatching and stippling in every shot. On the ground, the mustard-coloured, uniformly noisy turf, with no basalt and painted-on streams, reads as a generic CG hill, not the Faroes."
+}
