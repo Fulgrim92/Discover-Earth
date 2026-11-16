@@ -141,17 +141,16 @@ fn layer_colour(i: u32, base: vec3<f32>, p: vec3<f32>, n: vec3<f32>, fade: f32) 
         let near = triplanar(albedo_tex, albedo_smp, i, p, n, tile).rgb;
         let far = triplanar(albedo_tex, albedo_smp, i, p, n, tile * 7.3).rgb;
         let tex = mix(far, near, 0.5 + 0.5 * fade);
-        // The scan gives the detail and the hue, the layer's albedo (fitted to the satellite,
-        // `de truth`) the brightness: the scan is scaled by the albedo's luminance over its
-        // own mean's (the last mip). Without it the rock scan, a near-black basalt, drew every
-        // cliff black. The scans' hue stays: the photos see the grass yellower than the
-        // satellite's albedo does (`de photo match` gap 15.9 with the hue, worse without).
-        let mean = max(textureSampleLevel(albedo_tex, albedo_smp, vec2(0.5), i, 16.0).rgb, vec3(1e-3));
-        let lum_w = vec3(0.2126, 0.7152, 0.0722);
-        var c = tex * (dot(base, lum_w) / max(dot(mean, lum_w), 1e-4));
-        if i == 1u {
-            // The rock scan is a blue-grey basalt; its hue drew bluish blotches over shaded
-            // slopes, so rock keeps only the scan's light and dark, in the fitted colour.
+        // Grass is the scan as it is, with a light tint towards the layer colour: C picked
+        // this brighter, yellower grass over the satellite's darker albedo (docs/taste.jsonl).
+        var c = tex * mix(vec3(1.0), base / max(dot(base, vec3(0.333)), 0.001), 0.25);
+        if i != 0u {
+            // Other layers take their brightness from the albedo fitted to the satellite
+            // (`de truth`), scaling the scan by the albedo's luminance over the scan's mean
+            // (its last mip), and keep only the scan's light and dark: as drawn before, the
+            // near-black basalt scan made every cliff black.
+            let mean = max(textureSampleLevel(albedo_tex, albedo_smp, vec2(0.5), i, 16.0).rgb, vec3(1e-3));
+            let lum_w = vec3(0.2126, 0.7152, 0.0722);
             c = base * (dot(tex, lum_w) / max(dot(mean, lum_w), 1e-4));
         }
         return select(c, pasture(c, p, fade), i == 0u);
