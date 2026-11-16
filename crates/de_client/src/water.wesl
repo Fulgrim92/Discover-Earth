@@ -208,15 +208,32 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let rim = smoothstep(0.7, 1.0, abs(in.uv.x)) * saturate(speed / 3.0) * 0.6;
     let foam = saturate(foam_amt * (0.55 + smoothstep(0.3, 0.6, churn)) + rim * smoothstep(0.45, 0.7, churn));
 
-    pbr_input.N = N;
-    pbr_input.material.base_color = vec4(mix(water.deep.rgb, water.foam.rgb, foam), 1.0);
-    pbr_input.material.perceptual_roughness = mix(0.06, 0.7, foam);
+    // A stream is not a ribbon of one width: its water narrows and widens along the bed, and
+    // the rest of the strip is wet, dark bank (moss, stones, peat). From afar the bed sits in
+    // a small gully whose banks hide most of the sky it would mirror, so the water darkens
+    // into the slope instead of drawing a bright line across it.
+    var bank = 0.0;
+    var hidden = 0.0;
+    if speed > 0.05 {
+        let reach = fbm(vec3(in.uv.y * 0.07, 3.0, 1.0), 1.0) * 0.8 + fbm(vec3(in.uv.y * 0.6, 7.0, 2.0), 1.0) * 0.4;
+        let wet = clamp(0.25 + 0.7 * reach, 0.25, 0.95);
+        bank = smoothstep(wet - 0.08, wet + 0.08, abs(in.uv.x));
+        hidden = 1.0 - (0.3 + 0.7 * fade);
+    }
+    let foam_seen = foam * (1.0 - bank) * (1.0 - 0.6 * hidden);
+    let bank_colour = water.deep.rgb * 0.5 + vec3(0.02, 0.018, 0.012);
+    let wet_colour = mix(water.deep.rgb, water.foam.rgb, foam_seen);
+
+    pbr_input.N = normalize(mix(N, n0, bank));
+    pbr_input.material.base_color = vec4(mix(wet_colour, bank_colour, bank), 1.0);
+    pbr_input.material.perceptual_roughness = mix(mix(0.06, 0.7, foam_seen), 0.85, bank);
     out.color = apply_pbr_lighting(pbr_input);
 
     // The sky in the water: Schlick's Fresnel with water's 2% head-on reflectance.
     let r = reflect(-V, N);
     let fresnel = 0.02 + 0.98 * pow(1.0 - saturate(dot(N, V)), 5.0);
-    out.color = vec4(out.color.rgb + sky(r) * fresnel * (1.0 - foam) * water.flags.y, 1.0);
+    let mirrored = (1.0 - foam_seen) * (1.0 - bank) * (1.0 - 0.75 * hidden);
+    out.color = vec4(out.color.rgb + sky(r) * fresnel * mirrored * water.flags.y, 1.0);
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     return out;
 }
