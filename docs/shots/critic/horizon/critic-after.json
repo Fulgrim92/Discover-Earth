@@ -1,0 +1,31 @@
+{
+  "defects": [
+    { "shot": "overview.png", "severity": "major", "where": "whole frame, mid to far distance",
+      "what": "the terrain is buried under a solid white blanket of blob-shaped clouds sitting directly on the ground with hard, cotton-wool edges, so the island reads as a snowfield; low Faroese cloud should be thin, broken and translucent with soft wispy edges and the land, sea and coastline visible between and through it" },
+    { "shot": "overview.png", "severity": "major", "where": "far distance, upper right and upper left gaps between clouds (around x 900-1250, y 150-230 and x 100-180, y 190-215)",
+      "what": "dark ground shows through as diagonal hatched stripes and comb-like streaks (shadow or sampling aliasing); distant ground should be a smooth, hazy tone with no regular striping" },
+    { "shot": "tjornuvik.png", "severity": "major", "where": "sky, both cloud masses (top left x 150-330, top right x 620-1000) and the cloud band along the horizon",
+      "what": "clouds are smeared into vertical streaks and the lower layer has a flat, cut-off base with column-like light bands, looking like a stretched texture; clouds should have continuous soft volumes with no vertical striping" },
+    { "shot": "valley.png", "severity": "major", "where": "all ridge silhouettes against the sky, x 0-1280, y 225-300",
+      "what": "a row of bright white single-pixel dots runs along every skyline edge, like a halo or sparkle seam; the ridge should meet the sky as a clean soft line with no bright fringe" },
+    { "shot": "lagoon.png", "severity": "major", "where": "valley floor where the stream enters the lake, x 470-590, y 420-475",
+      "what": "the stream water is a set of blocky, stair-stepped grey rectangles floating on the slope, clearly made of square cells; it should be a continuous narrow channel that follows the valley floor with smooth banks" },
+    { "shot": "tjornuvik.png", "severity": "major", "where": "coastline on both sides of the bay and the headland at right",
+      "what": "the land rolls down to the sea as smooth grassy hills with no dark basalt cliffs or exposed rock anywhere; this bay should have steep dark cliff faces, scree and rock bands where slopes meet the sea and on the headland" },
+    { "shot": "valley.png", "severity": "moderate", "where": "the thin streams on both slopes (left x 0-70, y 355-430; centre x 310-740, y 365-595)",
+      "what": "streams are thin bright white lines of constant width, zig-zagging in straight segments and drawn across slopes like painted lines; they should be dark, reflective, partly hidden water that narrows and widens and sits in a small gully" },
+    { "shot": "lagoon-after-flying.png", "severity": "moderate", "where": "entire slope, foreground to mid-ground",
+      "what": "the grass is a uniform ochre/olive mottled noise pattern repeated evenly everywhere, reading like a carpet or sand; close ground should show varied green grass, tussocks, darker wet patches and occasional rock, with colour cooler and greener for the Faroes" },
+    { "shot": "lagoon.png", "severity": "moderate", "where": "right foreground slope and left hillside",
+      "what": "the lit grass is a saturated orange-yellow ochre, closer to dry savanna than to the deep green of Faroese pasture under soft northern light; the hue should be a cooler, greener grass with less orange cast" },
+    { "shot": "valley.png", "severity": "moderate", "where": "sky, cloud gaps near the horizon (x 280-720, y 240-290)",
+      "what": "clouds break up into dithered checker-dot patterns and blocky bright patches; cloud edges should be smooth gradients without visible dot or pixel patterns" },
+    { "shot": "lagoon.png", "severity": "minor", "where": "upper right slope near the skyline, x 1240-1255, y 205-220",
+      "what": "a lone small white blob sits on the hillside with no obvious source (stray water or sprite); it should either be removed or read as a recognisable feature" },
+    { "shot": "tjornuvik.png", "severity": "minor", "where": "the bay water and horizon",
+      "what": "the haze is very even, a single grey veil over sea and far hills, and the horizon is a hard straight line with clouds sitting on it; haze should vary with distance and the sea horizon should soften into the sky" },
+    { "shot": "valley.png", "severity": "minor", "where": "sky vs. ground lighting",
+      "what": "the sky is bright and backlit with golden rims, but the hillsides are uniformly dim with little rim light or shadow from those clouds; ground and sky should share the same low, directional light" }
+  ],
+  "overall": "The terrain shapes and soft palette suggest a northern island, but the set is let down by a cloud layer that smothers the overview like snow, streaky and dotted sky and skyline artifacts, blocky stream water, missing basalt cliffs, and grass that is too orange and uniformly noisy for the Faroes."
+}
