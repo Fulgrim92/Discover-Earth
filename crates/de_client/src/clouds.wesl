@@ -9,7 +9,8 @@
 import bevy_pbr::{
     render::{
         forward_io::VertexOutput,
-        mesh_view_bindings::{view, globals, lights},
+        mesh_view_bindings::{view, globals, lights, fog},
+        pbr_functions,
         mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT,
         shadows::{get_cascade_index, world_to_directional_light_local},
         shadow_sampling::sample_shadow_map_hardware,
@@ -56,6 +57,18 @@ fn noise(p: vec3<f32>) -> vec4<f32> {
     return textureSampleLevel(noise_tex, noise_smp, p, 0.0);
 }
 
+// The shapes' coordinates (in tiles) pushed about by a slow field turned and scaled against the
+// tile, so the tile never repeats in a grid. `de_world::clouds::warp`.
+fn warp(xz: vec2<f32>) -> vec2<f32> {
+    let c = 0.825336;
+    let s = 0.564642;
+    let u = (c * xz.x - s * xz.y) * 0.17 + 0.37;
+    let v = (s * xz.x + c * xz.y) * 0.17 + 0.71;
+    let wx = noise(vec3(u, 0.2, v)).b - 0.5;
+    let wz = noise(vec3(u, 0.8, v)).b - 0.5;
+    return xz + 2.0 * 0.5 * vec2(wx, wz);
+}
+
 // Density per metre at `p`; `fine` adds the edge erosion (skipped on the light march).
 fn density(p: vec3<f32>, t: f32, fine: bool) -> f32 {
     let base = clouds.layer.x;
@@ -69,14 +82,16 @@ fn density(p: vec3<f32>, t: f32, fine: bool) -> f32 {
     let weather = noise(vec3(q.x * 0.25, 0.5, q.z * 0.25)).b;
     let cover = clamp(clouds.shape.x * (0.55 + 0.9 * weather), 0.0, 1.0);
     let profile = smoothstep(0.0, 0.1, h) * (1.0 - smoothstep(0.35 + 0.6 * cover, 1.0, h));
-    let d = remap(noise(q).r * profile, 1.0 - cover, 1.0);
+    let w = warp(q.xz);
+    let qs = vec3(w.x, q.y, w.y);
+    let d = remap(noise(qs).r * profile, 1.0 - cover, 1.0);
     if d <= 0.0 {
         return 0.0;
     }
     if !fine {
         return d * clouds.layer.w;
     }
-    let e = noise(q * 5.0).g;
+    let e = noise(qs * 5.0).g;
     let amount = clouds.shape.y * (0.6 - 0.3 * h);
     return max(remap(d, e * amount, 1.0), 0.0) * clouds.layer.w;
 }
@@ -171,15 +186,29 @@ fn march_clouds(ro: vec3<f32>, rd: vec3<f32>, t_land: f32, jitter: f32) -> vec4<
     var light = vec3(0.0);
     var t_seen = -1.0;
     var s = t0;
-    for (var i = 0; i < 3 * steps; i++) {
+    // Steps left at a quarter length after the ray first meets cloud: a coarse step that
+    // lands inside a cloud is taken back and walked finely, so the edge falls where the cloud
+    // is, not where the per-pixel jitter put the sample (which drew edges as a stipple).
+    var fine = 0;
+    for (var i = 0; i < 4 * steps; i++) {
         if s >= t1 {
             break;
         }
-        let ds = min(max(min_ds, 0.04 * s), t1 - s);
+        var ds = min(max(min_ds, 0.04 * s), t1 - s);
+        if fine > 0 {
+            ds *= 0.25;
+            fine -= 1;
+        }
         let p = ro + rd * (s + jitter * ds);
         s += ds;
         let d = density(p, t, true);
         if d <= 0.0 {
+            continue;
+        }
+        if t_seen < 0.0 && fine == 0 && ds > 2.0 * min_ds {
+            s -= ds;
+            fine = 8;
+            t_seen = s;
             continue;
         }
         if t_seen < 0.0 {
@@ -318,6 +347,26 @@ fn march_mist(ro: vec3<f32>, rd: vec3<f32>, t_land: f32, jitter: f32) -> vec4<f3
     return vec4(light, trans);
 }
 
+// Distance along the ray to the cloud layer (0 inside it, the layer's base or top otherwise).
+fn layer_entry(ro: vec3<f32>, rd: vec3<f32>) -> f32 {
+    if abs(rd.y) < 1e-5 {
+        return 0.0;
+    }
+    let ta = (clouds.layer.x - ro.y) / rd.y;
+    let tb = (clouds.layer.y - ro.y) / rd.y;
+    return max(min(ta, tb), 0.0);
+}
+
+// The mean over this pixel's 2x2 quad, from the fine derivatives: the per-pixel jitter
+// leaves soft edges as a checker of hits and misses (there is no temporal filter to average
+// it), and four neighbouring offsets averaged read as the soft edge they sample.
+fn quad_mean(v: vec4<f32>, px: vec2<f32>) -> vec4<f32> {
+    let sx = select(-0.5, 0.5, (u32(px.x) & 1u) == 0u);
+    let h = v + sx * dpdxFine(v);
+    let sy = select(-0.5, 0.5, (u32(px.y) & 1u) == 0u);
+    return h + sy * dpdyFine(h);
+}
+
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let ro = view.world_position;
@@ -335,8 +384,26 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
     let jitter = ign(in.position.xy);
-    let cloud = march_clouds(ro, rd, t_land, jitter);
-    let mist = march_mist(ro, rd, t_land, jitter);
+    // Average only where the whole quad sees the same thing behind (no skyline in the quad),
+    // or a ridge's edge picks up the sky's light as a dotted line.
+    let edge = fwidthFine(t_land) > 0.05 * t_land;
+    let cloud_px = march_clouds(ro, rd, t_land, jitter);
+    var cloud = select(quad_mean(cloud_px, in.position.xy), cloud_px, edge);
+    // The scene's distance fog, as the ground and sea get it, from where the ray enters the
+    // layer: without it far cloud kept its own grey while the sea under it faded to the fog's
+    // colour, and the two met in a hard line at the horizon.
+    @if(DISTANCE_FOG) {
+        if cloud.a > 1e-4 {
+            let at = ro + rd * min(layer_entry(ro, rd), clouds.sky_top.w * 2.5);
+            // Fog is linear in the colour (kept * c + added), so it is applied to premultiplied
+            // light from two calls without dividing by a small alpha.
+            let added = pbr_functions::apply_fog(fog, vec4(0.0, 0.0, 0.0, 1.0), at, ro, in.position.xy).rgb;
+            let kept = pbr_functions::apply_fog(fog, vec4(1.0, 1.0, 1.0, 1.0), at, ro, in.position.xy).rgb - added;
+            cloud = vec4(cloud.rgb * kept + cloud.a * added / view.exposure, cloud.a);
+        }
+    }
+    let mist_px = march_mist(ro, rd, t_land, jitter);
+    let mist = select(quad_mean(mist_px, in.position.xy), mist_px, edge);
     // Where nothing is in the way, draw our own daylight sky (and the sun) behind the clouds.
     if open_sky && clouds.sky_e.w > 0.0 {
         let behind = sky_radiance(rd);
