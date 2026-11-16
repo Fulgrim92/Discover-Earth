@@ -14,7 +14,7 @@ import bevy_pbr::{
         mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT,
         shadows::{get_cascade_index, world_to_directional_light_local},
         shadow_sampling::sample_shadow_map_hardware,
-        view_transformations::depth_ndc_to_view_z,
+        view_transformations::{depth_ndc_to_view_z, frag_coord_to_ndc, position_ndc_to_world},
     },
     prepass::utils::prepass_depth,
 };
@@ -35,7 +35,7 @@ struct CloudParams {
     // valley mist: density per metre at sea level, height it thins over (metres), reach, steps
     mist: vec4<f32>,
     // daylight sky (de_world::sky): Perez A..D for luminance, x, y; E for each and brightness;
-    // each channel's zenith scale
+    // each channel's zenith scale and the sea's height (metres)
     sky_y: vec4<f32>,
     sky_x: vec4<f32>,
     sky_c: vec4<f32>,
@@ -48,6 +48,8 @@ struct CloudParams {
 @group(constants::MATERIAL_BIND_GROUP) @binding(2) var noise_smp: sampler;
 
 const PI: f32 = 3.14159265;
+// The deck's mean density beyond the march's reach, as a share of cover times peak density.
+const FAR_DENSITY: f32 = 0.15;
 
 fn remap(x: f32, lo: f32, hi: f32) -> f32 {
     return (x - lo) / max(hi - lo, 1e-6);
@@ -156,19 +158,46 @@ fn march_clouds(ro: vec3<f32>, rd: vec3<f32>, t_land: f32, jitter: f32) -> vec4<
         return vec4(0.0);
     }
 
-    // The stretch of the ray inside the layer.
+    // The stretch of the ray inside the layer: marched up to `reach`, and past it (on to the
+    // land, the sea or the horizon) taken as an even haze of the deck's mean density.
     let t_cap = min(t_land, reach);
     var t0 = 0.0;
-    var t1 = t_cap;
+    var t_out = t_land;
     if abs(rd.y) > 1e-5 {
         let ta = (base - ro.y) / rd.y;
         let tb = (top - ro.y) / rd.y;
         t0 = max(min(ta, tb), 0.0);
-        t1 = min(max(ta, tb), t_cap);
-    } else if ro.y < base || ro.y > top {
+        t_out = min(max(ta, tb), t_land);
+    } else if ro.y > top {
         return vec4(0.0);
+    } else if ro.y < base {
+        t0 = t_land;
     }
-    if t1 <= t0 {
+    let t1 = min(t_out, t_cap);
+    // Past the reach the earth's curve matters: a ray level with the horizon still climbs into
+    // the deck some tens of kilometres off, so the overcast closes down on to the horizon.
+    var f0 = t0;
+    var f1 = t_out;
+    if ro.y < top {
+        f1 = min(curved_rise(top - ro.y, rd.y), t_land);
+        if ro.y < base {
+            f0 = curved_rise(base - ro.y, rd.y);
+        }
+    } else {
+        // From above, the deck's top curves away: a ray just under level still meets it out to
+        // the deck's own horizon, so it covers the sea right up to there.
+        let r = 6.371e6;
+        let disc_top = rd.y * rd.y - 2.0 * (ro.y - top) / r;
+        if rd.y < 0.0 && disc_top >= 0.0 {
+            f0 = r * (-rd.y - sqrt(disc_top));
+            let disc_base = rd.y * rd.y - 2.0 * (ro.y - base) / r;
+            f1 = min(select(r * (-rd.y + sqrt(disc_top)), r * (-rd.y - sqrt(disc_base)), disc_base >= 0.0), t_land);
+        } else {
+            f1 = f0;
+        }
+    }
+    let far = max(f1 - max(f0, t_cap), 0.0);
+    if t1 <= t0 && far <= 0.0 {
         return vec4(0.0);
     }
     let t = globals.time;
@@ -247,6 +276,15 @@ fn march_clouds(ro: vec3<f32>, rd: vec3<f32>, t_land: f32, jitter: f32) -> vec4<
         if trans < 0.03 {
             break;
         }
+    }
+    // Beyond the reach: without this the sky opened in a bright strip under the deck's far
+    // edge, just above the horizon, where a real overcast runs on and closes up.
+    if far > 0.0 && trans >= 0.03 {
+        let t_far = max(f0, t_cap);
+        if t_seen < 0.0 {
+            t_seen = t_far;
+        }
+        trans *= exp(-FAR_DENSITY * clouds.shape.x * clouds.layer.w * far);
     }
     if t_seen < 0.0 {
         return vec4(0.0);
@@ -347,14 +385,28 @@ fn march_mist(ro: vec3<f32>, rd: vec3<f32>, t_land: f32, jitter: f32) -> vec4<f3
     return vec4(light, trans);
 }
 
-// Distance along the ray to the cloud layer (0 inside it, the layer's base or top otherwise).
-fn layer_entry(ro: vec3<f32>, rd: vec3<f32>) -> f32 {
-    if abs(rd.y) < 1e-5 {
-        return 0.0;
+// How far along a ray (rising `dy` per metre) until it is `h` metres higher above the ground,
+// over the earth's curve: t²/2R + dy t = h.
+fn curved_rise(h: f32, dy: f32) -> f32 {
+    let r = 6.371e6;
+    let q = sqrt(dy * dy + 2.0 * h / r);
+    if dy >= 0.0 {
+        return 2.0 * h / (dy + q);
     }
-    let ta = (clouds.layer.x - ro.y) / rd.y;
-    let tb = (clouds.layer.y - ro.y) / rd.y;
-    return max(min(ta, tb), 0.0);
+    return r * (q - dy);
+}
+
+// Distance along the ray to the cloud layer: 0 inside it; from below, where the ray climbs
+// into its base over the earth's curve (as `march_clouds` takes it past the reach); from
+// above, its top, or 0 looking up and away from it.
+fn layer_entry(ro: vec3<f32>, rd: vec3<f32>) -> f32 {
+    if ro.y < clouds.layer.x {
+        return curved_rise(clouds.layer.x - ro.y, rd.y);
+    }
+    if ro.y > clouds.layer.y && rd.y < 0.0 {
+        return (clouds.layer.y - ro.y) / rd.y;
+    }
+    return 0.0;
 }
 
 // The mean over this pixel's 2x2 quad, from the fine derivatives: the per-pixel jitter
@@ -367,13 +419,27 @@ fn quad_mean(v: vec4<f32>, px: vec2<f32>) -> vec4<f32> {
     return h + sy * dpdyFine(h);
 }
 
+// One triangle that covers the screen (and more), so no triangle edge crosses the picture,
+// where helper pixels would upset `quad_mean`. The fragment finds its own ray from the pixel.
+@vertex
+fn vertex(@builtin(vertex_index) i: u32) -> VertexOutput {
+    let uv = vec2(f32((i << 1u) & 2u), f32(i & 2u));
+    var out: VertexOutput;
+    out.position = vec4(uv * 2.0 - 1.0, 0.5, 1.0);
+    out.world_position = vec4(position_ndc_to_world(vec3(out.position.xy, 0.5)), 1.0);
+    out.world_normal = vec3(0.0, 1.0, 0.0);
+    return out;
+}
+
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let ro = view.world_position;
-    let rd = normalize(in.world_position.xyz - ro);
+    let ndc = frag_coord_to_ndc(in.position);
+    let rd = normalize(position_ndc_to_world(vec3(ndc.xy, 0.5)) - ro);
 
     // Where the land is along this ray (none: the sky).
-    var t_land = max(clouds.sky_top.w, clouds.mist.z);
+    // Open sky: as far as a deck at cloud height stays above the horizon on the curved earth.
+    var t_land = 300000.0;
     var open_sky = true;
     @if(DEPTH_PREPASS) {
         let depth = prepass_depth(in.position, 0u);
@@ -381,6 +447,18 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             open_sky = false;
             let fwd = normalize(-view.world_from_view[2].xyz);
             t_land = min(t_land, -depth_ndc_to_view_z(depth) / max(dot(rd, fwd), 1e-4));
+        }
+    }
+    // The sea is see-through, so it leaves no depth: past the land's edge a ray down would
+    // count as open sky, and the sky was drawn over the far sea as a bright band. Meet it here.
+    // A ray that would pass over the true horizon on the curved earth sees sky, not the flat
+    // sea plane (from high up that plane showed as a strip between the deck and the sky).
+    let over_horizon = rd.y * rd.y < 2.0 * (ro.y - clouds.sky_scale.w) / 6.371e6;
+    if rd.y < -1e-6 && !(open_sky && over_horizon) {
+        let t_sea = (clouds.sky_scale.w - ro.y) / rd.y;
+        if t_sea > 0.0 {
+            open_sky = false;
+            t_land = min(t_land, t_sea);
         }
     }
     let jitter = ign(in.position.xy);
@@ -394,7 +472,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // colour, and the two met in a hard line at the horizon.
     @if(DISTANCE_FOG) {
         if cloud.a > 1e-4 {
-            let at = ro + rd * min(layer_entry(ro, rd), clouds.sky_top.w * 2.5);
+            // At least a metre off: the fog's sun glow normalises the offset to the camera.
+            let at = ro + rd * clamp(layer_entry(ro, rd), 1.0, clouds.sky_top.w * 2.5);
             // Fog is linear in the colour (kept * c + added), so it is applied to premultiplied
             // light from two calls without dividing by a small alpha.
             let added = pbr_functions::apply_fog(fog, vec4(0.0, 0.0, 0.0, 1.0), at, ro, in.position.xy).rgb;

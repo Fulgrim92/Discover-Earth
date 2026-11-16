@@ -2,7 +2,7 @@
 //! (`clouds.wesl`) through the seeded noise volume from `de_world::clouds`, and their shadows
 //! on the ground (`terrain.wesl` samples the same volume along the sun).
 //!
-//! The clouds draw on a box that follows the camera, after the land and the sea. It ignores the
+//! The clouds draw on one triangle that covers the screen, after the land and the sea. It ignores the
 //! depth test and stops each ray at the land itself (from the depth prepass), so clouds sit on
 //! the ridges and wrap around them instead of being cut off by a sky dome.
 
@@ -47,6 +47,7 @@ pub struct CloudParams {
     pub sky_x: Vec4,
     pub sky_c: Vec4,
     pub sky_e: Vec4,
+    /// Each channel's zenith scale, and the sea's height in metres.
     pub sky_scale: Vec4,
 }
 
@@ -99,7 +100,7 @@ impl CloudParams {
             sky_x: Vec4::from_slice(&sky.cx[..4]),
             sky_c: Vec4::from_slice(&sky.cy[..4]),
             sky_e: Vec4::new(sky.y[4], sky.cx[4], sky.cy[4], sky_on),
-            sky_scale: Vec3::from(sky.scale).extend(0.0),
+            sky_scale: Vec3::from(sky.scale).extend(de_world::sense::SEA_LEVEL_M + look.tide_m),
         }
     }
 }
@@ -160,6 +161,10 @@ pub struct CloudMaterial {
 }
 
 impl Material for CloudMaterial {
+    fn vertex_shader() -> ShaderRef {
+        "embedded://de_client/clouds.wesl".into()
+    }
+
     fn fragment_shader() -> ShaderRef {
         "embedded://de_client/clouds.wesl".into()
     }
@@ -192,9 +197,18 @@ impl Material for CloudMaterial {
     }
 }
 
-/// The box the clouds draw on; it follows the camera.
+/// The triangle the clouds draw on. Its vertex shader stretches it over the whole screen, so
+/// no triangle edge crosses the picture: along an edge the GPU shades the far side's pixels of
+/// each 2x2 quad as helpers, and the shader's quad average (from screen derivatives) picked up
+/// those as a dotted line in the sky where a box's face diagonals had run.
 #[derive(Component)]
 pub struct CloudBox;
+
+/// Three vertices; where they are doesn't matter, the vertex shader places them.
+fn screen_triangle() -> Mesh {
+    Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32, 0.0, 0.0]; 3])
+}
 
 pub struct CloudsPlugin;
 
@@ -206,7 +220,7 @@ impl Plugin for CloudsPlugin {
     }
 }
 
-/// Spawns the cloud box for a look with clouds.
+/// Spawns the cloud triangle for a look with clouds.
 pub fn spawn(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -220,11 +234,13 @@ pub fn spawn(
         NotShadowCaster,
         NotShadowReceiver,
         bevy::camera::visibility::NoFrustumCulling,
-        Mesh3d(meshes.add(Cuboid::from_length(2000.0))),
+        Mesh3d(meshes.add(screen_triangle())),
         MeshMaterial3d(materials.add(CloudMaterial { params, noise })),
     ));
 }
 
+/// Keeps the triangle at the camera: see-through things draw farthest first by where their
+/// entity is, and the clouds must come after the sea, which is drawn around the island's middle.
 fn follow_camera(
     cam: Query<&Transform, (With<CameraRig>, Without<CloudBox>)>,
     mut boxes: Query<&mut Transform, With<CloudBox>>,
