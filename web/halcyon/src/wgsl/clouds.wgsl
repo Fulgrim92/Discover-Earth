@@ -218,6 +218,13 @@ fn shade(p: vec3f, d: vec3f, hf: f32, od: f32, dens: f32, sea: bool) -> vec3f {
     amb = mix(amb * vec3f(0.62, 0.9, 0.7), amb, sat(hf));
     sunK = mix(0.25, 5.0, h2);
   }
+  // squalls (held in the cloud-shadow map as occlusion above 0.9; ordinary cloud stops at 0.88): the tower above
+  // takes the sky light from its own base, which goes dark grey while the sunlit top stays white
+  let cq = csmUV(p.xz);
+  if (!sea && csmIn(cq)) {
+    let sq = sstep(0.885, 0.95, textureSampleLevel(csmT, atmoS, cq, 0.0).x);
+    amb *= mix(1.0, mix(0.18, 0.85, sat(hf * 1.4)), sq);
+  }
   // aurora light on night clouds
   amb += vec3f(0.05, 0.4, 0.2) * gCL.aur * 0.08;
   // lightning (weather.js schedule): the cloud lit from inside around the strike, bluish white
@@ -496,13 +503,16 @@ fn precipMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
   if (isOff(OFF_RAIN)) { return vec4f(0.0); }
   let tEnd = min(tmax, 16000.0);
   // only rays that pass a squall: five probes of the weather field along the ray
-  var smax = 0.0; var tb = 0.0;
+  // the march window is centred on the storm-weighted mean of the probes: continuous from pixel to pixel (an argmax
+  // jumps between probes and cut the curtains along straight lines)
+  var smax = 0.0; var sw = 0.0; var stw = 0.0;
   for (var k = 0; k < 5; k++) {
     let tk = tEnd * (0.04 + 0.24 * f32(k));
     let sk = wxStorm(wxCell(ro.xz + d.xz * tk));
-    if (sk > smax) { smax = sk; tb = tk; }
+    smax = max(smax, sk); sw += sk; stw += sk * tk;
   }
   if (smax < 0.02) { return vec4f(0.0); }
+  let tb = stw / sw;
   // what falls here: the realm at the squall the ray meets (one blend per ray)
   let rw = realmWeights(ro.xz + d.xz * tb);
   var amt = 0.0; var kind = 0; var kw = 0.0;
@@ -515,7 +525,8 @@ fn precipMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
   let L = FR.sun.xyz;
   let sc = sunCol();
   let amb = mix(rowv(S3).rgb, rowv(S2).rgb, 0.5) * rowv(S3).w;
-  var bow = select(vec3f(0.0), rainbow(d, L), (kind == 0) && L.y > 0.0);
+  // bows belong to rain: the squall's realm and the camera's (no bow hanging over Painted virga or Lumen spores)
+  var bow = select(vec3f(0.0), rainbow(d, L), (kind == 0) && FR.wx.w < 0.5 && L.y > 0.0);
   // by moonlight the bow is real but the eye sees it colourless and faint (a moonbow)
   let sunShare = sstep(-0.035, 0.06, sunDirFrom(rowv(S0), FR.sun.w).y);
   bow = mix(vec3f(luma(bow)) * 0.35, bow, sunShare);
@@ -523,7 +534,7 @@ fn precipMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
   // march a window around the squall the probes found, in even steps: on u^2 steps the far segments were kilometres
   // long, a curtain was hit or missed per pixel and the low-res dither showed as a mesh
   let N = 12;
-  let wa = max(tb - 4000.0, 0.0); let wb = min(tb + 4000.0, tEnd);
+  let wa = max(tb - 4500.0, 0.0); let wb = min(tb + 4500.0, tEnd);
   var T = 1.0; var acc = vec3f(0.0);
   var t0 = wa;
   for (var i = 0; i < N; i++) {
@@ -542,11 +553,12 @@ fn precipMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
         // virga evaporates on the way down; snow and spores thin out towards the ground less
         var fade = sstep(base - 2600.0, base - 300.0, p.y) * 0.6 + 0.4;
         if (kind == 1) { fade = sstep(base - 900.0, base - 150.0, p.y); }
-        let dn = 0.00045 * st * amt * cur * stk * fade * select(1.0, 1.3, kind == 2);
+        let dn = 0.0009 * st * amt * cur * stk * fade * select(1.0, 1.3, kind == 2);
         let a = 1.0 - exp(-dn * (t1 - t0));
         // lit by the sky, and by the sun where it gets under the cloud (forward scattering)
         let sv = cloudShadowF(p, L, rowv(C0), rowv(C1), rowv(C2), rowv(C3)) * sstep(0.0, 0.04, L.y);
-        var lit = amb * select(0.75, 1.0, kind == 2) + sc * sv * (0.08 + 0.5 * hg(dot(d, L), 0.7)) + sc * sv * bow * 0.5;
+        // under the tower little sky light reaches the rain: the curtain reads darker than the open sky
+        var lit = amb * select(0.75, 1.0, kind == 2) * (1.0 - select(0.75, 0.35, kind >= 2) * st) + sc * sv * (0.08 + 0.5 * hg(dot(d, L), 0.7)) + sc * sv * bow * 1.1;
         if (kind == 3) { lit += rowv(S7).rgb * (0.4 + rowv(S7).w * 4.0); } // spores glow
         if (kind == 1) { lit *= vec3f(1.05, 0.92, 0.95); }                // virga takes the dust's tint
         acc += T * lit * a; T *= 1.0 - a;

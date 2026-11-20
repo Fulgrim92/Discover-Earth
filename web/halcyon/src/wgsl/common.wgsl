@@ -13,6 +13,7 @@ struct Frame {
   sky: vec4f,    // x: time of day 0..1, y: star-field turn (rad), z: accumulated sun motion (deg, for re-bakes),
                  // w: visible precipitation at the camera 0..1 (weather.js)
   wx: vec4f,     // xyz: camera velocity (m/s), w: precipitation kind at the camera (0 rain, 1 virga, 2 snow, 3 spores)
+  wxp: vec4f,    // a pinned squall (URL wx=dx,dz[,r]; captures): centre x, z, radius (m), 1 when on
 }
 
 // Ablation bits (URL ?off=flora,fauna,...; main.js OFF_NAMES). A set bit switches that cost off: draws are skipped
@@ -356,11 +357,18 @@ fn keyLight(s0: vec4f, s1: vec4f, s8: vec4f, drift: f32) -> KL {
 // ground; wxPrecip: what you see fall; wxKind: 0 rain, 1 virga, 2 snow, 3 spores).
 // WX_OFS places the field so every realm's curated views are fair at t = 20 s (the captures), squalls nearby
 const WX_OFS: vec2f = vec2f(-12644.0, 110304.0);
+// Squalls are rare and large: cells of 3-8 km where the broad octave peaks; a pinned squall (FR.wxp) is a dome of
+// the field around its centre, full rain inside ~0.65 r, gone by ~0.8 r
 fn wxCell(xz: vec2f) -> f32 {
   let q = xz - CLOUD_WIND * FR.time.x + WX_OFS;
-  return vn(q * (1.0 / 6500.0), 720u) * 0.65 + vn(q * (1.0 / 2300.0), 721u) * 0.35;
+  var n = vn(q * (1.0 / 16000.0), 720u) * 0.72 + vn(q * (1.0 / 5200.0), 721u) * 0.28;
+  if (FR.wxp.w > 0.0) {
+    let e = length(xz - FR.wxp.xy) / FR.wxp.z;
+    n = max(n, 1.0 - 0.9 * e * e);
+  }
+  return n;
 }
-fn wxStorm(n: f32) -> f32 { return sstep(0.28, 0.58, n); }
+fn wxStorm(n: f32) -> f32 { return sstep(0.40, 0.62, n); }
 fn wxClear(n: f32) -> f32 { return sstep(0.22, 0.52, -n); }
 fn wxFogBank(xz: vec2f) -> f32 {
   let q = xz - CLOUD_WIND * 0.5 * FR.time.x;
