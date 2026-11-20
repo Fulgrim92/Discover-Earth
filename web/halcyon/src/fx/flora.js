@@ -23,6 +23,8 @@ import { G, shader, pipeline, computePipeline, bgl, bindGroup, buffer, FO, VO } 
 import { F, TABLE, ROWF, NREALM, W_IN, W_ID, W_W, realmWeightsA } from '../realms.js';
 import { heightBatch } from '../world.js';
 import { clip } from './clipmap.js';
+import * as herd from './herd.js';
+import * as lifefx from './lifefx.js';
 import CLIP from '../wgsl/clip.wgsl';
 import SKY from '../wgsl/sky.wgsl';
 import LIFE from '../wgsl/life.wgsl';
@@ -48,7 +50,7 @@ const wCls = new Float32Array(7);
 const mask = new Uint32Array(4); // x: layers enabled this frame, y: ablation bits (both read by the prepass)
 // ablation bits (integration's off= URL parameter, read from ctx.off; mirror of common.wgsl): flora skips prepare
 // and draw here; fshadow is handled in floracs.wgsl (OFF_FSHADOW)
-const OFF_FLORA = 1;
+const OFF_FLORA = 1, OFF_FAUNA_H = 2; // herds follow the fauna bit
 let pPool, bgPool, poolN = 0, pStrip, pBlade, pLathe, pPlace, statBuf = null, statState = 0, bgC, bgR = [], args, maskBuf, groups = 0;
 // camera height above ground, in typed arrays: a double in a module `let` or passed to heightAt is boxed per frame
 const AQ = new Float64Array(2), AH = new Float64Array(1), AGL = new Float64Array(2); // AGL[1]: frame it was computed for
@@ -59,6 +61,7 @@ const CDESC = { label: 'flora place' };
 const STAT = typeof location !== 'undefined' && /[?&]fstat=1/.test(location.search);
 
 export function init(ctx) {
+  lifefx.init(); herd.init(ctx);
   let threads = 0, recs = 0;
   const base = new Uint32Array(NLAYER), cap = new Uint32Array(NLAYER);
   for (let i = 0; i < NLAYER; i++) {
@@ -155,6 +158,8 @@ function layers(ctx, view) {
 // offset, inside the cull margin)
 export function prepare(ctx, enc, view) {
   lifePresent(ctx, view); // page code, kept out of the platform-registered prepass below
+  lifefx.update(ctx, view);                                     // encounter slots, ripple sources
+  if (!((ctx.off | 0) & OFF_FAUNA_H)) herd.update(ctx, view); // ground animals: homes and drone reaction
   placePass(ctx, enc, view);
 }
 function placePass(ctx, enc, view) {
@@ -181,6 +186,7 @@ function placePass(ctx, enc, view) {
 }
 
 export function draw(ctx, pass, view) {
+  if (!((ctx.off | 0) & OFF_FAUNA_H)) herd.draw(ctx, pass, view);
   const m = mask[0];
   if (!m) return;
   pass.setBindGroup(0, view.bg0); pass.setBindGroup(1, clip.bg);
