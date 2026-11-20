@@ -49,7 +49,7 @@ fn wingDim(kind: u32) -> vec3f {
   return vec3f(0.82, 0.3, 0.45);
 }
 
-struct Bird { ok: bool, p: vec3f, fwd: vec3f, up: vec3f, flapA: f32, flapP: f32, size: f32, kind: u32, h: u32, pet: f32 }
+struct Bird { ok: bool, p: vec3f, fwd: vec3f, up: vec3f, flapA: f32, flapP: f32, size: f32, kind: u32, h: u32, pet: f32, dv: f32 }
 
 fn flockCell(g: u32, fi: u32) -> vec2i {
   let fg = FG[g];
@@ -60,7 +60,7 @@ fn flockCell(g: u32, fi: u32) -> vec2i {
 }
 
 fn bird(ii: u32) -> Bird {
-  var B: Bird; B.ok = false;
+  var B: Bird; B.ok = false; B.dv = -1.0;
   let g = ii >> 16u; let li = ii & 0xFFFFu;
   let fg = FG[g];
   let per = u32(fg.z);
@@ -162,6 +162,7 @@ fn bird(ii: u32) -> Bird {
       let steep = dv * (1.0 - sstep(0.06, 0.08, fd));
       B.fwd = normalize(mix(B.fwd, vec3f(B.fwd.x * 0.25, -1.0, B.fwd.z * 0.25), steep));
       B.flapA *= 1.0 - steep;
+      if (fd > 0.06 && fd < 0.16) { B.dv = (fd - 0.06) * 26.0; }  // seconds since it hit the water (spray)
     }
     }
   }
@@ -549,4 +550,104 @@ fn bellPt(J: Jelly, ring: u32, seg: u32) -> vec3f {
   c *= in.fog * vis;
   a *= vis * dot(in.fog, vec3f(0.333));
   return vec4f(c, a);
+}
+
+// ---- spray: orca and whale blows, the breach splash, flamingo take-off spray, gannet dive splashes ----
+// Instances: source = ii / 16 (0-5 orcas, 6 whale blows, 7 breach launch, 8 breach crash, 9-24 flamingos,
+// 25-132 gannets of the seabird colonies), 16 droplets or mist puffs each. Closed-form from the encounter slots and
+// the same motion as herd.wgsl / bird(); soft premultiplied discs in the blended pass.
+const SPRAY_SRC = 133u;
+struct SV { @builtin(position) pos: vec4f, @location(0) wp: vec3f, @location(1) uv: vec2f, @location(2) a: f32, @location(3) mist: f32 }
+@vertex fn vsSpray(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> SV {
+  var o: SV; o.pos = LF_DEAD;
+  let src = ii / 16u; let j = ii % 16u;
+  let t = FR.time.x;
+  var P = vec3f(0.0); var age = -1.0; var S = 1.0; var blow = false;
+  if (src < 9u) {
+    let s1 = lfSlot(select(4.0, 1.0, src < 6u));
+    if (s1 < 0) { return o; }
+    let a = LFX.enc[s1 * 2]; let b = LFX.enc[s1 * 2 + 1];
+    let rel = t - b.x;
+    let H = a.yw; let dir = lfDir(s1);
+    if (src < 6u) {
+      let k = f32(src);
+      let m = floor(rel / 7.0 + k * 0.23 - 0.05);
+      let tb = (m + 0.05 - k * 0.23) * 7.0;             // the latest blow (just as the back breaks the surface)
+      age = rel - tb;
+      let al = tb * 3.5 - 60.0 + (f32((src * 37u) % 11u) - 5.0) * 2.2 + 3.0;
+      P = vec3f(H.x + dir.x * al - dir.y * (k - 2.0) * 7.0, 0.6, H.y + dir.y * al + dir.x * (k - 2.0) * 7.0);
+      blow = true; S = 0.8;
+    } else if (src == 6u) {
+      let tb = select(6.0, 13.0, rel > 12.0);
+      age = rel - tb;
+      let al = tb * 1.5 - 30.0 + 6.0;
+      P = vec3f(H.x + dir.x * al, 0.8, H.y + dir.y * al); blow = true; S = 1.4;
+    } else {
+      let tb = select(20.0, 22.4, src == 8u);
+      age = rel - tb;
+      let al = tb * 1.5 - 30.0 + select(0.0, 9.6, src == 8u);
+      P = vec3f(H.x + dir.x * al, 0.0, H.y + dir.y * al); S = select(1.4, 3.2, src == 8u);
+    }
+  } else if (src < 25u) {
+    let s1 = lfSlot(3.0);
+    if (s1 < 0) { return o; }
+    let a = LFX.enc[s1 * 2]; let b = LFX.enc[s1 * 2 + 1];
+    let rel = t - b.x;
+    let k = f32((src - 9u) * 3u);
+    let tk = 6.0 + k * 0.12;
+    age = rel - tk;
+    let dir = lfDir(s1);
+    let along = clamp(age, 0.0, 1.2); let run = 1.5 * along * along;
+    let an = k * 2.4; let r = 3.0 + sqrt(k) * 3.2;
+    P = vec3f(a.y + cos(an) * r + dir.x * run, 0.0, a.w + sin(an) * r + dir.y * run);
+    age = fract(max(age, 0.0) * 3.0) / 3.0 + select(10.0, 0.0, rel - tk > 0.0 && rel - tk < 1.4); // kicked drops while running
+    S = 0.25;
+  } else {
+    let B = bird((1u << 16u) | (src - 25u));
+    if (B.dv < 0.0) { return o; }
+    age = B.dv; P = vec3f(B.p.x, 0.0, B.p.z); S = 0.45;
+  }
+  let life = select(2.2, 4.0, blow) * select(1.0, 1.3, S > 2.0);
+  if (age < 0.0 || age > life) { return o; }
+  let h = hu(i32(src), i32(j), 0x5b7u);
+  let r1 = lfRand(h, 1u); let r2 = lfRand(h, 2u); let r3 = lfRand(h, 3u);
+  var p = P; var sz = 0.3; var al = 0.0;
+  let an = r1 * 6.2832;
+  if (blow) {
+    // a blow: a column of mist that shoots up, slows, spreads and drifts
+    let up = (6.0 + 3.0 * r2) * S * (1.0 - exp(-1.6 * age)) / 1.6 * 1.25;
+    let spread = (0.4 + 1.2 * r3) * S * (1.0 - exp(-0.9 * age)) * (0.4 + 0.6 * up / (7.0 * S));
+    p += vec3f(cos(an) * spread + 0.8 * age, up, sin(an) * spread);
+    sz = (0.15 + 0.45 * age) * S * (0.6 + 0.6 * r2);
+    al = 0.32 * sstep(0.0, 0.15, age) * sstep(life, life * 0.3, age);
+  } else {
+    // a splash: a crown of drops thrown out and up, falling back
+    let vh = (1.5 + 3.5 * r2) * sqrt(S); let vy = (3.0 + 5.0 * r3) * sqrt(S);
+    let ta = age;
+    p += vec3f(cos(an) * vh * ta, max(vy * ta - 4.9 * ta * ta, -0.5), sin(an) * vh * ta);
+    sz = (0.4 + 0.8 * r1) * S * (0.6 + 0.6 * ta);
+    al = 0.85 * sstep(0.0, 0.05, ta) * sstep(life, life * 0.4, ta) * sstep(-0.5, 0.2, p.y - P.y);
+  }
+  if (!lfVisible(p - VW.cam.xyz, sz)) { return o; }
+  let co = vec2f(f32(vi & 1u), f32(vi >> 1u)) * 2.0 - 1.0;
+  let wp = p + (VW.right.xyz * co.x + VW.up.xyz * co.y) * sz;
+  o.wp = wp; o.uv = co; o.a = al; o.mist = select(0.0, 1.0, blow);
+  o.pos = VW.vp * vec4f(wp - VW.cam.xyz, 1.0);
+  return o;
+}
+@fragment fn fsSpray(in: SV) -> @location(0) vec4f {
+  let r2 = dot(in.uv, in.uv);
+  if (r2 >= 1.0) { discard; }
+  let cam = VW.cam.xyz;
+  let dist = length(in.wp - cam);
+  let sd = textureLoad(sceneDist, vec2i(in.pos.xy), 0).x;
+  let vis = clamp((sd - dist) / 1.5, 0.0, 1.0);
+  let a = in.a * (1.0 - r2) * (1.0 - r2) * vis * mix(1.0, 0.6, in.mist);
+  if (a <= 0.002) { discard; }
+  // white water: sun (or moon) light scattered forward and back, plus the sky
+  let L = FR.sun.xyz; let V = normalize(cam - in.wp);
+  let fwd = pow(max(dot(-V, L), 0.0), 4.0);
+  let c = sunCol() * max(L.y + 0.15, 0.0) * (0.5 + 1.5 * fwd) + lfAmb(1.0, vec3f(0.85, 0.88, 0.9)) * mix(2.2, 1.0, in.mist); // foam is brighter than mist
+  let fg = lfFogT(cam, -V, dist);
+  return vec4f(c * a * fg, a);
 }
