@@ -515,14 +515,19 @@ fn precipMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
   let L = FR.sun.xyz;
   let sc = sunCol();
   let amb = mix(rowv(S3).rgb, rowv(S2).rgb, 0.5) * rowv(S3).w;
-  let bow = select(vec3f(0.0), rainbow(d, L), (kind == 0) && L.y > 0.0);
+  var bow = select(vec3f(0.0), rainbow(d, L), (kind == 0) && L.y > 0.0);
+  // by moonlight the bow is real but the eye sees it colourless and faint (a moonbow)
+  let sunShare = sstep(-0.035, 0.06, sunDirFrom(rowv(S0), FR.sun.w).y);
+  bow = mix(vec3f(luma(bow)) * 0.35, bow, sunShare);
   let fall = select(select(select(9.0, 7.0, kind == 1), 1.2, kind == 2), 0.5, kind == 3);
-  let N = 10;
+  // march a window around the squall the probes found, in even steps: on u^2 steps the far segments were kilometres
+  // long, a curtain was hit or missed per pixel and the low-res dither showed as a mesh
+  let N = 12;
+  let wa = max(tb - 4000.0, 0.0); let wb = min(tb + 4000.0, tEnd);
   var T = 1.0; var acc = vec3f(0.0);
-  var t0 = 0.0;
+  var t0 = wa;
   for (var i = 0; i < N; i++) {
-    let u = f32(i + 1) / f32(N);
-    let t1 = tEnd * u * u;
+    let t1 = mix(wa, wb, f32(i + 1) / f32(N));
     let p = ro + d * mix(t0, t1, jit);
     let st = wxStorm(wxCell(p.xz));
     if (st > 0.01) {
@@ -531,7 +536,9 @@ fn precipMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
       if (p.y < base) {
         // falling streaks and shafts: vertical structure moving down, broken into curtains
         let cur = sstep(-0.2, 0.5, vn(p.xz * (1.0 / 520.0) + vec2f(tm * 0.002, 0.0), 760u));
-        let stk = 0.55 + 0.45 * vn(vec2f((p.x + p.z * 0.7) * (1.0 / 45.0), (p.y + tm * fall * 6.0) * (1.0 / 380.0)), 761u);
+        // one jittered sample per long segment: keep the structure broad, or it turns into dither the upsample cannot
+        // resolve (fine streaks are composite.wgsl rainNear's job)
+        let stk = 0.78 + 0.22 * vn(vec2f((p.x + p.z * 0.7) * (1.0 / 160.0), (p.y + tm * fall * 6.0) * (1.0 / 900.0)), 761u);
         // virga evaporates on the way down; snow and spores thin out towards the ground less
         var fade = sstep(base - 2600.0, base - 300.0, p.y) * 0.6 + 0.4;
         if (kind == 1) { fade = sstep(base - 900.0, base - 150.0, p.y); }

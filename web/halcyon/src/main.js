@@ -340,6 +340,7 @@ async function init() {
   perf.dyn.target = P.target;
   perf.dyn.timer = G.timestamp;
   terrain.weather[0] = num('rain', 0); terrain.weather[1] = num('wet', 0); // weather stub (fx/terrain.js)
+  WXO[0] = num('rain', -1); WXO[1] = num('wet', -1); // rain=/wet= override the weather field (prepareFrame)
   clipmap.init(ctx); terrain.init(ctx); clouds.init(ctx); composite.init(ctx); rings.init(ctx); drone.init(ctx); post.init(ctx);
   flora.init(ctx); fauna.init(ctx); particles.init(ctx);
   if (XR.state > 0) xrfx.init(ctx);
@@ -506,6 +507,7 @@ function keyLightDir(fr, row) {
 const SKY_PERIOD = 900;
 let realmBufG = null;
 const CAMP = new Float64Array(3); // the camera a frame ago
+const WXO = new Float64Array(2); // rain=, wet= URL overrides (-1: none)
 const SKYM = new Float64Array(4); // previous s, accumulated motion (deg), time of day: typed, never boxed
 const SKY_TOD = Math.max(P.tod, -1); // a small int or a constant: read once
 function skyTime(fr) {
@@ -525,6 +527,10 @@ function prepareFrame() {
   SKYM[3] = 1 / Math.max(CLK[C_DT], 1e-3);
   for (let i = 0; i < 3; i++) { fr[FO.wx + i] = frameNo === 0 ? 0 : Math.min(Math.max((cam[i] - CAMP[i]) * SKYM[3], -60), 60); CAMP[i] = cam[i]; }
   fr[FO.wx + 3] = WX_CAM[2]; fr[FO.sky + 3] = WX_CAM[1];
+  // terrain-art's rain intensity (FR.mc[0].w) is the liquid rain at the camera; wetness integrates in fx/terrain.js and
+  // starts at its steady state so a capture inside a shower shows wet ground
+  terrain.weather[0] = WXO[0] >= 0 ? WXO[0] : OFF & OFF_RAIN ? 0 : WX_CAM[0];
+  if (frameNo === 0 && WXO[1] < 0) terrain.weather[1] = terrain.weather[0];
   for (let i = 0; i < ROWF; i++) fr[FO.row + i] = rowTmp[i];
   const drift = 0; // the suns move along their arcs in the realm table now (skyTime)
   const s0 = F.S0 * 4;

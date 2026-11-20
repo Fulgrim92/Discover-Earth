@@ -6,7 +6,7 @@
 // the planet's one wind. What falls under a squall depends on the realm: rain (Home, Mirror, Stone), virga that
 // never reaches the ground (Painted), snow (Ice), spores (Lumen).
 
-import { hf, W_ID, W_W } from './realms.js';
+import { hu8, W_ID, W_W } from './realms.js';
 
 const WIND_X = 4.2, WIND_Z = 1.7; // m/s, common.wgsl CLOUD_WIND
 const OFS_X = -12644, OFS_Z = 110304; // common.wgsl WX_OFS
@@ -29,7 +29,7 @@ function vn(s) { // reads S[5], S[6] as x, y
   const ix = Math.floor(x), iy = Math.floor(y);
   const fx = x - ix, fy = y - iy;
   const ux = fx * fx * fx * (fx * (fx * 6 - 15) + 10), uy = fy * fy * fy * (fy * (fy * 6 - 15) + 10);
-  const a = hf(ix, iy, s) * 2 - 1, b = hf(ix + 1, iy, s) * 2 - 1, c = hf(ix, iy + 1, s) * 2 - 1, d = hf(ix + 1, iy + 1, s) * 2 - 1;
+  const a = (hu8(ix, iy, s) * (1 / 16777216)) * 2 - 1, b = (hu8(ix + 1, iy, s) * (1 / 16777216)) * 2 - 1, c = (hu8(ix, iy + 1, s) * (1 / 16777216)) * 2 - 1, d = (hu8(ix + 1, iy + 1, s) * (1 / 16777216)) * 2 - 1;
   S[7] = a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
 }
 // wxCell at (S[0], S[1]) and time S[2] into S[3]
@@ -59,10 +59,10 @@ export function wxTick() {
   // lightning: every 5 s one candidate strike somewhere within 14 km; it fires only inside a squall cell
   const slot = Math.floor(WX_IN[2] / 5);
   const into = WX_IN[2] - slot * 5;
-  S[0] = Math.round(WX_IN[0] / 1000) * 1000 + (hf(slot, 3, 950) - 0.5) * 28000;
-  S[1] = Math.round(WX_IN[1] / 1000) * 1000 + (hf(slot, 4, 951) - 0.5) * 28000;
+  S[0] = Math.round(WX_IN[0] / 1000) * 1000 + ((hu8(slot, 3, 950) * (1 / 16777216)) - 0.5) * 28000;
+  S[1] = Math.round(WX_IN[1] / 1000) * 1000 + ((hu8(slot, 4, 951) * (1 / 16777216)) - 0.5) * 28000;
   cell();
-  const go = hf(slot, 5, 952) < 0.7 ? sstep(0.45, 0.7, S[3]) : 0;
+  const go = (hu8(slot, 5, 952) * (1 / 16777216)) < 0.7 ? sstep(0.45, 0.7, S[3]) : 0;
   // a flash with a second, weaker return stroke; 0.45 s in all
   const env = into < 0.08 ? 1 : into < 0.16 ? 0.25 : into < 0.24 ? 0.7 : Math.max(0, 1 - (into - 0.24) / 0.2) * 0.3;
   WX_BOLT[0] = S[0]; WX_BOLT[1] = S[1]; WX_BOLT[2] = go * env; WX_BOLT[3] = into;
