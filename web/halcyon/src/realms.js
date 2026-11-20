@@ -53,8 +53,13 @@ export const FIELDS = [
   'G1', // lift rgb, vignette
   'G2', // gain rgb, bloom mix
   'G3', // gamma rgb, foam
+  // life (fx/flora.js, fx/fauna.js, fx/particles.js); values in LIFE below
+  'V0', // flora: grass, wildflowers, heather, dry tussock
+  'V1', // flora: reeds, ferns + foliage crowns (+ fireflies), alien garden, ice shards
+  'V2', // fauna: flamingos, seabirds, geese, sky jellies
+  'V3', // particles: pollen + seed fluff, salt glints, snow / diamond dust, spores
 ];
-export const ROW = 40; // vec4 slots per realm row (>= FIELDS.length)
+export const ROW = Math.max(40, (FIELDS.length + 3) & ~3); // vec4 slots per realm row (>= FIELDS.length)
 export const ROWF = ROW * 4;
 export const F = {};
 FIELDS.forEach((n, i) => { F[n] = i; });
@@ -144,6 +149,17 @@ const R = [
     G0: [0.9, 1.15, 1.08, 0.5], G1: ['#08041a', 1.0], G2: ['#f4ecff', 0.08], G3: [1, 1, 1, 0.5],
   },
 ];
+
+// Life per realm (appended fields V0..V3, merged into R so the realm rows above stay untouched).
+const LIFE = [
+  { V0: [1, 1, 1, 0], V1: [0, 0, 0, 0], V2: [0, 1, 1, 0], V3: [1, 0, 0, 0] }, // Home Fjords: meadows, seabirds, geese, pollen
+  { V0: [0, 0, 0, 1], V1: [0, 0, 0, 0], V2: [0, 0, 0.5, 0], V3: [0.25, 0, 0, 0] }, // Painted Range: nearly bare
+  { V0: [0, 0, 0, 0], V1: [1, 0, 0, 0], V2: [1, 0, 0, 0], V3: [0, 1, 0, 0] }, // Mirror Salt: reeds on islands, flamingos
+  { V0: [0, 0, 0, 0], V1: [0, 1, 0, 0], V2: [0, 0, 0, 0], V3: [0, 0, 0, 0] }, // Stone Forest: ferns, crowns, fireflies
+  { V0: [0, 0, 0, 0], V1: [0, 0, 0, 1], V2: [0, 0, 0, 0], V3: [0, 0, 1, 0] }, // Aurora Ice: shards, diamond dust
+  { V0: [0, 0, 0, 0], V1: [0, 0, 1, 0], V2: [0, 0, 0, 1], V3: [0, 0, 0, 1] }, // Lumen Deep: garden, jellies, spores
+];
+for (let r = 0; r < R.length; r++) Object.assign(R[r], LIFE[r]);
 
 export const REALM_NAMES = ['Home Fjords', 'Painted Range', 'Mirror Salt', 'Stone Forest', 'Aurora Ice', 'Lumen Deep'];
 
