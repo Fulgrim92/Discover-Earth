@@ -23,7 +23,7 @@ import { ENC, DIR } from './lifefx.js';
 const CELL = 320, NS = 7, NH = NS * NS, NGI = 4, NG = NH + NGI, GCELL = 4000;
 const H_VERTS = 2496, NE = 8, E_BASE = 848, MURM_N = 16000;
 // encounter type -> actor species count (herd.wgsl actor(): 1 orca pod, 3 flamingo take-off, 4 whale breach, 6 giants)
-const E_N = new Uint8Array([0, 6, 0, 48, 1, 0, 5]);
+const E_N = new Uint8Array(40); E_N[1] = 6; E_N[3] = 48; E_N[4] = 1; E_N[6] = 5;
 const ecount = new Uint8Array(NE);
 let murmOn = 0;
 // species: 0 sheep, 1 horse, 2 flamingo, 3 fox, 4 seal, 5 light-eater, 6 giant

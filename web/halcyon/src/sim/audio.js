@@ -4,6 +4,7 @@
 // airspeed. Pad: four slow voices that wander over the current realm's scale. Chimes: a pool of four bell voices.
 
 import { hashi, HASH_SCALE } from './qmath.js';
+import { CUE } from '../encounters.js';
 const hash1 = (i, s) => hashi(i, s) * HASH_SCALE; // (pad changes every few seconds; not a hot path)
 
 const A = {
@@ -13,7 +14,7 @@ const A = {
   padO: null, padG: null, padF: null, padM: null,
   chO: null, chO2: null, chG: null,
 };
-const S = new Float64Array(8);
+const S = new Float64Array(9); // [8]: last encounter cue seq heard
 const S_MUTED = 0, S_PADT = 1, S_PADV = 2, S_CHV = 3, S_NOTE = 4, S_CHSTEP = 5, S_REALM = 6, S_TICK = 7;
 
 // realm scales (semitones from root), DESIGN section 8; realms without a named mode get one that fits their light
@@ -152,6 +153,24 @@ export function update(m, crashed, realm, five) {
     A.padG[v].gain.setTargetAtTime(0.06 + 0.05 * hash1(nt, 73), now, 1.8);
     const vo = (v + 2) % NV; // let the opposite voice breathe out
     A.padG[vo].gain.setTargetAtTime(0.015, now, 3.0);
+  }
+  // encounter cue (src/encounters.js CUE): a slow two-voice swell from the chime pool when an event begins (cue)
+  // and when it peaks; low and dark for whales and orcas, bright for sky events
+  if (CUE[0] !== S[8]) {
+    S[8] = CUE[0];
+    const ph = CUE[6], ty = CUE[1];
+    if (ph === 0 || ph === 2) {
+      const oct = ty === 1 || ty === 4 || ty === 6 ? -2 : ty >= 16 && ty < 32 ? 1 : -1;
+      const gain = ph === 2 ? 0.12 : 0.07;
+      for (let k = 0; k < 2; k++) {
+        const v = S[S_CHV] = (S[S_CHV] + 1) % NC;
+        const f = noteFreq(realm, k * 4, oct);
+        A.chO[v].frequency.setValueAtTime(f, now); A.chO2[v].frequency.setValueAtTime(f * 1.5, now);
+        const g = A.chG[v].gain;
+        g.cancelScheduledValues(now); g.setValueAtTime(0.0001, now);
+        g.linearRampToValueAtTime(gain, now + 1.2 + k * 0.4); g.setTargetAtTime(0, now + 2.0 + k * 0.4, 2.5);
+      }
+    }
   }
 }
 
