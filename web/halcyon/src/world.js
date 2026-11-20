@@ -3,7 +3,7 @@
 // Float64Array scratch slots and only small integers cross function boundaries. V8 boxes every double passed to or
 // returned from a function it does not inline, and heightAt is far too big to inline its helpers, so with plain
 // double arguments it allocated ~400 bytes per call on the sim's frame path. Results are bit-identical.
-import { hu8, realmWeightsA, W_IN, blendFields, blendAt as blendRow, blendAtA, ROWF, W_NEAR } from './realms.js';
+import { hu8, realmWeightsA, W_IN, W_ID, W_W, TABLE, blendFields, blendAt as blendRow, blendAtA, ROWF, W_NEAR } from './realms.js';
 
 export { W_NEAR };
 
@@ -139,6 +139,21 @@ function hexD(ci, cj) {
   const ax = Math.abs(vx * ux + vy * uy), ay = Math.abs(vy * ux - vx * uy);
   HX[2] = Math.max(ax * 0.8660254 + ay * 0.5, ay) * 1.1547005;
 }
+
+// features T3-T8 blended with sharpened weights w^3 (terrfn.wgsl terrParams)
+function blendFeatures() {
+  let sum = 0;
+  for (let s = 0; s < 4; s++) { const w = W_W[s]; KW[s] = W_ID[s] < 0 ? 0 : w * w * w; sum += KW[s]; }
+  sum = sum > 1e-12 ? sum : 1e-12;
+  for (let c = 12; c < 36; c++) T[c] = 0;
+  for (let s = 0; s < 4; s++) {
+    const id = W_ID[s];
+    if (id < 0) continue;
+    const w = KW[s] / sum, base = id * ROWF;
+    for (let c = 12; c < 36; c++) T[c] += w * TABLE[base + c];
+  }
+}
+const KW = new Float64Array(4);
 
 // Terrain height (m) at world (x, z). Matches the GPU bake to centimetres.
 // heightCore: (HQ[0], HQ[1]) -> HQ[2], split into per-feature sections so each stays small enough for V8 to
@@ -429,7 +444,8 @@ function sec31() {
 function heightCore() {
   const x = HQ[0], z = HQ[1];
   W_IN[0] = x; W_IN[1] = z; realmWeightsA();
-  blendFields(T, 0, 0, 9);
+  blendFields(T, 0, 0, 3);
+  blendFeatures();
   const px = x, py = z;
   const freq = T[0];
   const wqx = px * (freq * 0.5), wqy = py * (freq * 0.5);
@@ -441,7 +457,8 @@ function heightCore() {
   let h = Math.pow(Math.max(hn, 1e-6), T[7]) * T[1];
   if (T[8] > 0.001) {
     const vqx = qx * (freq * T[11]), vqy = qy * (freq * T[11]);
-    const v = Math.abs((NI[0] = vqx, NI[1] = vqy, vnoised(21), N3[0])) + 0.35 * Math.abs((NI[0] = vqx * 2.7 + 3.1, NI[1] = vqy * 2.7 + 7.7, vnoised(22), N3[0]));
+    let v = Math.abs((NI[0] = vqx, NI[1] = vqy, vnoised(21), N3[0])) + 0.35 * Math.abs((NI[0] = vqx * 2.7 + 3.1, NI[1] = vqy * 2.7 + 7.7, vnoised(22), N3[0]));
+    v = Math.min(v, 0.3 + 0.8 * Math.abs((NI[0] = vqx * 3.3 + 8.3, NI[1] = vqy * 3.3 + 2.9, vnoised(23), N3[0])));
     const u = (SX[2] = v, SX[0] = 0, SX[1] = T[9], sstepA(), SX[3]);
     h = (h * (1 - T[8]) + (h * u - T[10] * (1 - u)) * T[8]);
   }

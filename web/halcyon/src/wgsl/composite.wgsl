@@ -197,7 +197,8 @@ struct VO { @builtin(position) pos: vec4f }
       tEnd = tw;
       let P = ro + d * tw;
       let rw = realmWeights(P.xz);
-      let w0 = bf(rw, W0); let w1 = bf(rw, W1); let w2 = bf(rw, W2);
+      let rwd = driftW(P.xz, rw); // water colour and surface drift with the skin (The Drift)
+      let w0 = bf(rwd, W0); let w1 = bf(rwd, W1); let w2 = bf(rwd, W2);
       let foot = tw * pix / max(-d.y, 0.05);
       var n = waveN(P.xz, w0.w, foot);
       let V = -d;

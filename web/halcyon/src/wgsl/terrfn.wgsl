@@ -16,10 +16,19 @@ struct TerrOut { h: f32, mA: vec4f, mB: vec4f }
 // mA: sinkhole distance (Lumen pulse phase), pillar top height / 600 m, hot pool ring coordinate + steam mask, veins
 // mB: crevasse, crystal, cone (salt) or berg (> 0.5 ice, < 0.45 submerged shelf), glacier
 
+// Through a border the large shapes (T0-T2: relief, ridges, valleys) blend with the realm weights, while the
+// features (T3-T8: strata, pillars, salt, dunes, glacier, crystals) blend with sharpened weights (w^3), so the
+// ground morphs first and the features hand over in the middle of the zone instead of all fading to mush.
+// world.js heightCore mirrors this.
 fn terrParams(r: RWt) -> TP {
   var t: TP;
-  t.t0 = bf(r, T0); t.t1 = bf(r, T1); t.t2 = bf(r, T2); t.t3 = bf(r, T3); t.t4 = bf(r, T4);
-  t.t5 = bf(r, T5); t.t6 = bf(r, T6); t.t7 = bf(r, T7); t.t8 = bf(r, T8);
+  t.t0 = bf(r, T0); t.t1 = bf(r, T1); t.t2 = bf(r, T2);
+  var k = r;
+  var sum = 0.0;
+  for (var s = 0; s < 4; s++) { k.w[s] = r.w[s] * r.w[s] * r.w[s]; sum += k.w[s]; }
+  k.w /= max(sum, 1e-12);
+  t.t3 = bf(k, T3); t.t4 = bf(k, T4);
+  t.t5 = bf(k, T5); t.t6 = bf(k, T6); t.t7 = bf(k, T7); t.t8 = bf(k, T8);
   return t;
 }
 
@@ -109,7 +118,9 @@ fn terrainEval(p: vec2f, t: TP, masks: bool) -> TerrOut {
   var h = pow(max(hn, 1e-6), t.t1.w) * t.t0.y;
   if (t.t2.x > 0.001) {
     let vq = q * (freq * t.t2.w);
-    let v = abs(vn(vq, 21u)) + 0.35 * abs(vn(vq * 2.7 + vec2f(3.1, 7.7), 22u));
+    var v = abs(vn(vq, 21u)) + 0.35 * abs(vn(vq * 2.7 + vec2f(3.1, 7.7), 22u));
+    // tributaries: a finer, shallower valley set joins the trunks (drainage network rather than isolated troughs)
+    v = min(v, 0.3 + 0.8 * abs(vn(vq * 3.3 + vec2f(8.3, 2.9), 23u)));
     let u = sstep(0.0, t.t2.y, v);
     h = mix(h, h * u - t.t2.z * (1.0 - u), t.t2.x);
   }

@@ -55,8 +55,6 @@ fn bfx(r: RWt, f: u32) -> vec4f {
 // band-limit weight for a feature of wavelength lam (m) at pixel footprint fp (m)
 fn bl(lam: f32, fp: f32) -> f32 { return sstep(1.5 * fp, 4.0 * fp, lam); }
 
-// geographic realm transition: noise breaks the blend weight into patches, but 0 stays 0 and 1 stays 1
-fn geo(w: f32, n: f32) -> f32 { return sstep(0.3, 0.7, w + n * w * (1.0 - w) * 4.0); }
 
 // 3D value noise with analytic gradient: (value in [-1,1], d/dx, d/dy, d/dz)
 fn vn3d(p: vec3f) -> vec4f {
@@ -178,11 +176,12 @@ fn strataTilt(p: vec2f) -> f32 {
 fn danxia(t: f32) -> vec3f {
   let x = clamp(t, 0.0, 1.0) * 5.0;
   let i = floor(x); let f = x - i;
-  var c0 = vec3f(0.15, 0.03, 0.016); var c1 = vec3f(0.33, 0.055, 0.022);
-  if (i >= 1.0) { c0 = c1; c1 = vec3f(0.45, 0.12, 0.035); }
-  if (i >= 2.0) { c0 = c1; c1 = vec3f(0.5, 0.26, 0.07); }
-  if (i >= 3.0) { c0 = c1; c1 = vec3f(0.52, 0.38, 0.22); }
-  if (i >= 4.0) { c0 = c1; c1 = vec3f(0.68, 0.57, 0.4); }
+  // measured-style albedos of Zhangye sandstones: maroon mudstone, brick red, orange, ochre, buff (r/g 1.2-2.6)
+  var c0 = vec3f(0.17, 0.075, 0.055); var c1 = vec3f(0.3, 0.12, 0.08);
+  if (i >= 1.0) { c0 = c1; c1 = vec3f(0.4, 0.19, 0.11); }
+  if (i >= 2.0) { c0 = c1; c1 = vec3f(0.45, 0.29, 0.16); }
+  if (i >= 3.0) { c0 = c1; c1 = vec3f(0.47, 0.38, 0.25); }
+  if (i >= 4.0) { c0 = c1; c1 = vec3f(0.55, 0.49, 0.38); }
   return mix(c0, c1, sstep(0.0, 1.0, f));
 }
 fn strataAt(s: f32) -> vec3f {
@@ -271,8 +270,10 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
 
   // realm blend
   let rw = realmWeights(p.xz);
-  let M0v = bfx(rw, M0); let M1v = bfx(rw, M1); let M2v = bfx(rw, M2); let M3v = bfx(rw, M3);
-  let M4v = bfx(rw, M4); let M5v = bfx(rw, M5); let M6v = bfx(rw, M6);
+  // the skin drifts (common.wgsl driftW): materials come from flow-displaced, sharpened weights; light does not
+  let rwm = driftW(p.xz, rw);
+  let M0v = bfx(rwm, M0); let M1v = bfx(rwm, M1); let M2v = bfx(rwm, M2); let M3v = bfx(rwm, M3);
+  let M4v = bfx(rwm, M4); let M5v = bfx(rwm, M5); let M6v = bfx(rwm, M6);
   var S0v = bfx(rw, S0); var S1v = bfx(rw, S1); var S2v = bfx(rw, S2); var S3v = bfx(rw, S3);
   var S5v = bfx(rw, S5); var S6v = bfx(rw, S6); var S7v = bfx(rw, S7);
   // far ground takes the light of the sky the camera sees (the camera realm's row): a neighbour realm on the horizon
@@ -283,7 +284,7 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
     S3v = mix(S3v, FR.row[S3], fcam); S5v = mix(S5v, FR.row[S5], fcam); S6v = mix(S6v, FR.row[S6], fcam);
     S7v = mix(S7v, FR.row[S7], fcam);
   }
-  let T3v = bfx(rw, T3);
+  let T3v = bfx(rwm, T3);
 
   // breakup noise at three scales
   // (nL and nM are baked into the shade layer: 0 noise evaluations here)
@@ -299,13 +300,13 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
   let tng = vec2f(-down.y, down.x);
   let u = dot(p.xz, tng);
 
-  // geographic realm weights (outcrops, not cross-fades)
-  let wPaint = geo(M4v.x, nL * 0.8 + 0.5 * (slope - 0.25));
-  let wSalt = geo(M4v.y, nL);
-  let wStone = geo(M4v.z, nL);
-  let wIce = geo(M4v.w, nL);
-  let wLum = geo(M5v.x, nL);
-  let wHome = geo(M5v.z, nL);
+  // realm skin weights: already shaped into drifting tongues by driftW (no thresholds, no outcrop noise)
+  let wPaint = M4v.x;
+  let wSalt = M4v.y;
+  let wStone = M4v.z;
+  let wIce = M4v.w;
+  let wLum = M5v.x;
+  let wHome = M5v.z;
 
   // ---- base: grass / soil / scree / rock, height-blended ----
   var dg = vec3f(0.0); // detail height gradient (world)
@@ -655,7 +656,7 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
     let crev = mB.x;
     ice = mix(ice, vec3f(0.08, 0.4, 0.62), sstep(0.08, 0.45, crev));
     ice = mix(ice, vec3f(0.01, 0.05, 0.18), sstep(0.45, 0.95, crev));
-    let snowC = vec3f(0.86, 0.92, 0.98) * (0.96 + 0.06 * nS);
+    let snowC = vec3f(0.8, 0.84, 0.88) * (0.96 + 0.06 * nS); // snow albedo 0.8-0.9
     let snowOnIce = snowIce * (1.0 - crev) * (1.0 - mor);
     ice = mix(ice, snowC, snowOnIce);
     // sastrugi on the snow: fine elongated wind ridges
@@ -790,24 +791,25 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
   let skyUp = mix(hor, zen, 0.55) * S6v.x + S7v.rgb * S7v.w;
   let ground = (hor * 0.25 + alb * sunC * max(L.y, 0.0) * 0.6) * S6v.w;
   let amb = mix(ground, skyUp, 0.5 + 0.5 * n.y) * ao;
-  var col = alb * (sunC * max(ndl, 0.0) * sh + amb);
+  // energy conserving: what the surface reflects specularly (Schlick at the view angle) does not also diffuse
+  let fr = f0 + (1.0 - f0) * pow(1.0 - max(dot(n, V), 0.0), 5.0);
+  let kd = 1.0 - fr * (1.0 - 0.6 * rough);
+  var col = alb * kd * (sunC * max(ndl, 0.0) * sh + amb);
   // Lumen: the ringed giant and the moons light the dunes from the sky; velvet sheen at grazing angles
   if (sheen > 0.0) {
     let Gd = vec3f(0.553, 0.438, -0.708);
     let gcol = vec3f(0.5, 0.36, 0.42) * S5v.z;
     let wrapG = clamp((dot(n, Gd) + 0.3) / 1.3, 0.0, 1.0);
-    col += alb * gcol * wrapG * 1.2 * ao;
-    let rimF = pow(1.0 - max(dot(n, V), 0.0), 4.0);
-    col += mix(hor, vec3f(0.3, 0.28, 0.7) * S3v.w, 0.6) * rimF * sheen * 0.3 * ao * (0.4 + 0.6 * wrapG);
+    col += alb * kd * gcol * wrapG * 1.2 * ao; // (no painted rim light: photoreal pass)
   }
   // Aurora Ice under the low moon and the aurora: snow glitters (per-crystal glints that twinkle as the view moves,
   // lit by the key light and by the sky), thin ice glows cyan from light scattered through it, and snow and ice
   // brighten looking towards the light (forward scattering)
   if (iceSnow + iceThin > 0.01) {
     let fwd = pow(max(dot(-V, L), 0.0), 6.0) * horizon;
-    col += alb * sunC * fwd * (0.35 * iceSnow + 0.8 * iceThin) * mix(0.5, 1.0, sh);
+    col += alb * sunC * fwd * (0.15 * iceSnow + 0.4 * iceThin) * mix(0.5, 1.0, sh);
     let wrap = clamp((dot(n, L) + 0.6) / 1.6, 0.0, 1.0);
-    col += vec3f(0.1, 0.55, 0.7) * iceThin * (sunC * wrap * 0.35 + skyUp * 0.6) * ao;
+    col += vec3f(0.1, 0.55, 0.7) * iceThin * (sunC * wrap * 0.25 + skyUp * 0.3) * ao; // light through thin ice
     if (iceSnow > 0.01 && fp < 0.25) {
       let gc = floor(p.xz * 6.0);
       let gh = hf(i32(gc.x), i32(gc.y), 296u);
@@ -817,14 +819,13 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
       let gl1 = select(0.0, 1.0, gh < 0.06) * sstep(0.22, 0.05, gpos) * bl(0.17, fp) * step(0.82, tw);
       let gn2 = normalize(n + 0.5 * vec3f(hf(i32(gc.x), i32(gc.y), 298u) - 0.5, 0.0, hf(i32(gc.x), i32(gc.y), 299u) - 0.5));
       let spk = pow(max(dot(reflect(-V, gn2), L), 0.0), 24.0) * sh * horizon;
-      col += (sunC * spk * 6.0 + skyUp * 1.5 + S7v.rgb * S7v.w * 4.0) * gl1 * iceSnow;
+      col += (sunC * spk * 6.0 + skyUp * 0.3) * gl1 * iceSnow; // crystal facets mirroring the key light
     }
   }
   // specular: sun + sky reflection for smooth surfaces
   let sp = ggx(n, V, L, rough, f0) * max(ndl, 0.0) * sh;
   col += sunC * sp;
   let R = reflect(-V, n);
-  let fr = f0 + (1.0 - f0) * pow(1.0 - max(dot(n, V), 0.0), 5.0);
   col += mix(hor, zen, clamp(R.y, 0.0, 1.0)) * fr * (1.0 - rough) * ao;
   col += emis;
 
