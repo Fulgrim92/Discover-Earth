@@ -100,9 +100,10 @@ export function init(ctx) {
 }
 
 export function bind(ctx, tg) {
-  // half resolution; quarter on quality=low (the march is ~4x cheaper, the upsample hides most of it)
-  const sh = ctx.quality === 0 ? 2 : 1;
-  const w = Math.max(1, Math.ceil(tg.w / (1 << sh))), h = Math.max(1, Math.ceil(tg.h / (1 << sh)));
+  // half resolution; quarter on quality=low (the march is ~4x cheaper, the upsample hides most of it); a third in VR
+  // (ctx.cloudDiv from main.js: every eye is large and the frame short)
+  const k = ctx.cloudDiv || (ctx.quality === 0 ? 4 : 2);
+  const w = Math.max(1, Math.ceil(tg.w / k)), h = Math.max(1, Math.ceil(tg.h / k));
   const RT = U.RENDER_ATTACHMENT | U.TEXTURE_BINDING;
   clouds.view = tex(w, h, 'rgba16float', RT, { label: 'clouds' }).createView();
   clouds.reflView = tex(w, h, 'rgba16float', RT, { label: 'cloudsRefl' }).createView();
@@ -121,8 +122,10 @@ export function prepare(view) {
   // weather window: snapped to its texels around the camera
   const d = view.data;
   CU[2] = WTEX; CU[3] = WN;
-  CU[0] = Math.round(d[32] / WTEX) * WTEX - WN * 0.5 * WTEX;
-  CU[1] = Math.round(d[34] / WTEX) * WTEX - WN * 0.5 * WTEX;
+  // round via an int (|0) rather than Math.round: a builtin call returns a boxed double where the caller is not
+  // fully optimised (the VR loop caught it); +2^20 keeps the truncation a floor for any position on the planet
+  CU[0] = (((d[32] / WTEX + 1048576.5) | 0) - 1048576) * WTEX - WN * 0.5 * WTEX;
+  CU[1] = (((d[34] / WTEX + 1048576.5) | 0) - 1048576) * WTEX - WN * 0.5 * WTEX;
   // the camera's realm weights: a realm's own clouds are full, its neighbours' are thinned (csWeather).
   // W_IN + realmWeightsA: passing the doubles as arguments would box them every frame
   W_IN[0] = d[32]; W_IN[1] = d[34]; realmWeightsA();

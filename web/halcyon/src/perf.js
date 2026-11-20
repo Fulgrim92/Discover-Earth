@@ -7,8 +7,8 @@
 // getMappedRange() returns a fresh ArrayBuffer: those are platform allocations we cannot avoid, so they happen once
 // per READ_EVERY frames (about 4 times a second at 60 Hz), never per frame. Without timestamp-query the frame
 // delta drives the controller instead.
-import { CLK, C_DT, C_FRAME_MS } from './clock.js';
 import { G, TS, TS_N, TS_SLOTS, TS_PER_FRAME, TS_PASSES, TS_ONCE } from './gpu.js';
+import { dyn } from './dynres.js';
 
 export const READ_EVERY = TS_SLOTS / 2;
 const HALF_Q = READ_EVERY * TS_PER_FRAME;   // queries per half ring
@@ -145,50 +145,10 @@ export function benchReport(meta) {
     timer: G.timestamp ? 'timestamp-query' : 'none (frame delta only)',
     timerReadbacks: stats.readbacks, timerDropped: stats.dropped, timerInvalidFrames: stats.invalid, timerFrames: stats.gpuFrames,
     timerLastBad: stats.invalid ? { pass: TS_PASSES[stats.lastBad[0]], begin: stats.lastBad[1], end: stats.lastBad[2] } : null,
-    dynres: { enabled: dyn.enabled, target: dyn.target, finalScale: dyn.scale, changes: dyn.changes },
+    dynres: { enabled: dyn.enabled, target: dyn.target, finalScale: dyn.scale, changes: dyn.changes, minScale: dyn.minSeen, meanScale: dyn.meanScale() },
   }, meta);
 }
 
 // ------------------------------------------------------------------------------------------------ dynamic resolution
-// Holds a GPU-time target by scaling the internal render targets between MIN and MAX in STEP steps.
-// Hysteresis: step down after DOWN_HOLD s over target; step up only after upHold s under UP_FRAC of target, where the
-// predicted time at the larger scale also fits. A step up that is followed by a step down within 4 s doubles upHold
-// (up to 64 s), so the controller settles instead of oscillating. Samples from frames rendered before a change are
-// ignored. Without timestamps the frame delta is used with a vsync-aware target.
-export const dyn = {
-  enabled: false, target: 11, scale: 1, MIN: 0.6, MAX: 1, STEP: 0.05, changes: 0,
-  over: 0, under: 0, cool: 0, upHold: 2, lastUp: -1e9, ignoreBefore: 0, ema: 0, emaN: 0, pending: 0, now: 0,
-  sample(ms, frame) {
-    if (!this.enabled || frame < this.ignoreBefore) return;
-    this.ema = this.emaN < 4 ? ms : this.ema + (ms - this.ema) * 0.15;
-    this.emaN++;
-  },
-  // once per frame (dt and the frame delta from the clock). Returns 1 when the scale changed (the caller rebuilds the targets).
-  tick(frame) {
-    if (!this.enabled) return 0;
-    const dt = CLK[C_DT], frameMs = CLK[C_FRAME_MS];
-    this.now += dt;
-    if (!G.timestamp && frameMs > 0) this.sample(frameMs, frame);
-    if (this.emaN < 8) return 0;
-    if (this.cool > 0) { this.cool -= dt; return 0; }
-    const t = G.timestamp ? this.target : 17.5; // no GPU timer: hold vsync at 60 Hz
-    const s = this.scale, up = s + this.STEP;
-    const predicted = this.ema * (up * up) / (s * s);
-    if (this.ema > t * 1.04) { this.over += dt; this.under = 0; }
-    else if (this.ema < t * 0.82 && predicted < t * 0.95) { this.under += dt; this.over = 0; }
-    else { this.over = 0; this.under = 0; }
-    let ns = s;
-    if (this.over > 0.3 && s > this.MIN + 1e-6) {
-      ns = s - (this.ema > t * 1.35 ? 2 : 1) * this.STEP;
-      if (this.now - this.lastUp < 4) this.upHold = Math.min(64, this.upHold * 2);
-    } else if (this.under > this.upHold && s < this.MAX - 1e-6) {
-      ns = up; this.lastUp = this.now;
-    }
-    if (ns === s) return 0;
-    ns = Math.round(Math.min(this.MAX, Math.max(this.MIN, ns)) * 20) / 20;
-    this.scale = ns; this.changes++;
-    this.over = 0; this.under = 0; this.emaN = 0; this.cool = 0.75;
-    this.ignoreBefore = frame + 2;
-    return 1;
-  },
-};
+// The controller lives in dynres.js (no GPU imports, so tools/dyntest.mjs runs it in node with synthetic timings).
+export { dyn };

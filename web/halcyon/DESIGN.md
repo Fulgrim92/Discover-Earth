@@ -40,6 +40,14 @@ announced it but not shipped it. So:
 - VR flight modes: **Line of sight** (you stand on the ground and watch the drone, the real beginner skill and
   comfortable) and **FPV** (you are the camera; comfort vignette on by default). Sticks come from the XR controller
   thumbsticks (left = throttle/yaw, right = pitch/roll) or any gamepad/transmitter.
+- How it is built (`src/xr.js`, `src/fx/xrfx.js`, `src/wgsl/xr.wgsl`): each XR view renders through `renderView`
+  into intermediate targets sized to its sub-image viewport, then the final pass writes into the layer's colour
+  texture at that viewport (texture-array and side-by-side layouts both work). The XR projection keeps its x/y/w
+  rows and gets reverse-Z depth (`mat4XRToRevZ`); `View.skew` carries the off-axis centre and `View.anc` the head,
+  so camera-centred grids (flora, fauna, motes, terrain morph) pick the same instances in both eyes. Clouds march
+  at 1/3 resolution in VR; dynres targets 80 % of the session's frame time. Controllers are a procedural mesh and the
+  HUD a dot-matrix panel above the left controller. `?xrmock=1|2` fakes the API headlessly (`tools/shots/xr.json`,
+  `tools/xrtest.mjs`, `tools/alloc.mjs --xrmock`).
 
 ## 4. The planet
 
@@ -187,6 +195,8 @@ web/halcyon/
   tools/shots/*.json     step lists: per-realm hero views, stereo, fly-throughs
   tools/alloc.mjs        the zero-allocation gate (scripted frame loop, --trace-gc + sampling heap profile)
   tools/bench.mjs        headless smoke test of ?bench=1 (report shape, GPU timer readback)
+  tools/dyntest.mjs      dynamic-resolution controller against synthetic GPU-time feeds (node, no browser)
+  tools/readytest.mjs    __halcyon.ready outside shot mode, start overlay progress while pipelines compile
   tools/play.mjs         scripted flights (?script=) -> frames + contact sheet; --dry runs the sim in node
 ```
 
@@ -194,7 +204,13 @@ URL parameters (all optional) make captures deterministic: `realm`, `pos=x,y,z`,
 (freeze time), `w`, `h`, `scale`, `stereo`, `hud=0`, `bench=1`, `quality=low|high`; the full list (script, sim,
 orbit, present, alloc, dynres, target, hdr, stride, inflight, ...) is at the top of `src/main.js`. The page sets
 `window.__halcyon = {ready, frame, error}` and the harness waits for `ready` (all clip levels baked) before
-grabbing. Shader compile errors and uncaptured GPU errors must surface in `__halcyon.error` and fail the shot.
+grabbing; outside shot mode `ready` turns true once the pipelines have compiled and the first frame has finished.
+
+Benching on the reference machine: `?bench=1` renders a fixed 1920x1080 canvas with dynamic resolution on (`dynres=0`
+for a fixed internal 1920x1080). `off=<names>` switches costs off one by one (flora, fauna, particles, tshadow,
+tdetail, tao, fshadow, clouds, cloudshadow, water, rings, drone, msaa, or `all`): bits in `Frame.flags`, named
+`OFF_*` in common.wgsl. `split=1` splits the opaque pass into terrain / flora / fauna and times each (`gpuPassMs`
+opaque = terrain + sky + drone); it adds an MSAA store and load per split, so compare totals with `split=0`. Shader compile errors and uncaptured GPU errors must surface in `__halcyon.error` and fail the shot.
 
 Headless Chromium flags that work here: `--enable-unsafe-webgpu --enable-features=Vulkan --use-angle=swiftshader
 --use-webgpu-adapter=swiftshader --ignore-gpu-blocklist`. SwiftShader is a CPU rasteriser: expect seconds per frame;

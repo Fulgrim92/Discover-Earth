@@ -8,7 +8,25 @@ struct Frame {
   lv: array<vec4f, 12>, // per clip level: texel-0 world x, z, texel size, baked flag
   mc: array<vec4f, 12>, // per clip level: mesh centre x, z, vertex spacing, 0
   row: array<vec4f, ROW>, // realm row blended at the camera
+  flags: vec4f,  // x: ablation bits OFF_* (bench ?off=..., 0 in normal play), yzw: 0
 }
+
+// Ablation bits (URL ?off=flora,fauna,...; main.js OFF_NAMES). A set bit switches that cost off: draws are skipped
+// in JS where they can be, everything else early-outs in the shader through isOff(). Bench and debugging only.
+const OFF_FLORA: u32 = 1u;        // flora draws (JS)
+const OFF_FAUNA: u32 = 2u;        // birds, bird mirror, jellies (JS)
+const OFF_PARTICLES: u32 = 4u;    // particle/mote pass (JS)
+const OFF_TSHADOW: u32 = 8u;      // terrain sun shadow march (terrain.wgsl)
+const OFF_TDETAIL: u32 = 16u;     // terrain micro-detail normal (terrain.wgsl)
+const OFF_TAO: u32 = 32u;         // terrain concavity AO (terrain.wgsl)
+const OFF_FSHADOW: u32 = 64u;     // flora/fauna/particle sun shadow march (life.wgsl lfShadow)
+const OFF_CLOUDS: u32 = 128u;     // cloud march and the weather bake (JS + clouds.wgsl)
+const OFF_CLOUDSHADOW: u32 = 256u; // cloud shadows on everything (cloudShadowF)
+const OFF_WATER: u32 = 512u;      // water shading in the composite (composite.wgsl)
+const OFF_RINGS: u32 = 1024u;     // rings and their sparks/guide (JS)
+const OFF_DRONE: u32 = 2048u;     // drone body, props, lights, shadow (JS)
+const OFF_MSAA: u32 = 4096u;      // opaque pass without MSAA (JS, at init)
+fn isOff(b: u32) -> bool { return (u32(FR.flags.x) & b) != 0u; }
 struct View {
   vp: mat4x4f,   // projection * view rotation (camera-relative world)
   ivp: mat4x4f,
@@ -18,13 +36,16 @@ struct View {
   ofs: vec4f,    // viewport x offset in canvas px, y, canvas w, canvas h
   right: vec4f,  // camera right, tan(fovX/2)
   up: vec4f,     // camera up
+  skew: vec4f,   // off-axis projection centre in tan units (x = P8 / P0, y = P9 / P5; XR views are asymmetric), 0, 0
+  anc: vec4f,    // view anchor: the head (cyclopean eye) shared by both eyes, so camera-centred grids pick the same
+                 // instances in each eye; w = comfort vignette strength (0 off)
 }
 
 // world-space view ray through pixel position pp (target pixels)
 fn viewRay(pp: vec2f) -> vec3f {
   let uv = pp * VW.size.zw;
-  let x = (uv.x * 2.0 - 1.0) * VW.right.w;
-  let y = (1.0 - uv.y * 2.0) * VW.fwd.w;
+  let x = (uv.x * 2.0 - 1.0) * VW.right.w + VW.skew.x;
+  let y = (1.0 - uv.y * 2.0) * VW.fwd.w + VW.skew.y;
   return normalize(VW.fwd.xyz + VW.right.xyz * x + VW.up.xyz * y);
 }
 
@@ -238,7 +259,7 @@ fn cloudShadow(p: vec3f, L: vec3f, rw: RWt) -> f32 {
 // cost ablation: false drops cloud shadows everywhere (terrain, water glitter, life)
 const CLOUD_SHADOW_ON: bool = true;
 fn cloudShadowF(p: vec3f, L: vec3f, c0: vec4f, c1: vec4f, c2: vec4f, c3: vec4f) -> f32 {
-  if (!CLOUD_SHADOW_ON || L.y < 0.005) { return 1.0; }
+  if (!CLOUD_SHADOW_ON || L.y < 0.005 || isOff(OFF_CLOUDSHADOW)) { return 1.0; }
   var tr = 1.0;
   let ly = max(L.y, 0.1);
   if (c0.x > 0.005) {

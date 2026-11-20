@@ -128,13 +128,14 @@ fn place(L: u32, li: u32) -> Inst {
   if (FR.time.w < 0.5) { cell *= 2.0; N = N / 2u; }
   if (li >= N * N) { return I; }
   let cam = VW.cam.xyz;
-  let b0 = vec2i(floor(cam.xz / cell)) - vec2i(i32(N / 2u));
+  let anc = VW.anc.xyz; // grid, range and fade from the head: both eyes place the same instances
+  let b0 = vec2i(floor(anc.xz / cell)) - vec2i(i32(N / 2u));
   let ci = b0 + vec2i(i32(li % N), i32(li / N));
   let h = hu(ci.x, ci.y, 7001u + L * 31u);
   I.h = h; I.cell = cell;
   let u = lfRand(h, 3u); let u2 = lfRand(h, 4u);
   let p2 = (vec2f(ci) + vec2f(lfRand(h, 1u), lfRand(h, 2u))) * cell;
-  if (length(p2 - cam.xz) > lb.w) { return I; }
+  if (length(p2 - anc.xz) > lb.w) { return I; }
   let cls = u32(la.w);
   // The Drift: the realm row at the instance's own position (not the camera's), so both realms' life coexists
   // and thins out through each other across a border zone, and nothing pops when the camera crosses it
@@ -156,7 +157,7 @@ fn place(L: u32, li: u32) -> Inst {
   let lv = clipLevel(p2, 0u, 8.0);
   let s = clipS(lv, p2);
   I.p = vec3f(p2.x, s.x, p2.y); I.g = s.yz;
-  let d = length(I.p - cam);
+  let d = length(I.p - anc);
   var fade = sstep(lb.w, lb.z, d);
   if (kind == K_MUSH && L == 6u) { fade = sstep(122.0, 90.0, d); } // mushrooms share the crown layer, nearer reach
   if (lb.y > 0.0 && kind != K_VINE) { fade *= sstep(lb.x, lb.y, d); }
