@@ -18,7 +18,7 @@
 //   6 crowns/mush   64^2 =  4096 x 672/1440      7 crystals   48^2 =  2304 x 288    8 impostor  168^2 = 28224 x 27
 //   9 giant mush    14^2 =   196 x 1440
 // Prepass: 103872 threads per view, most rejected after one hash. Accepted per view in the shots: 0.3-3k per layer.
-// Ablation (integration's off= bits, ctx.off): OFF_FLORA here; LF_OFF_FSHADOW in floracs.wgsl.
+// Ablation (integration's off= bits, ctx.off): OFF_FLORA here; OFF_FSHADOW (common.wgsl) in floracs.wgsl.
 import { G, shader, pipeline, computePipeline, bgl, bindGroup, buffer, FO, VO } from '../gpu.js';
 import { F, TABLE, ROWF, NREALM, W_IN, W_ID, W_W, realmWeightsA } from '../realms.js';
 import { heightBatch } from '../world.js';
@@ -49,7 +49,7 @@ const verts = new Uint32Array(NLAYER), cls = new Uint8Array(NLAYER), reach = new
 const wCls = new Float32Array(7);
 const mask = new Uint32Array(4); // x: layers enabled this frame, y: ablation bits (both read by the prepass)
 // ablation bits (integration's off= URL parameter, read from ctx.off; mirror of common.wgsl): flora skips prepare
-// and draw here; fshadow is handled in floracs.wgsl (LF_OFF_FSHADOW)
+// and draw here; fshadow is handled in floracs.wgsl (OFF_FSHADOW)
 const OFF_FLORA = 1, OFF_FAUNA_H = 2; // herds follow the fauna bit
 let pPool, bgPool, poolN = 0, pStrip, pBlade, pLathe, pPlace, statBuf = null, statState = 0, bgC, bgR = [], args, maskBuf, groups = 0;
 // camera height above ground, in typed arrays: a double in a module `let` or passed to heightAt is boxed per frame

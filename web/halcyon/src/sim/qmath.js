@@ -167,3 +167,24 @@ export function vnoiseA(A, i, seed) {
 
 // (init-time / tests only; returns a double)
 export function wrapPi(a) { return a - 6.283185307179586 * Math.round(a / 6.283185307179586); }
+
+// JIT warm-up at load: run every branch of qfromMat and qfromUp, so the optimising compiler has type feedback for
+// all of them and never deoptimises the first time a flight turns into a rare branch (each deopt runs the function
+// in baseline code for a while, boxing doubles: tools/alloc.mjs --xrmock caught one in the steady state). V8 only
+// records feedback once a function has run a few times (lazy feedback allocation), hence the repeats.
+{
+  const q = new Float64Array(4);
+  // rotation matrices with fractional entries (integer ones would teach V8 int32 arithmetic and deoptimise later),
+  // from quaternions whose w, x, y, z component dominates in turn: one per branch
+  const M = [[0.9, 0.2, 0.3, 0.1], [0.15, 0.95, 0.2, 0.1], [0.1, 0.2, 0.93, 0.15], [0.12, 0.2, 0.1, 0.96]].map(([w, x, y, z]) => {
+    const l = Math.hypot(w, x, y, z); w /= l; x /= l; y /= l; z /= l;
+    return new Float64Array([1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y),
+      2 * (x * y - w * z), 1 - 2 * (x * x + z * z), 2 * (y * z + w * x),
+      2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)]);
+  });
+  const U = [new Float64Array([0.1, 0.99, 0.0995]), new Float64Array([0.0001, -0.9999999, 0.0002]), new Float64Array([0.6, 0.79, 0.1])];
+  for (let r = 0; r < 64; r++) {
+    for (let k = 0; k < 4; k++) qfromMat(q, M[k]);
+    for (let k = 0; k < 3; k++) qfromUp(q, U[k]);
+  }
+}

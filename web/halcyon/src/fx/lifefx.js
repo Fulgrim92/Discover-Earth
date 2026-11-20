@@ -7,7 +7,7 @@ import { G, bgl, bindGroup, buffer, FO, VO } from '../gpu.js';
 
 export const TYPES = ['', 'orca', 'murmuration', 'flamingo', 'breach', 'jelly', 'giants'];
 const DUR = new Float32Array([0, 110, 70, 40, 45, 60, 240]);
-const DIST = new Float32Array([0, 120, 260, 70, 150, 110, 1400]);
+const DIST = new Float32Array([0, 120, 260, 70, 95, 110, 1400]);
 export const ENC = new Float32Array(32);   // 8 slots x 2 vec4 (see lifefx.wgsl)
 export const DIR = new Float32Array(16);   // per slot travel direction x, z (CPU side, for actors)
 const RIP = new Float32Array(64);
@@ -17,6 +17,7 @@ export const lifeFx = { buf: null, bgl: null, bg: null };
 let stubType = 0, stubEt = 0;
 
 export function init() {
+  if (lifeFx.buf) return;
   lifeFx.buf = buffer(512, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'lifefx');
   lifeFx.bgl = bgl('u', 'lifefx');
   lifeFx.bg = bindGroup(lifeFx.bgl, [lifeFx.buf], 'lifefx');

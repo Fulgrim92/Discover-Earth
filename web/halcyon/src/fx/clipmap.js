@@ -11,12 +11,17 @@ export const T0 = 0.5;
 const SNAP = 32; // texels
 
 const U = GPUTextureUsage;
-let pBake, pGrad, tmpH, tmpA, tmpB, data, maskA, maskB;
+let pBake, pGrad, pShade, shadeBG = [], shadeDesc = [], tmpH, tmpA, tmpB, data, maskA, maskB, shade;
 let bakeDesc, gradDesc = [], bakeBG = [], gradBG = [], bakeBuf = [];
 const bakeU = new Float32Array(4);
 const want = new Float64Array(LEVELS * 2);
 const have = new Float64Array(LEVELS * 2);
 const baked = new Uint8Array(LEVELS);
+// shade layer (terrain-art): sun drift each level's baked sun shadow was made for; a level is rebaked when the
+// sun has moved more than SUN_REBAKE degrees of drift since (one level per frame, finest stale first)
+const sunAt = new Float32Array(LEVELS);
+let sunSrc = null; // view of the frame's sun drift: copied typed-array to typed-array, no double crosses a call
+const SUN_REBAKE = 0.3;
 let cpSrcA, cpSrcB, cpDstA = [], cpDstB = [], cpSize;
 export const clip = { bgl: null, bg: null, data: null, format: '' };
 
@@ -28,6 +33,8 @@ export function init(ctx) {
   data = tex(N, N, G.clipFormat, U.RENDER_ATTACHMENT | U.TEXTURE_BINDING | U.COPY_SRC, { layers: LEVELS, label: 'clip' });
   maskA = tex(N, N, 'rgba8unorm', U.COPY_DST | U.TEXTURE_BINDING, { layers: LEVELS, label: 'maskA' });
   maskB = tex(N, N, 'rgba8unorm', U.COPY_DST | U.TEXTURE_BINDING, { layers: LEVELS, label: 'maskB' });
+  sunSrc = ctx.frame.subarray(FO.sun + 3, FO.sun + 4);
+  shade = tex(N, N, 'rgba8unorm', U.RENDER_ATTACHMENT | U.TEXTURE_BINDING, { layers: LEVELS, label: 'clipShade' });
   clip.data = data; clip.format = G.clipFormat;
 
   const mod = shader(CLIP + TERRFN + BAKE, 'bake');
@@ -35,6 +42,7 @@ export function init(ctx) {
   pBake = pipeline({ label: 'bake', module: mod, fs: 'fsBake', layouts: [ctx.bgl0, bl1],
     targets: [{ format: 'r32float' }, { format: 'rgba8unorm' }, { format: 'rgba8unorm' }] });
   pGrad = pipeline({ label: 'grad', module: mod, fs: 'fsGrad', layouts: [ctx.bgl0, bl2], targets: [{ format: G.clipFormat }] });
+  pShade = pipeline({ label: 'shade', module: mod, fs: 'fsShade', layouts: [ctx.bgl0, bl2], targets: [{ format: 'rgba8unorm' }] });
 
   bakeDesc = { colorAttachments: [
     { view: tmpH.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } },
@@ -46,7 +54,9 @@ export function init(ctx) {
     bakeBuf[i] = buffer(16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'bakeU' + i);
     bakeBG[i] = bindGroup(bl1, [bakeBuf[i]]);
     gradBG[i] = bindGroup(bl2, [bakeBuf[i], tmpHView]);
+    shadeBG[i] = bindGroup(bl2, [bakeBuf[i], data.createView({ dimension: '2d', baseArrayLayer: i, arrayLayerCount: 1 })]);
     gradDesc[i] = { colorAttachments: [{ view: data.createView({ dimension: '2d', baseArrayLayer: i, arrayLayerCount: 1 }), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }], timestampWrites: tsEnd(TS_BAKE) };
+    shadeDesc[i] = { colorAttachments: [{ view: shade.createView({ dimension: '2d', baseArrayLayer: i, arrayLayerCount: 1 }), loadOp: 'clear', storeOp: 'store', clearValue: { r: 1, g: 1, b: 0.5, a: 0.5 } }] };
     cpDstA[i] = { texture: maskA, origin: { x: 0, y: 0, z: i } };
     cpDstB[i] = { texture: maskB, origin: { x: 0, y: 0, z: i } };
     have[i * 2] = 1e30; have[i * 2 + 1] = 1e30;
@@ -55,16 +65,20 @@ export function init(ctx) {
   cpSrcB = { texture: tmpB, origin: { x: 1, y: 1, z: 0 } };
   cpSize = { width: N, height: N, depthOrArrayLayers: 1 };
 
-  clip.bgl = bgl('aaas', 'clip');
+  clip.bgl = bgl('aaasa', 'clip');
   const samp = d.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' });
   clip.bg = bindGroup(clip.bgl, [
     data.createView({ dimension: '2d-array' }), maskA.createView({ dimension: '2d-array' }), maskB.createView({ dimension: '2d-array' }), samp,
+    shade.createView({ dimension: '2d-array' }),
   ]);
 }
 
-function bakeLevel(ctx, enc, i) {
+// shadeOnly: rerun only the shade pass (sun shadow, sky visibility, macro noise) from the level's baked heights
+// (cheap, no terrain eval), when the sun has drifted. One function, so its pass encoders stay the platform's.
+function bakeLevel(ctx, enc, i, shadeOnly) {
   const t = T0 * (1 << i);
   const cx = want[i * 2], cz = want[i * 2 + 1];
+  if (!shadeOnly) {
   bakeU[0] = cx - 256 * t; bakeU[1] = cz - 256 * t; bakeU[2] = t; bakeU[3] = i;
   G.queue.writeBuffer(bakeBuf[i], 0, bakeU);
   let p = enc.beginRenderPass(bakeDesc);
@@ -75,6 +89,12 @@ function bakeLevel(ctx, enc, i) {
   p = enc.beginRenderPass(gradDesc[i]);
   p.setPipeline(pGrad); p.setBindGroup(0, ctx.views[0].bg0); p.setBindGroup(1, gradBG[i]);
   p.draw(3); p.end();
+  }
+  const q = enc.beginRenderPass(shadeDesc[i]);
+  q.setPipeline(pShade); q.setBindGroup(0, ctx.views[0].bg0); q.setBindGroup(1, shadeBG[i]);
+  q.draw(3); q.end();
+  sunAt.set(sunSrc, i);
+  if (shadeOnly) return;
   have[i * 2] = cx; have[i * 2 + 1] = cz; baked[i] = 1;
   const o = FO.lv + i * 4;
   ctx.frame[o] = cx - 256 * t; ctx.frame[o + 1] = cz - 256 * t; ctx.frame[o + 2] = t; ctx.frame[o + 3] = 1;
@@ -99,6 +119,8 @@ export function update(ctx, enc, camX, camZ, all) {
     return n;
   }
   if (best >= 0) { bakeLevel(ctx, enc, best); return 1; }
+  const sd = ctx.frame[FO.sun + 3];
+  for (let i = 0; i < LEVELS; i++) if (baked[i] && Math.abs(sd - sunAt[i]) > SUN_REBAKE) { bakeLevel(ctx, enc, i, true); return 0; }
   return 0;
 }
 
