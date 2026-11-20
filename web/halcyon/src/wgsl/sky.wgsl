@@ -274,6 +274,13 @@ fn bodyDisc(d: vec3f, B: vec3f, rad: f32, pix: f32) -> f32 {
   return 1.0 - sstep(rad - pix * 0.5, rad + pix * 0.5, ang);
 }
 
+// the star field turns about the celestial pole (62 degrees up in the north, the Faroes' latitude) once a day
+// (FR.sky.y): a view direction is turned back into the fixed star frame (Rodrigues)
+const POLE: vec3f = vec3f(0.0, 0.88295, -0.46947);
+fn starFrame(d: vec3f) -> vec3f {
+  let a = -FR.sky.y; let c = cos(a); let s = sin(a);
+  return d * c + cross(POLE, d) * s + POLE * dot(POLE, d) * (1.0 - c);
+}
 fn skyFull(d: vec3f, pix: f32) -> vec3f {
   let A = atmoSky(d);
   var c = skyBase(d);
@@ -314,8 +321,9 @@ fn skyFull(d: vec3f, pix: f32) -> vec3f {
   if (gw > 0.001 && d.y > -0.05) { g = giant(d); g.a *= gw; }
   if (vis > 0.01 && d.y > 0.0) {
     let unit = 0.9 * 8.3e-6; // a magnitude-0 star: 10^(-0.4 * 12.7) of a full moon (0.9 in every realm)
-    var sk = stars(d, pix, unit);
-    sk += milkyWay(d) * sstep(0.45, 0.9, s5.x);
+    let ds = starFrame(d);
+    var sk = stars(ds, pix, unit);
+    sk += milkyWay(ds) * sstep(0.45, 0.9, s5.x);
     c += sk * vis * A.a * (1.0 - g.a);
   }
   // the aurora is only seen once the sun is well down (in a Drift it comes out with the dark, not as a streak)

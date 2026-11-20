@@ -31,6 +31,26 @@ function toGround(r, mu) {
 
 // transmittance from (r, mu) to the top of the atmosphere into out (0 if the planet is in the way, with a soft edge)
 const DN = new Float64Array(3), DT = new Float64Array(3);
+// per-frame form (realms.js skyTick): r and mu come in TR_IN, a double argument would be boxed every frame
+export const TR_IN = new Float64Array(2);
+export function transmittanceA(P, out) {
+  // self-contained (no helper calls with double arguments)
+  const r = TR_IN[0], mu = TR_IN[1];
+  const b = r * mu, L = -b + Math.sqrt(Math.max(b * b - (r * r - RT * RT), 0));
+  const hm = P.hm;
+  let tr = 0, tm = 0, to = 0;
+  for (let i = 0; i < 12; i++) {
+    const t = ((i + 0.5) / 12) * L;
+    const h = Math.sqrt(r * r + t * t + 2 * r * mu * t) - RG;
+    tr += Math.exp(-h / 8); tm += Math.exp(-h / hm); to += Math.max(0, 1 - Math.abs(h - 25) / 15);
+  }
+  for (let c = 0; c < 3; c++) out[c] = Math.exp(-(P.br[c] * tr + P.bme * tm + P.bo[c] * to) * (L / 12));
+  const dg = b * b - (r * r - RG * RG);
+  if (mu < 0 && dg >= 0 && -b - Math.sqrt(dg) > 0) {
+    const k = Math.min(Math.max((mu + Math.sqrt(Math.max(1 - (RG / r) * (RG / r), 0))) / 0.009 + 1, 0), 1);
+    out[0] *= k; out[1] *= k; out[2] *= k;
+  }
+}
 export function transmittance(P, r, mu, out) {
   const g = toGround(r, mu);
   const L = toTop(r, mu);
@@ -107,7 +127,8 @@ export function skyRadiance(P, h, d, L, E, out) {
 // derived colours for a realm: sun at ground (transmittance x star), sky irradiance on a horizontal surface,
 // horizon radiance (mean over azimuth, 2 degrees up) and the sunward horizon radiance; E is per unit irradiance
 const D = new Float64Array(3), LL = new Float64Array(3), EE = new Float64Array(3);
-export function derive(P, sunEl, sunAz, moonEl, moonAz, moonE, out) {
+// ne, na: elevation and azimuth samples of the irradiance integral (fewer for the time-of-day arc tables)
+export function derive(P, sunEl, sunAz, moonEl, moonAz, moonE, out, ne = 8, na = 16) {
   const rad = Math.PI / 180;
   const sunL = [Math.sin(sunAz * rad) * Math.cos(sunEl * rad), Math.sin(sunEl * rad), -Math.cos(sunAz * rad) * Math.cos(sunEl * rad)];
   const moonL = [Math.sin(moonAz * rad) * Math.cos(moonEl * rad), Math.sin(moonEl * rad), -Math.cos(moonAz * rad) * Math.cos(moonEl * rad)];
@@ -126,7 +147,7 @@ export function derive(P, sunEl, sunAz, moonEl, moonAz, moonE, out) {
   };
   // irradiance from the upper hemisphere (cosine weighted), per unit sun irradiance
   let e0 = 0, e1 = 0, e2 = 0;
-  const NE = 8, NA = 16;
+  const NE = ne, NA = na;
   for (let i = 0; i < NE; i++) {
     const el = (i + 0.5) / NE * Math.PI / 2;
     for (let j = 0; j < NA; j++) {
