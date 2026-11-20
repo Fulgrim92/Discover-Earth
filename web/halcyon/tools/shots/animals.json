@@ -1,0 +1,16 @@
+{
+  "defaults": { "w": 1920, "h": 1080, "t": 20, "hud": 0, "fov": 50 },
+  "shots": [
+    { "name": "sheep_10",       "params": { "realm": 0, "pos": "138,3,105", "agl": 1, "yaw": 0, "pitch": -18 } },
+    { "name": "sheep_60",       "params": { "realm": 0, "pos": "138,14,147", "agl": 1, "yaw": 0, "pitch": -12 } },
+    { "name": "horses_10",      "params": { "realm": 1, "pos": "231,3,-168", "agl": 1, "yaw": 0, "pitch": -18 } },
+    { "name": "horses_60",      "params": { "realm": 1, "pos": "231,14,-126", "agl": 1, "yaw": 0, "pitch": -12 } },
+    { "name": "foxes_10",       "params": { "realm": 4, "pos": "-162,2.5,-182", "agl": 1, "yaw": 0, "pitch": -18 } },
+    { "name": "foxes_60",       "params": { "realm": 4, "pos": "-162,14,-140", "agl": 1, "yaw": 0, "pitch": -12 } },
+    { "name": "seals_10",       "params": { "realm": 4, "pos": "-1018,3,-939", "agl": 1, "yaw": 0, "pitch": -18 } },
+    { "name": "seals_60",       "params": { "realm": 4, "pos": "-1018,14,-897", "agl": 1, "yaw": 0, "pitch": -12 } },
+    { "name": "lighteaters_10", "params": { "realm": 5, "pos": "-112,4,-95", "agl": 1, "yaw": 0, "pitch": -16 } },
+    { "name": "lighteaters_60", "params": { "realm": 5, "pos": "-112,16,-57", "agl": 1, "yaw": 0, "pitch": -12 } },
+    { "name": "flamingo_mirror","params": { "realm": 2, "pos": "262,1.7,-688", "yaw": 330, "pitch": 0, "fov": 30 } }
+  ]
+}

@@ -89,6 +89,14 @@ export const SCRIPTS = {
     { d: 5, s: [0, 0, 0, 0.8], auto: 0, cam: FPV },
   ],
 };
+// the Drift (living world): from Home south into Aurora Ice at transit speed, chase camera, to check that nothing
+// pops across the border (flora, herds, birds, particles) while moving
+SCRIPTS.drift = [
+  { d: 1.0, s: [0, 0, 0, 0], fm: GPS, cam: CHASE, sport: 1 },
+  { d: 2, s: [0, 0.8, 0, 0] },
+  { d: 90, s: [0, 0, 0, 1], boost: 1 },
+];
+
 // a tour of every camera and mode, used by tools/play.mjs for the overview sheet
 SCRIPTS.tour = [].concat(
   SCRIPTS.gps.slice(0, 4),
