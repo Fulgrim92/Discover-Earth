@@ -8,7 +8,8 @@
 import { shader, bgl, pipeline, FO } from '../gpu.js';
 import { F } from '../realms.js';
 import { clip } from './clipmap.js';
-import { LMAX } from './flora.js';
+import { LMAX, BIRDON } from './flora.js';
+import * as herd from './herd.js';
 import CLIP from '../wgsl/clip.wgsl';
 import SKY from '../wgsl/sky.wgsl';
 import LIFE from '../wgsl/life.wgsl';
@@ -45,10 +46,9 @@ export function draw(ctx, pass, view) {
   if ((ctx.off | 0) & OFF_FAUNA) return;
   // groups are enabled by every realm in reach (flora.prepare computes LMAX each frame); each flock thins by the
   // weights at its home
-  const v2 = F.V2 * 4;
   let bound = 0;
   for (let g = 0; g < 3; g++) {
-    if (LMAX[v2 + g] < 0.002) continue;
+    if (!BIRDON[g]) continue;
     if (!bound) { pass.setPipeline(pBird); pass.setBindGroup(0, view.bg0); pass.setBindGroup(1, clip.bg); bound = 1; }
     pass.draw(BIRD_VERTS, BIRDS[g], 0, g << 16);
   }
@@ -58,6 +58,7 @@ export function draw(ctx, pass, view) {
 export function drawTransparent(ctx, pass, view) {
   const fr = ctx.frame, v2 = F.V2 * 4;
   if (LMAX[v2] > 0.002 && fr[FO.row + F.M4 * 4 + 1] > 0.2) { pass.setPipeline(pMirror); pass.draw(BIRD_VERTS, BIRDS[0], 0, 0); }
+  if (fr[FO.row + F.M4 * 4 + 1] > 0.2 && herd.anyMirror()) herd.drawMirror(ctx, pass); // herd flamingos in the mirror
   if (sprayOn(v2)) { pass.setPipeline(pSpray); pass.setBindGroup(3, lifeFx.bg); pass.draw(4, SPRAY_N); }
   if (LMAX[v2 + 3] > 0.002) { pass.setPipeline(pJelly); pass.setBindGroup(3, lifeFx.bg); pass.draw(JELLY_VERTS, 25, 0, 3 << 16); }
 }
@@ -73,5 +74,5 @@ function sprayOn(v2) {
 export function anyTransparent(ctx) {
   if ((ctx.off | 0) & OFF_FAUNA) return false;
   const v2 = F.V2 * 4;
-  return LMAX[v2] > 0.002 || LMAX[v2 + 3] > 0.002 || sprayOn(v2);
+  return LMAX[v2] > 0.002 || LMAX[v2 + 3] > 0.002 || sprayOn(v2) || (ctx.frame[FO.row + F.M4 * 4 + 1] > 0.2 && herd.anyMirror());
 }

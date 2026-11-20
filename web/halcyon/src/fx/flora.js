@@ -112,6 +112,7 @@ LIFE_PRESENT[1] = 0xffffffff;
 // largest value of every row entry over the present realms (read LMAX[field * 4 + component]; a typed array, so
 // no double crosses a function boundary)
 export const LMAX = new Float32Array(ROWF);
+export const BIRDON = new Uint8Array(4); // bird groups 0-2 and jellies (3) in reach this frame
 export function lifePresent(ctx, view) {
   const fno = ctx.frame[FO.time + 2];
   if (fno === LIFE_PRESENT[1]) return;
@@ -128,6 +129,9 @@ export function lifePresent(ctx, view) {
     if (!(bits & (1 << r))) continue;
     for (let c = 0; c < ROWF; c++) if (TABLE[r * ROWF + c] > LMAX[c]) LMAX[c] = TABLE[r * ROWF + c];
   }
+  // integer flags for fauna's draw calls (bird groups 0-2, jellies), so the draw path compares no doubles
+  const v2 = F.V2 * 4;
+  for (let g = 0; g < 4; g++) BIRDON[g] = LMAX[v2 + g] >= 0.002 ? 1 : 0;
 }
 
 function layers(ctx, view) {
