@@ -14,6 +14,13 @@
 //                    with at most inflight=<n> (2) frames queued on the GPU; inflight=0: no cap
 //   alloc=1          zero-allocation gate hooks (tools/alloc.mjs): warm=<frames>, frames=<frames>
 //   dynres=0|1, target=<gpu ms>, hdr=1, stereo=1, scale=<fixed internal scale>, quality=low|high, hud=0, audio=1
+//   overlay=0        no start overlay (title, controls): flying starts at once, audio on the first gesture. hud=0
+//                    implies it (captures on a real GPU) unless overlay=1
+//   grab=<n>         live mode (the real loop, no shot): after n frames stop, read the frame back like a shot and
+//                    report __halcyon.campose / .time, so tools/livecheck.mjs can render the same pose with shot=1
+//   campose=x,y,z,qx,qy,qz,qw,fovY(rad)  static shots: exact camera (overrides realm/pos/yaw/pitch/fov)
+//   f32=0            behave as if the adapter had no float32-filterable (the target RX 6650 XT / D3D12 path); every
+//                    tools/ gate passes it unless told f32=1
 //   off=<list>       ablation for benching: comma list of OFF_NAMES (flora, fauna, particles, tshadow, tdetail, tao,
 //                    fshadow, clouds, cloudshadow, water, rings, drone, msaa), sent as bits in Frame.flags
 //                    (OFF_* in common.wgsl); off=all switches everything off
@@ -72,6 +79,7 @@ const P = {
   stride: SCRIPT_STRIDE(), alloc: num('alloc', 0) > 0, warm: num('warm', 600), frames: num('frames', 0), audio: num('audio', 0) > 0,
   dynres: num('dynres', -1), target: num('target', 11), hdr: num('hdr', 0) > 0, sim: num('sim', -1), simt: num('simt', 0.5),
   orbit: Q.has('orbit') ? Q.get('orbit').split(',').map(parseFloat) : null, timer: num('timer', 1) > 0,
+  grab: num('grab', 0) | 0, campose: Q.has('campose') ? Q.get('campose').split(',').map(parseFloat) : null,
 };
 if (P.bench && !P.script) P.script = 'bench';
 // bench: a fixed 1920x1080 canvas whatever the window, so runs on different screens compare
@@ -104,7 +112,7 @@ H.off = OFF_NAMES.filter((n, i) => OFF & (1 << i));
 const SCRIPTED = P.script !== '';
 const CAPTURE = P.shot && SCRIPTED;         // tools/play.mjs drives frames through __halcyon.capture(t)
 const STATIC = P.shot && !SCRIPTED;         // one frame from the URL camera
-const OFFSCREEN = P.shot || !P.present;
+const OFFSCREEN = P.shot || !P.present || P.grab > 0;
 // Offscreen (present=0) there is no swap chain to hold the CPU back, so a slow GPU (SwiftShader) falls further and
 // further behind: frame times would measure rAF, not rendering, and readbacks would wait behind an ever longer
 // queue. Cap the frames in flight (default 2; inflight=0 turns the cap off, as the alloc gate does).
@@ -229,7 +237,7 @@ function layoutViews() {
   tg = makeTargets(Math.max(8, Math.round(vw * s)), Math.max(8, Math.round(ch * s)));
   if (OFFSCREEN && !P.shot && (!offTex || offTex.width !== cw || offTex.height !== ch)) {
     if (offTex) offTex.destroy();
-    offTex = G.device.createTexture({ size: [cw, ch], format: G.canvasFormat, usage: GPUTextureUsage.RENDER_ATTACHMENT, label: 'offscreen' });
+    offTex = G.device.createTexture({ size: [cw, ch], format: G.canvasFormat, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC, label: 'offscreen' });
     offView = offTex.createView();
   }
   H.size = [cw, ch, tg.w, tg.h];
@@ -242,6 +250,8 @@ function fitCanvas() {
   let w = Math.max(16, Math.round(innerWidth * dpr)), h = Math.max(16, Math.round(innerHeight * dpr));
   const cap = MAXPIX[P.quality], px = w * h;
   if (px > cap) { const k = Math.sqrt(cap / px); w = Math.round(w * k); h = Math.round(h * k); }
+  const mx = G.device ? G.device.limits.maxTextureDimension2D : 8192;
+  if (w > mx || h > mx) { const k = mx / Math.max(w, h); w = Math.floor(w * k); h = Math.floor(h * k); }
   if (w === canvas.width && h === canvas.height) return false;
   canvas.width = w; canvas.height = h;
   return true;
@@ -275,13 +285,13 @@ function toggleHDR() {
 async function init() {
   xr.useGPU(G);
   await xr.probe(P.xrmock); // before the device: VR needs an xrCompatible adapter
-  await initDevice({ noTimer: !P.timer, syncPipelines: num('asyncpipes', 1) === 0, xrCompatible: XR.wantCompatible });
+  await initDevice({ noF32: num('f32', 1) === 0, noTimer: !P.timer, syncPipelines: num('asyncpipes', 1) === 0, xrCompatible: XR.wantCompatible });
   xr.deviceReady();
   canvas = document.getElementById('c');
   const W = P.w || Math.round(innerWidth * devicePixelRatio), Hh = P.h || Math.round(innerHeight * devicePixelRatio);
   canvas.width = W; canvas.height = Hh;
   if (P.w && !P.benchFixed) { canvas.style.width = P.w + 'px'; canvas.style.height = P.h + 'px'; } else if (!P.w) fitCanvas();
-  if (P.shot) {
+  if (P.shot || P.grab) {
     // Headless capture: WebGPU canvas presentation is not reliable under SwiftShader, so the final pass renders to
     // an offscreen texture that is read back into a 2D canvas once per shot (harness only, outside the frame loop).
     G.canvasFormat = 'rgba8unorm';
@@ -343,9 +353,10 @@ async function init() {
     if (P.audio) sim.startAudio();
   }
   if (!P.shot) attachPage();
-  if (XR.state > 0 && !P.shot) xr.attachButton({ start: xrStart, end: xrEnd });
+  if (XR.state > 0 && !P.shot && !P.grab) xr.attachButton({ start: xrStart, end: xrEnd });
   else if (XR.state > 0) { XR.onStart = xrStart; XR.onEnd = xrEnd; } // shots: no DOM control over the capture
   H.timer = G.timestamp ? 'timestamp-query' : 'none';
+  H.gpu = G.paths;
   H.xr = XR.state === 0 ? 'none' : XR.state === 1 ? 'unavailable: ' + XR.why : 'ready';
 }
 
@@ -376,14 +387,21 @@ function attachPage() {
     clearTimeout(hideT);
     hideT = setTimeout(() => { document.body.style.cursor = 'none'; }, 2500);
   });
-  if (!SCRIPTED && !P.alloc && !P.free) {
+  if (!SCRIPTED && !P.alloc && !P.free && num('overlay', P.hud ? 1 : 0) > 0) {
     overlay = startOverlay(() => {
       started = true;
       canvas.focus();
       if (R.sim) R.sim.startAudio();
       document.body.style.cursor = 'none';
     });
-  } else started = true;
+  } else {
+    started = true;
+    if (R.sim && !SCRIPTED && !P.alloc) {
+      // no overlay to click: audio may only start from a gesture
+      const go = () => { R.sim.startAudio(); removeEventListener('pointerdown', go, true); removeEventListener('keydown', go, true); };
+      addEventListener('pointerdown', go, true); addEventListener('keydown', go, true);
+    }
+  }
 }
 
 // ---------- per view ----------
@@ -512,6 +530,7 @@ function cameraFromUrl() {
   quatFromYawPitchRoll(q4, yaw, pitch, 0);
   cam[0] = camPos[0]; cam[1] = camPos[1]; cam[2] = camPos[2];
   cam[3] = q4[0]; cam[4] = q4[1]; cam[5] = q4[2]; cam[6] = q4[3]; cam[7] = (P.fov * Math.PI) / 180;
+  if (P.campose) { for (let i = 0; i < 8; i++) cam[i] = P.campose[i]; q4[0] = cam[3]; q4[1] = cam[4]; q4[2] = cam[5]; q4[3] = cam[6]; }
   // orbit=dist,azimuth,elevation (deg): look at the drone from around it (static shots with sim=1)
   if (P.orbit && R.sim) {
     const d = R.sim.drone, r = P.orbit[0], az = (P.orbit[1] * Math.PI) / 180, el = ((P.orbit[2] || 0) * Math.PI) / 180;
@@ -580,6 +599,14 @@ function frame(now) {
   renderFrame(frameNo === 0);
 
   if (P.shot) { running = false; G.queue.onSubmittedWorkDone().then(shotDone); return; }
+  if (P.grab > 0 && frameNo >= P.grab) {
+    running = false;
+    H.campose = Array.from(cam.subarray(0, 8)).join(',');
+    H.bakes = bakeReport();
+    H.time = CLK[C_TIME];
+    G.queue.onSubmittedWorkDone().then(shotDone);
+    return;
+  }
   // once: the first frame has finished on the GPU (or, where a broken swap chain never settles the queue, 30 frames on)
   if (frameNo === 1) G.queue.onSubmittedWorkDone().then(playReady);
   else if (frameNo === 30 && !H.ready) playReady();
@@ -591,7 +618,7 @@ function frame(now) {
 }
 
 // __halcyon.ready outside shot mode: pipelines compiled and the first frame finished on the GPU
-function playReady() { H.realm = REALM_NAMES[W_NEAR[2]]; H.ready = true; }
+function playReady() { if (P.grab) return; H.realm = REALM_NAMES[W_NEAR[2]]; H.ready = true; } // grab: ready after the grab
 
 // any gamepad button (or stick throw) also starts
 function pollStartButton(sim) {
@@ -712,15 +739,21 @@ async function finishBench() {
   const r = perf.benchReport({
     script: R.player.name, w: canvas.width, h: canvas.height, internal: [tg.w, tg.h], scale: internalScale(),
     resolution: P.benchFixed ? 'fixed 1920x1080 canvas (bench default), internal = 1920x1080 x dynres scale' : 'w=' + P.w + ' h=' + P.h + ' from the URL',
-    off: H.off, offBits: OFF, split: !!splitDesc, msaa: ctx.msaa,
+    off: H.off, offBits: OFF, split: !!splitDesc, msaa: ctx.msaa, gpu: G.paths, canvasFormat: G.canvasFormat, hdr: G.hdr,
     quality: ['low', 'normal', 'high'][P.quality], stereo: nViews === 2, adapter: adapterInfo(), stride: P.stride,
-    inflight: MAX_INFLIGHT, present: !OFFSCREEN,
+    inflight: MAX_INFLIGHT, present: !OFFSCREEN, bakes: bakeReport(),
     route: 'Home Fjords rings, boost transit, Stone Forest rings, Lumen Deep rings, FPV (fixed dt 1/' + P.fps + ')',
   });
   H.bench = r;
   console.log('HALCYON_BENCH ' + JSON.stringify(r));
   benchPanel(r);
   H.benchState = 'done';
+}
+// clip bakes since load (fx/clipmap.js stats): full bakes, shade-only re-bakes, per second of sim time and per frame
+function bakeReport() {
+  const t = CLK[C_TIME] > 0 ? CLK[C_TIME] : 1, f = frameNo > 0 ? frameNo : 1;
+  const s = clipmap.stats;
+  return { full: s[0], shade: s[1], perSec: (s[0] + s[1]) / t, perFrame: (s[0] + s[1]) / f, frames: frameNo, time: CLK[C_TIME] };
 }
 function adapterInfo() {
   const i = G.adapter && G.adapter.info;
@@ -774,20 +807,24 @@ async function shotDone() {
   H.ready = true;
 }
 
-// DESIGN section 6: read back baked levels and compare with heightAt at 256 points (max error < 0.15 m)
+// DESIGN section 6: read back baked levels and compare with heightAt at 256 points (max error < 0.15 m). Then
+// the heights the shaders see: clipH (clip.wgsl) at 256 off-grid points against an f64 bilinear of the read-back
+// texels (max error < 0.15 m). Runs with and without float32-filterable (f32=0): the half-float fallback that made
+// the RX 6650 XT terrain faceted fails the second check by up to 0.25 m.
 async function heightCheck() {
-  if (G.clipFormat !== 'rgba32float') { H.heightcheck = { skipped: 'no float32-filterable' }; return; }
   let maxErr = 0, sum = 0, n = 0, worst = null;
   const levels = [0, 2, 4, 6, 8];
+  const reads = [];
   for (const L of levels) {
     const r = await clipmap.readLevel(ctx, L);
+    reads.push(r);
     setFootprint(r.t); // coarse levels are band-limited (terrfn.wgsl footprint())
     const per = L === 8 ? 52 : 51;
     for (let k = 0; k < per; k++) {
       const h1 = Math.imul(k + 1, 0x9e3779b1) ^ Math.imul(L + 7, 0x85ebca6b);
       const m = (h1 >>> 3) % 512, j = (h1 >>> 15) % 512;
       const x = r.x0 + m * r.t, z = r.z0 + j * r.t;
-      const g = r.data[(j * 512 + m) * 4];
+      const g = r.data[j * 512 + m];
       const c = heightAt(x, z);
       const e = Math.abs(g - c);
       sum += e; n++;
@@ -795,8 +832,37 @@ async function heightCheck() {
     }
   }
   setFootprint(0);
-  H.heightcheck = { n, maxErr, meanErr: sum / n, worst, pass: maxErr < 0.15 };
+  // sampled: points inside each level (8 texels from its edge), fractional texel offsets
+  const per = 52, pts = new Float32Array(levels.length * per * 4);
+  for (let li = 0; li < levels.length; li++) {
+    const r = reads[li];
+    for (let k = 0; k < per; k++) {
+      const h1 = Math.imul(k + 101, 0x9e3779b1) ^ Math.imul(levels[li] + 3, 0x85ebca6b);
+      const u = 8 + ((h1 >>> 2) % 495000) / 1000, v = 8 + ((Math.imul(h1, 0x27d4eb2f) >>> 2) % 495000) / 1000;
+      const o = (li * per + k) * 4;
+      pts[o] = r.x0 + u * r.t; pts[o + 1] = r.z0 + v * r.t; pts[o + 2] = levels[li];
+    }
+  }
+  const got = await clipmap.probe(ctx, pts);
+  let sMax = 0, sSum = 0, sWorst = null;
+  for (let li = 0; li < levels.length; li++) {
+    const r = reads[li];
+    for (let k = 0; k < per; k++) {
+      const o = (li * per + k) * 4;
+      const u = (pts[o] - r.x0) / r.t, v = (pts[o + 1] - r.z0) / r.t;
+      const i0 = Math.floor(u), j0 = Math.floor(v), fu = u - i0, fv = v - j0;
+      const at = (i, j) => r.data[j * 512 + i];
+      const ref = (at(i0, j0) * (1 - fu) + at(i0 + 1, j0) * fu) * (1 - fv) + (at(i0, j0 + 1) * (1 - fu) + at(i0 + 1, j0 + 1) * fu) * fv;
+      const e = Math.abs(got[o + 3] - ref);
+      sSum += e;
+      if (e >= sMax) { sMax = e; sWorst = { level: levels[li], x: pts[o], z: pts[o + 1], gpu: got[o + 3], cpu: ref }; }
+    }
+  }
+  const sampled = { n: levels.length * per, maxErr: sMax, meanErr: sSum / (levels.length * per), worst: sWorst };
+  H.heightcheck = { n, maxErr, meanErr: sum / n, worst, sampled, f32filter: G.f32filter, clipFormat: clipmap.clip.format,
+    pass: maxErr < 0.15 && sMax < 0.15 };
   if (maxErr >= 0.15) fail('heightcheck failed: max error ' + maxErr.toFixed(3) + ' m at ' + JSON.stringify(worst));
+  if (sMax >= 0.15) fail('heightcheck failed: sampled height off by ' + sMax.toFixed(3) + ' m at ' + JSON.stringify(sWorst));
 }
 
 // verbose shot mode: run each stage of view 0 as its own submit and log its time (finds slow or crashing passes)

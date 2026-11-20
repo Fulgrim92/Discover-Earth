@@ -301,7 +301,9 @@ fn realmTint() -> vec3f {
     let k = 0.9 * g.c.w;
     col = tint * (core * 5.0 + halo * 0.25) * k;
   }
-  col *= vis * airT(D, tq);
+  // up close the tube covers many pixels: a ring within a few metres (spawn, flying through) dims to a fifth instead
+  // of blowing out the middle of the frame
+  col *= vis * airT(D, tq) * mix(0.2, 1.0, sstep(2.0, 18.0, tq));
   return vec4f(col, 0.0);
 }
 
@@ -332,7 +334,8 @@ struct KOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f, @location(1
   o.pos = toClip(wp);
   let tw = 0.6 + 0.4 * sin(tm * (3.0 + h * 4.0) + h * 40.0);
   let near = sstep(5.0, 22.0, d) * sstep(4.0, 20.0, length(c - U.drone.xyz));
-  let e = sin(3.1415926 * s) * tw * near * U.sp1.w * airT(normalize(c - VW.cam.xyz), d);
+  // (no normalize: a mote exactly at the camera would make NaN, which additive blending turns into a black square)
+  let e = sin(3.1415926 * s) * tw * near * U.sp1.w * airT((c - VW.cam.xyz) / max(d, 1e-3), d);
   // hide motes behind the scene (tested at the centre)
   let pp = clipToPix(o.pos);
   let vis = clamp((sceneDist(pp) - d) / 0.5, 0.0, 1.0);
@@ -344,5 +347,6 @@ struct KOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f, @location(1
 @fragment fn fsSpark(in: KOut) -> @location(0) vec4f {
   let r2 = dot(in.uv, in.uv);
   if (r2 > 1.0) { discard; }
-  return vec4f(in.col * exp(-r2 * 6.0), 0.0);
+  // additive: never negative, never past half-float range (an Inf in the target tonemaps to a black pixel)
+  return vec4f(clamp(in.col * exp(-r2 * 6.0), vec3f(0.0), vec3f(64.0)), 0.0);
 }
