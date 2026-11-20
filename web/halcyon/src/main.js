@@ -357,6 +357,7 @@ function writeView(v) {
 const TSLOT = new Int32Array(1); // this frame's GPU timer slot
 function renderView(v, enc, target, first) {
   writeView(v);
+  flora.prepare(ctx, enc, v); // flora placement prepass (compute), before the opaque pass
   const p = enc.beginRenderPass(opaqueDesc);
   drone.drawBody(ctx, p, v);
   terrain.draw(ctx, p, v);
@@ -616,6 +617,7 @@ async function stagedFrame() {
   };
   viewFromCam(v);
   writeView(v);
+  await log('flora', (enc) => flora.prepare(ctx, enc, v));
   await log('opaque', (enc) => { const p = enc.beginRenderPass(opaqueDesc); drone.drawBody(ctx, p, v); terrain.draw(ctx, p, v); flora.draw(ctx, p, v); fauna.draw(ctx, p, v); p.end(); });
   await log('clouds', (enc) => clouds.draw(ctx, enc, v));
   await log('composite', (enc) => composite.draw(ctx, enc, v));

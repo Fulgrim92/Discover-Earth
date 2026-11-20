@@ -72,7 +72,7 @@ struct PV {
   let sc = sunCol();
   var col = vec3f(0.0);
   if (kind == 0u) {
-    let sh = lfShadow(wp, d, r.z, 8);
+    let sh = lfShadow(wp, d, r.z, 4);
     let fwd = hg(dot(dir, L), 0.8) * 6.0 + 0.05;
     col = vec3f(1.0, 0.92, 0.7) * sc * sh * fwd * 0.1 + lfAmb(1.0, vec3f(0.3)) * 0.02;
   } else if (kind == 1u) {

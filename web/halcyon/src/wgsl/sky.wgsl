@@ -104,54 +104,89 @@ fn milkyWay(d: vec3f) -> vec3f {
   return c * 0.012;
 }
 
-// ---- aurora: meandering curtains at altitude (vertical sheets standing on a wavy foot line), fine vertical rays,
-// a bright ragged green lower edge fading up through teal to magenta, uneven brightness with dark gaps.
-// Each view ray meets each sheet once (fixed-point solve on the foot line), so it costs a few ALU per curtain.
-// Altitude units: 1 = curtain base (~100 km); the sheets reach 3.4.
-fn auroraCen(x: f32, off: f32, amp: f32, fr: f32, tm: f32) -> f32 {
-  return off + amp * sin(x * 0.42 + tm * 0.03 + fr * 2.1) + 0.24 * amp * sin(x * 1.37 - tm * 0.05 + fr * 4.0) + 0.05 * sin(x * 3.3 + tm * 0.17 + fr);
+// ---- aurora: a few long ribbons (thin, softly folding vertical sheets) high above the ground ----
+// Each ribbon is a Gaussian sheet around a meandering, domain-warped centre line (the warp makes it curl back on
+// itself in folds). Along the view ray we take a handful of altitude samples; between two samples the signed
+// distance to the sheet is linear, so the sheet's emission over that segment is integrated exactly with erf.
+// That gives continuous curtains with no stepping artefacts, and folds (where the ray runs along the sheet)
+// brighten by line-of-sight overlap on their own. Units: 1 = the lower hem (~100 km); curtains fade out by ~3.6.
+fn erfA(x: f32) -> f32 {
+  let x2 = x * x;
+  return sign(x) * sqrt(1.0 - exp(-x2 * (1.2732395 + 0.147 * x2) / (1.0 + 0.147 * x2)));
+}
+// signed horizontal distance from p (ribbon frame: x along, y across) to ribbon r's centre line
+fn aurF(p: vec2f, off: f32, r: f32, tm: f32) -> f32 {
+  let X = p.x + 0.6 * sin(p.y * 1.6 + p.x * 0.27 + r * 3.0 + tm * 0.017);
+  let a1 = X * 0.21 + r * 2.1 + tm * 0.011; let a2 = X * 0.57 - tm * 0.019 + r * 4.0;
+  let c = off + 0.95 * sin(a1) + 0.32 * sin(a2) + 0.07 * sin(X * 1.9 + tm * 0.06 + r);
+  let dc = 0.2 * cos(a1) + 0.18 * cos(a2);
+  return (p.y - c) * inverseSqrt(1.0 + dc * dc);
 }
 fn aurora(d: vec3f) -> vec3f {
-  if (d.y < 0.004) { return vec3f(0.0); }
+  if (d.y < 0.003) { return vec3f(0.0); }
   let tm = FR.time.x;
-  let green = vec3f(0.1, 1.0, 0.4);
-  let teal = vec3f(0.04, 0.55, 0.7);
-  let mag = vec3f(0.6, 0.08, 0.9);
+  let green = vec3f(0.12, 1.0, 0.36);
+  let teal = vec3f(0.05, 0.62, 0.62);
+  let viol = vec3f(0.55, 0.12, 0.8);
+  let g = d.xz / d.y; // horizontal offset per unit altitude
   var acc = vec3f(0.0);
-  let g = d.xz / d.y; // ground-plane point per unit altitude
+  let NS = 14;
   for (var r = 0; r < 4; r++) {
     let fr = f32(r);
-    let ang = 0.25 + fr * 0.33;
+    // ribbons run roughly east-west across the northern sky, one nearly overhead, one low on the horizon
+    let ang = 0.12 + fr * 0.21 - fr * fr * 0.05;
+    let off = select(select(select(-1.0, -2.3, r == 1), -4.6, r == 2), 1.5, r == 3);
+    let wdt = 0.03 + 0.012 * fr;             // sheet half-thickness
+    let bright = select(1.0, 0.7, r == 3);
     let ax = vec2f(cos(ang), sin(ang));
-    let px = vec2f(-ax.y, ax.x);
-    let off = -(0.75 + fr * 0.95 + fr * fr * 0.25);
-    let amp = 0.6 - fr * 0.08;
-    let gx = dot(g, ax); let gy = dot(g, px);
-    if (gy * off <= 1e-4) { continue; }
-    var H = off / gy;
-    for (var k = 0; k < 4; k++) { H = auroraCen(gx * H, off, amp, fr, tm) / gy; }
-    let res = abs(gy * H - auroraCen(gx * H, off, amp, fr, tm));
-    if (H < 0.9 || H > 4.0 || res > 0.15) { continue; }
-    let x = gx * H;
-    let u = sqrt(max(H - 1.0, 0.0) / 2.4); // 0 at the lower edge, 1 at the top
-    // fine rays along the sheet, rippling sideways; patches with dark gaps between them
-    let xr = x * 24.0 + 2.5 * sin(x * 1.7 + tm * 0.25) + tm * 0.2;
-    let rays = 0.2 + 0.8 * pow(0.5 + 0.5 * vn(vec2f(xr, fr * 9.0), 460u), 2.5) + 0.35 * pow(0.5 + 0.5 * vn(vec2f(xr * 3.1, fr * 3.0), 464u), 4.0);
-    let pat = sstep(-0.45, 0.35, vn(vec2f(x * 0.8 - tm * 0.02, fr * 5.0 + 1.0), 461u) + 0.35 * vn(vec2f(x * 2.9 + tm * 0.04, fr), 462u));
-    let edge = 0.06 * (0.5 + 0.5 * vn(vec2f(x * 9.0 + tm * 0.1, fr * 3.0), 463u));
-    let h1 = H - 1.0 - edge;
-    let prof = sstep(-0.03, 0.02, h1) * (exp(-max(h1, 0.0) * 1.6) * 0.8 + 0.2 * exp(-max(h1, 0.0) * 0.5)) * sstep(3.4, 2.6, H);
-    // brighter where we look along the sheet (longer path through it)
-    let slope = 0.42 * amp * cos(x * 0.42 + tm * 0.03 + fr * 2.1);
-    let tang = normalize(vec2f(1.0, slope));
-    let sn = abs(tang.x * gy - tang.y * gx) / max(length(vec2f(gx, gy)), 1e-4);
-    let path = min(1.0 / max(sn, 0.12), 5.0);
-    var col = mix(green, teal, sstep(0.12, 0.5, u));
-    col = mix(col, mag, sstep(0.4, 0.95, u));
-    acc += col * (rays * pat * prof * path * (1.0 - fr * 0.17));
+    let gr = vec2f(dot(g, ax), dot(g, vec2f(-ax.y, ax.x)));
+    // skip ribbons this ray cannot reach between the hem and the top
+    let y0 = gr.y * 0.92; let y1 = gr.y * 3.65;
+    if (max(y0, y1) < off - 1.7 || min(y0, y1) > off + 1.7) { continue; }
+    var hp = 0.92;
+    var fp = aurF(gr * hp, off, fr, tm);
+    for (var k = 1; k <= NS; k++) {
+      let u = f32(k) / f32(NS);
+      let h = 0.92 + 2.73 * u * u; // denser near the bright hem
+      let f = aurF(gr * h, off, fr, tm);
+      let a0 = fp / wdt; let a1 = f / wdt;
+      let dh = h - hp;
+      // fraction of the unit-normalised sheet crossed in this segment (exact for linear f)
+      var I = 0.0;
+      if (min(abs(a0), abs(a1)) < 3.0 || a0 * a1 < 0.0) {
+        if (abs(a1 - a0) > 1e-3) { I = dh * 0.5 * (erfA(a1) - erfA(a0)) / (a1 - a0) / wdt; }
+        else { I = dh * exp(-a0 * a0) / (wdt * 1.7724539); }
+      }
+      if (I > 1e-4) {
+        // where in the segment the ray is closest to the sheet
+        var hs = select(h, hp, abs(fp) < abs(f));
+        if (fp * f < 0.0) { hs = hp + dh * fp / (fp - f); }
+        let X = dot(gr * hs, vec2f(1.0, 0.0));
+        // ragged, slowly rippling lower hem
+        let hem = 1.0 + 0.045 * vn(vec2f(X * 5.0 + tm * 0.08, fr * 7.0), 463u) + 0.02 * sin(X * 13.0 + tm * 0.3);
+        let z = hs - hem;
+        var prof = sstep(-0.035, 0.015, z) * (0.6 * exp(-max(z, 0.0) * 2.2) + 0.4 * exp(-max(z, 0.0) * 0.6));
+        prof *= sstep(3.65, 2.4, hs);
+        // fine rays: soft brightness variations inside the sheet, stretched along the field lines, drifting
+        let xr = X * 11.0 + 0.8 * sin(X * 0.9 + tm * 0.13) + tm * 0.09;
+        let rays = 0.62 + 0.3 * vn(vec2f(xr, hs * 0.45), 460u) + 0.16 * vn(vec2f(xr * 2.7 - tm * 0.35, hs * 0.8), 464u);
+        // long bright and quiet stretches along the ribbon
+        let pat = 0.14 + 0.86 * sstep(-0.55, 0.45, vn(vec2f(X * 0.33 - tm * 0.012, fr * 5.0 + 1.0), 461u));
+        var col = mix(green, teal, sstep(1.35, 2.05, hs));
+        col = mix(col, viol, sstep(1.75, 2.7, hs));
+        // far curtains dim and sink into the haze near the horizon
+        let ext = exp(-length(gr) * hs * 0.035);
+        acc += col * (I * prof * rays * pat * bright * ext / max(d.y, 0.06)); // per altitude -> per ray length
+      }
+      hp = h; fp = f;
+    }
   }
-  let fade = sstep(0.004, 0.08, d.y);
-  return acc * fade * 0.3;
+  // soft saturation: corona and folds glow without clipping to flat white
+  let l = max(max(acc.r, acc.g), acc.b);
+  acc *= 1.0 / (1.0 + l * 0.2);
+  // diffuse airglow under the curtains near the horizon
+  acc += green * 0.08 * exp(-d.y * 9.0);
+  return acc * sstep(0.003, 0.06, d.y) * 0.16;
 }
 
 // ---- ringed giant + two moons for Lumen Deep, lit by the realm sun; returns rgb and coverage ----
@@ -239,10 +274,20 @@ fn skyFull(d: vec3f, pix: f32) -> vec3f {
   let L = FR.sun.xyz;
   let mu = dot(d, L);
   let dr = radians(rowv(S0).w * 0.5);
-  let disc = sstep(cos(dr), cos(dr * 0.7), mu);
-  c += sunCol() * disc * 60.0;
   let s5 = rowv(S5);
-  let night = 1.0 - sstep(-0.05, 0.1, L.y);
+  // S5.w with no giant: the key light is a moon (Aurora Ice): a grey disc with maria, the sky stays night
+  let moon = sstep(0.5, 0.9, s5.w) * (1.0 - sstep(0.01, 0.2, s5.z));
+  var disc = sstep(cos(dr), cos(dr * 0.85), mu);
+  if (moon > 0.0 && disc > 0.0) {
+    let tu = normalize(cross(L, vec3f(0.0, 1.0, 0.0)));
+    let tv = cross(tu, L);
+    let q = vec2f(dot(d, tu), dot(d, tv)) / sin(dr);
+    let mar = sstep(0.05, 0.45, fbm(q * 1.7 + 3.0, 4, 470u) * 0.5 + 0.5);
+    let cr = 1.0 - 0.25 * sstep(0.55, 0.8, vn(q * 7.0, 471u) * 0.5 + 0.5);
+    disc *= mix(1.0, mix(1.0, 0.55, mar) * cr, moon);
+  }
+  c += sunCol() * disc * mix(60.0, 22.0, moon);
+  let night = max(1.0 - sstep(-0.05, 0.1, L.y), moon);
   if (s5.x > 0.01 && d.y > 0.0) {
     let hz = sstep(0.0, 0.12, d.y);
     let mw = sstep(0.45, 0.9, s5.x);
