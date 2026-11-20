@@ -152,8 +152,49 @@ fn bird(ii: u32) -> Bird {
     B.up = normalize(vec3f(0.0, cos(bank), 0.0) + inward * sin(bank));
     B.flapP = t * 3.6 * 6.2832 + lfRand(hb, 6u) * 6.2832;
     B.flapA = 0.65 * sstep(0.35, 0.75, sin(t * 0.37 + lfRand(hb, 7u) * 6.2832));
+    let rk2 = lfRand(hb, 10u);
+    if (!skyMode && rk2 < 0.35) {
+      // Atlantic puffins: small, whirring wingbeats, tight fast loops low along the cliff
+      let rp = 8.0 + 12.0 * lfRand(hb, 11u);
+      let ap = t * 14.0 / rp * cw + lfRand(hb, 12u) * 6.2832;
+      let pp = cen + vec2f(cos(ap), sin(ap)) * rp + vec2f(w1.x, w1.y) * 10.0;
+      B.p = vec3f(pp.x, max(max(s0.x, 0.0) + 5.0 + 30.0 * lfRand(hb, 13u), heightAny(pp) + 4.0), pp.y);
+      let tgp = vec2f(-sin(ap), cos(ap)) * cw;
+      B.fwd = normalize(vec3f(tgp.x, 0.0, tgp.y));
+      B.up = normalize(vec3f(0.0, 1.0, 0.0) - vec3f(cos(ap), 0.0, sin(ap)) * 0.6 * cw * cw);
+      B.flapP = t * 9.0 * 6.2832 + lfRand(hb, 6u) * 6.2832; B.flapA = 0.75;
+      B.size = 0.5; B.kind = 5u;
+    }
+    if (skyMode && rk2 < 0.5) {
+      // swifts: sickle-winged, very fast, scything round the pillars in bursts of flicking wingbeats and glides
+      let rs = 15.0 + 25.0 * lfRand(hb, 11u);
+      let vs = 18.0 + 6.0 * lfRand(hb, 12u);
+      let as2 = t * vs / rs * cw + lfRand(hb, 13u) * 6.2832 + 0.6 * sin(t * 0.7 + f32(k));
+      let ps = c2 + vec2f(cos(as2), sin(as2)) * rs;
+      B.p = vec3f(ps.x, bf(rwc, C2).y + 6.0 + 30.0 * lfRand(hb, 14u) + 5.0 * sin(t * 1.3 + f32(k)), ps.y);
+      B.p.y = max(B.p.y, heightAny(ps) + 6.0);
+      let tgs = vec2f(-sin(as2), cos(as2)) * cw;
+      B.fwd = normalize(vec3f(tgs.x, 0.1 * cos(t * 1.3 + f32(k)), tgs.y));
+      let bks = atan(vs * vs / (rs * 9.8));
+      B.up = normalize(vec3f(0.0, cos(bks), 0.0) - vec3f(cos(as2), 0.0, sin(as2)) * sin(bks) * cw);
+      B.flapP = t * 12.0 * 6.2832 + lfRand(hb, 6u) * 6.2832;
+      B.flapA = 0.6 * sstep(0.2, 0.5, sin(t * 1.9 + lfRand(hb, 7u) * 6.2832));
+      B.size = 0.45; B.kind = 6u;
+    }
+    if (skyMode && fi == 0u && k < 2u) {
+      // a pair of hornbills: heavy, slow wingbeats and long glides from pillar to pillar, the second one following
+      let seg = floor(t / 22.0); let fs = fract(t / 22.0);
+      let w0 = c2 + (vec2f(lfRand(hc, u32(seg) * 2u + 20u), lfRand(hc, u32(seg) * 2u + 21u)) - 0.5) * 260.0;
+      let w1h = c2 + (vec2f(lfRand(hc, u32(seg) * 2u + 22u), lfRand(hc, u32(seg) * 2u + 23u)) - 0.5) * 260.0;
+      let dh = normalize(w1h - w0 + vec2f(1e-3, 0.0));
+      let ph2 = mix(w0, w1h, sstep(0.0, 1.0, fs)) - dh * f32(k) * 6.0 + vec2f(-dh.y, dh.x) * f32(k) * 1.5;
+      B.p = vec3f(ph2.x, max(bf(rwc, C2).y + 25.0 + 6.0 * sin(t * 0.2), heightAny(ph2) + 12.0) - f32(k) * 0.8, ph2.y);
+      B.fwd = normalize(vec3f(dh.x, 0.0, dh.y)); B.up = vec3f(0.0, 1.0, 0.0);
+      B.flapP = t * 2.6 * 6.2832 + f32(k) * 1.1; B.flapA = 0.8 * sstep(0.0, 0.4, sin(t * 0.5 + f32(k) * 0.3));
+      B.size = 1.7; B.kind = 7u;
+    }
     // gannets: over water some birds fold and plunge-dive, sit a moment, then climb back to the wheel
-    if (!skyMode && lfRand(hb, 8u) > 0.6 && heightAny(p2) < -2.0) {
+    if (!skyMode && B.kind == 1u && lfRand(hb, 8u) > 0.6 && heightAny(p2) < -2.0) {
       let fd = fract(t / 26.0 + lfRand(hb, 9u));
       let dv = sstep(0.0, 0.06, fd);                       // the plunge (about 1.5 s)
       let rise = sstep(0.16, 0.3, fd);                     // the climb back
@@ -290,6 +331,21 @@ fn birdAlbedo(in: BV) -> vec3f {
   if (k == 1u) {
     if (in.part == 1u) { return mix(vec3f(0.42, 0.45, 0.5), vec3f(0.015), sstep(0.8, 0.9, in.loc.x)); }
     return mix(vec3f(0.85, 0.85, 0.83), vec3f(0.85, 0.6, 0.1), sstep(0.25, 0.27, in.loc.x));
+  }
+  if (k == 5u) {
+    // puffin: black back and wings, white face and belly, a big orange-red bill
+    if (in.part == 1u) { return vec3f(0.02, 0.02, 0.025); }
+    var c = mix(vec3f(0.03, 0.03, 0.035), vec3f(0.85, 0.85, 0.83), sstep(0.1, -0.4, in.loc.y));
+    c = mix(c, vec3f(0.9, 0.35, 0.08), sstep(0.25, 0.27, in.loc.x));
+    return c;
+  }
+  if (k == 6u) { return vec3f(0.035, 0.03, 0.028) * select(1.0, 1.6, in.part == 0u && in.loc.x > 0.2); } // swift
+  if (k == 7u) {
+    // hornbill: black with white tail band and wing patches; a huge yellow bill and casque
+    if (in.part == 1u) { return mix(vec3f(0.02), vec3f(0.85), sstep(0.55, 0.6, in.loc.x) * sstep(0.7, 0.65, in.loc.x)); }
+    var c = mix(vec3f(0.025), vec3f(0.8, 0.8, 0.78), sstep(-0.75, -0.8, in.loc.x));
+    c = mix(c, vec3f(0.9, 0.7, 0.15), sstep(0.2, 0.23, in.loc.x));
+    return c;
   }
   if (k == 4u) { return mix(vec3f(0.9, 0.92, 0.94), vec3f(0.02), sstep(0.25, 0.27, in.loc.x) * f32(in.part == 0u)); } // petrel, black bill
   if (in.part == 1u) { return mix(vec3f(0.16, 0.14, 0.12), vec3f(0.03, 0.03, 0.03), sstep(0.5, 0.7, in.loc.x)); }
