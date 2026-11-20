@@ -246,3 +246,55 @@ Lumen Deep stays unearthly in content but is rendered with the same physical cam
 - Stylisation that must go: neon outlines, toy-like mushrooms and crystals, barcode or poster-like sky features,
   uniformly saturated fills.
 - Where photorealism and frame budget conflict, look wins (priority 1), but dynamic resolution must keep pacing.
+
+## 12. Addendum from C, 2026-11-20: encounters
+
+C's words: "any encounter includes otherworldly feelings for the operator of the drone, meaning we have animals,
+wildlife, as well as natural occurrences such as waves splashing, night sky shifting, rain and weather, sunsets."
+
+The world must **do things to you**. Scenery alone is a postcard; an encounter is a moment that happens once, near
+you, because you were there. Target rhythm: something worth turning the camera for every 40-90 s of flight, and one
+rare, overwhelming event every 5-8 minutes. Never a notification, never UI: the pilot notices it themselves (a
+glint, a sound, a shadow passing over the ground), per the cue grammar of Discover Earth (glint, call, ripple,
+gust, hum).
+
+### 12.1 The living baseline (always on, photoreal, everywhere it belongs)
+
+- **Sea and shore**: swell that travels, waves that steepen and break on beaches, surf line foam that washes up and
+  drains back leaving wet sand, spray bursting on cliffs and skerries with mist drifting downwind, tide pools.
+- **Weather**: every realm has weather that moves across it: rain squalls with visible rain shafts under their
+  clouds, wet darkened ground and puddles that dry, fog banks that roll through valleys, wind you can see in grass,
+  water and cloud; snow showers over the Ice; dust devils in the Painted Range; spore storms in Lumen. Flying into
+  rain puts drops on the lens (subtle) and changes the sound.
+- **The sky turns**: the star field rotates around a pole, moons rise and set, the ringed giant shows phases and its
+  ring shadow moves; every realm's sun drifts along a slow arc so sunsets and blue hours actually happen (a few
+  minutes each), with afterglow, Belt of Venus, crepuscular rays, green flash at a sea horizon.
+- **Wildlife as populations**, placed by habitat, behaving: sheep on Faroese slopes, puffins and gannets diving at
+  cliffs, seals on skerries; ibex or wild horses in the Painted Range; flamingos feeding and taking off in waves;
+  hornbills and monkeys in the Stone Forest canopy, swifts around pillars; arctic foxes, seals and whales at the
+  Ice; Lumen's own ecology (sky jellies, grazing light-eaters, a slow giant on the horizon). They **react to the
+  drone**: flocks lift and wheel away, a curious bird flies alongside for a while, whales ignore you.
+
+### 12.2 Encounters (directed, rare, seeded)
+
+A director (`src/encounters.js`, deterministic from seed + position + time, allocation-free) keeps up to 8 active
+encounter slots `[type, x, y, z, t0, duration, seed, intensity]` in a uniform buffer that every shader can read,
+and chooses events by realm, time since the last event, and where the pilot is looking and heading (events start
+ahead of the flight path, in view, at a readable distance). Examples, each must be built to photoreal standard and
+feel uncanny in a quiet way:
+
+| Realm | Common | Rare |
+|-------|--------|------|
+| Home Fjords | Gannets plunge-diving beside you; a rainbow in a passing squall; a wave set bursting on a headland | A pod of orcas travelling up the fjord under the drone; a murmuration folding around you at dusk |
+| Painted Range | Dust devil crossing a basin; a hot pool erupting as a geyser; wild horses running a ridge | A dry thunderstorm: lightning walking along the horizon, virga lit pink |
+| Mirror Salt | Flamingos taking off in a wave that doubles in the mirror; a far rain shaft with its reflection | Night falls for a minute and the Milky Way is above and below you |
+| Stone Forest | Cloud sea rising and pouring between pillars like a waterfall; swifts streaming past | Brocken spectre: the drone's shadow in a rainbow halo on the cloud below |
+| Aurora Ice | A glacier calving with a wave rolling across the lagoon; a meteor; aurora surge to a corona | A humpback breaching in moonlight; a total lunar eclipse turning the ice red |
+| Lumen Deep | A pulse of light travelling through every plant; sky jellies gathering | The ringed giant eclipses the sun: diamond ring, then the whole land lights itself; a migration of giants |
+| The Drift | Creatures of one realm crossing into the other | Both skies visible at once through the veil |
+
+Each encounter has: a cue (sound + visual), a build-up, a peak, and an afterimage that lingers (wet rock, ripples,
+feathers on the wind, a changed sky). Sound is half of it: procedural calls, surf, rain, thunder, ice cracking.
+
+Test: `?enc=<type>&et=<seconds into it>` forces an encounter for captures; `tools/shots/encounters.json` holds one
+view per encounter at build-up and peak.
