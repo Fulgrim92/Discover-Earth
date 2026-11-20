@@ -174,9 +174,15 @@ export function wrapPi(a) { return a - 6.283185307179586 * Math.round(a / 6.2831
 // records feedback once a function has run a few times (lazy feedback allocation), hence the repeats.
 {
   const q = new Float64Array(4);
-  const M = [[1, 0, 0, 0, 1, 0, 0, 0, 1], [1, 0, 0, 0, -1, 0, 0, 0, -1], [-1, 0, 0, 0, 1, 0, 0, 0, -1], [-1, 0, 0, 0, -1, 0, 0, 0, 1]]
-    .map((m) => new Float64Array(m));
-  const U = [new Float64Array([0, 1, 0]), new Float64Array([0, -1, 0]), new Float64Array([0.6, 0.8, 0])];
+  // rotation matrices with fractional entries (integer ones would teach V8 int32 arithmetic and deoptimise later),
+  // from quaternions whose w, x, y, z component dominates in turn: one per branch
+  const M = [[0.9, 0.2, 0.3, 0.1], [0.15, 0.95, 0.2, 0.1], [0.1, 0.2, 0.93, 0.15], [0.12, 0.2, 0.1, 0.96]].map(([w, x, y, z]) => {
+    const l = Math.hypot(w, x, y, z); w /= l; x /= l; y /= l; z /= l;
+    return new Float64Array([1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y),
+      2 * (x * y - w * z), 1 - 2 * (x * x + z * z), 2 * (y * z + w * x),
+      2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)]);
+  });
+  const U = [new Float64Array([0.1, 0.99, 0.0995]), new Float64Array([0.0001, -0.9999999, 0.0002]), new Float64Array([0.6, 0.79, 0.1])];
   for (let r = 0; r < 64; r++) {
     for (let k = 0; k < 4; k++) qfromMat(q, M[k]);
     for (let k = 0; k < 3; k++) qfromUp(q, U[k]);
