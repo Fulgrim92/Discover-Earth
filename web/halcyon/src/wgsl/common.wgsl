@@ -123,7 +123,7 @@ fn realmWeights(p0: vec2f) -> RWt {
   for (var q = 0; q < 9; q++) {
     let e = (sd[q] - dmin) / BAND;
     if (e >= 1.0) { continue; }
-    let a = 1.0 - e; let w = a * a * a;
+    let a = 1.0 - e; let w = a * a * a * (a * (a * 6.0 - 15.0) + 10.0); // smootherstep (realms.js)
     let id = si[q];
     var s = 0;
     while (s < 4 && r.id[s] != id && r.id[s] != -1) { s++; }
@@ -131,6 +131,30 @@ fn realmWeights(p0: vec2f) -> RWt {
     r.id[s] = id; r.w[s] += w; sum += w;
   }
   r.w /= sum;
+  return r;
+}
+
+// The Drift (DESIGN 11.1): weights for the *skin* (materials, emission, wetness, water colour; never height or
+// light). Inside a transition zone the lookup point is displaced by a slow, time-animated flow (two octaves of
+// drifting noise, 20-40 s periods) and the weights are sharpened (w^4), so one realm's surface reaches into the
+// other in tongues and eddies that move like ink in water. One extra realmWeights, only in zone pixels.
+fn driftW(p: vec2f, rw: RWt) -> RWt {
+  if (rw.id[1] < 0) { return rw; }
+  let t = FR.time.x;
+  let q1 = p * (1.0 / 950.0) + vec2f(t * (1.0 / 31.0), t * (1.0 / 47.0));
+  let q2 = p * (1.0 / 310.0) - vec2f(t * (1.0 / 23.0), -t * (1.0 / 37.0));
+  var d = 420.0 * vec2f(vn(q1, 911u), vn(q1 + vec2f(5.2, 1.7), 912u));
+  d += 150.0 * vec2f(vn(q2 + d * (1.0 / 900.0), 913u), vn(q2 + vec2f(2.8, 6.1) + d * (1.0 / 900.0), 914u));
+  var r = realmWeights(p + d);
+  // per-realm patch field (~90 m, drifting): near the middle each realm holds patches rather than both averaging
+  let q3 = p * (1.0 / 90.0) + d * (1.0 / 300.0) + vec2f(t * (1.0 / 53.0), -t * (1.0 / 71.0));
+  var sum = 0.0;
+  for (var s = 0; s < 4; s++) {
+    if (r.id[s] < 0) { r.w[s] = 0.0; continue; }
+    let m = 1.0 + 0.65 * vn(q3, 920u + u32(r.id[s]));
+    let w2 = r.w[s] * m * r.w[s] * m; r.w[s] = w2 * w2; sum += r.w[s];
+  }
+  r.w /= max(sum, 1e-6);
   return r;
 }
 

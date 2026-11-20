@@ -7,7 +7,7 @@
     { "name": "painted_high", "params": { "realm": 1, "pos": "-900,420,-600", "agl": 1, "yaw": 135, "pitch": -20 } },
     { "name": "mirror_low",   "params": { "realm": 2, "pos": "0,1.7,0", "yaw": 110, "pitch": 3 } },
     { "name": "mirror_high",  "params": { "realm": 2, "pos": "0,320,0", "yaw": 70, "pitch": -14 } },
-    { "name": "stone_low",    "params": { "realm": 3, "pos": "0,150,0", "yaw": 40, "pitch": -4 } },
+    { "name": "stone_low",    "params": { "realm": 3, "pos": "600,42,-400", "yaw": 270, "pitch": 6 } },
     { "name": "stone_high",   "params": { "realm": 3, "pos": "-500,520,-300", "yaw": 55, "pitch": -18 } },
     { "name": "ice_low",      "params": { "realm": 4, "pos": "0,20,0", "agl": 1, "yaw": 340, "pitch": 9 } },
     { "name": "ice_high",     "params": { "realm": 4, "pos": "1500,300,-800", "agl": 1, "yaw": 285, "pitch": -7 } },

@@ -8,9 +8,16 @@ import COMP from '../wgsl/composite.wgsl';
 
 let pComp, bl2, bg2, desc;
 
+// Life ripples on the water (living-world's fx/lifefx.js + wgsl/lifefx.wgsl). Until those files land this stays false
+// and the water calls a zero stub. To wire it: import { lifeFx } from './lifefx.js' and LFXW from '../wgsl/lifefx.wgsl',
+// set LIFEFX = true, use LFX_SRC below, add lifeFx.bgl as layout 3 and setBindGroup(3, lifeFx.bg) in draw().
+const LIFEFX = false;
+const LFX_STUB = 'fn lfWater(p: vec2f, t: f32) -> vec3f { return vec3f(0.0); }\n';
+// const LFX_SRC = '@group(3) @binding(0) var<uniform> LFX: LifeFx;\n' + LFXW + 'fn lfWater(p: vec2f, t: f32) -> vec3f { return lfRipple(p, t); }\n';
+
 export function init(ctx) {
   bl2 = bgl('fffsff', 'comp2'); // + clouds in the mirror, cloud march distance
-  const mod = shader(CLIP + SKY + COMP, 'composite');
+  const mod = shader(CLIP + SKY + (LIFEFX ? '' : LFX_STUB) + COMP, 'composite');
   pComp = pipeline({ label: 'composite', module: mod, layouts: [ctx.bgl0, clip.bgl, bl2], targets: [{ format: 'rgba16float' }] });
 }
 
