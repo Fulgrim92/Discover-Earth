@@ -13,9 +13,14 @@ fn sat(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }
   let c0 = bf(rw, C0); let c1 = bf(rw, C1); let c2 = bf(rw, C2); let c3 = bf(rw, C3);
   let f = cloudField(xz, c3.x);
   var cov = cloudCov(f, c0.x);
+  // weather cells (common.wgsl wxCell): clear sky thins the realm's cover, a squall closes it and towers up
+  let wn = wxCell(xz);
+  let wst = wxStorm(wn);
+  cov *= 1.0 - 0.75 * wxClear(wn);
+  cov = max(cov, wst * 0.92 * sstep(0.1, 0.5, cloudField(xz * 1.7 + 300.0, 0.0)));
   // cumulus grow taller the further the field is above the threshold: separate towers instead of one slab
   let tower = sat(0.2 + 2.2 * (f - (1.0 - c0.x)));
-  let top = c0.y + (c0.z - c0.y) * mix(1.0, tower, c3.y);
+  let top = max(c0.y + (c0.z - c0.y) * mix(1.0, tower, c3.y), c0.y + wst * 2600.0);
   // orographic lift: cloud gathers on the high ground (the Fjords' low cloud snags on the peaks)
   let h = heightAny(xz);
   cov = max(cov, sstep(c0.y + 60.0, c0.y + 420.0, h) * sstep(0.3, 0.62, cloudField(xz * 1.9 + 900.0, 1.0)) * sstep(0.05, 0.35, c0.x));

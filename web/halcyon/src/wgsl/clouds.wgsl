@@ -220,7 +220,13 @@ fn shade(p: vec3f, d: vec3f, hf: f32, od: f32, dens: f32, sea: bool) -> vec3f {
   }
   // aurora light on night clouds
   amb += vec3f(0.05, 0.4, 0.2) * gCL.aur * 0.08;
-  return gCL.tint * (sc * s * powder * sunK + amb * gCL.amb * 0.95) + gCL.emis;
+  // lightning (weather.js schedule): the cloud lit from inside around the strike, bluish white
+  var bolt = vec3f(0.0);
+  if (CU.bolt.z > 0.0 && !isOff(OFF_RAIN)) {
+    let bd = length(p.xz - CU.bolt.xy);
+    bolt = vec3f(0.78, 0.82, 1.0) * CU.bolt.z * 6.0 * exp(-bd / 1400.0) * exp(-od * 0.25);
+  }
+  return gCL.tint * (sc * s * powder * sunK + amb * gCL.amb * 0.95) + gCL.emis + bolt;
 }
 
 // Adaptive march: coarse steps through empty air (cheap coverage test), fine steps once inside cloud, back to
@@ -381,6 +387,9 @@ struct CF { @location(0) front: vec4f, @location(1) refl: vec4f, @location(2) di
   o.front = marchAll(ro, d, tmax, n, nl, jit);
   // the veil of a Drift, in front of the clouds (it hugs the ground)
   let vl = veilMarch(ro, d, tmax, jit);
+  // rain shafts, snow showers, virga and spore storms under the squalls, in front of the clouds behind them
+  let pr = precipMarch(ro, d, tmax, jit);
+  o.front = vec4f(pr.rgb + o.front.rgb * (1.0 - pr.a), 1.0 - (1.0 - pr.a) * (1.0 - o.front.a));
   o.front = vec4f(vl.rgb + o.front.rgb * (1.0 - vl.a), 1.0 - (1.0 - vl.a) * (1.0 - o.front.a));
   if (VW.cam.w == 16.0 && d.y > 0.01) { // dbg=16: layer probe at mid-height of the camera realm's main layer
     let ym = (rowv(C0).y + rowv(C0).z) * 0.5;
@@ -468,4 +477,82 @@ fn veilMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
   let ph = hg(dot(d, FR.sun.xyz), 0.6) * 4.0 * PI;
   let lit = luma(mix(rowv(S3).rgb, rowv(S2).rgb, 0.5)) * 1.3 + sc * (0.05 + 0.04 * ph);
   return vec4f(veilTone(ro + d * bt, tm) * lit * acc, 1.0 - T);
+}
+
+// ---- precipitation under the squalls (DESIGN 12.1): rain shafts and virga seen from afar, snow over the Ice, spore
+// storms in Lumen; the rainbow where sunlit rain meets the antisolar point (42 degree primary, faint secondary) ----
+// a narrow band: angle a (deg) around centre c with half width w
+fn bowBand(a: f32, c: f32, w: f32) -> f32 { let x = (a - c) / w; return exp(-x * x); }
+fn rainbow(d: vec3f, L: vec3f) -> vec3f {
+  let a = degrees(acos(clamp(dot(d, -L), -1.0, 1.0)));
+  if (a < 36.0 || a > 56.0) { return vec3f(0.0); }
+  // red outside on the primary, inside on the secondary (dispersion of water, ~1.7 degrees across the bow)
+  let p = vec3f(bowBand(a, 42.3, 0.75), bowBand(a, 41.4, 0.75), bowBand(a, 40.6, 0.75));
+  let s = vec3f(bowBand(a, 50.2, 1.1), bowBand(a, 51.1, 1.1), bowBand(a, 52.0, 1.1)) * 0.38;
+  // the darker sky between the bows (Alexander's band) is left to the rain's own shading
+  return p + s;
+}
+fn precipMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
+  if (isOff(OFF_RAIN)) { return vec4f(0.0); }
+  let tEnd = min(tmax, 16000.0);
+  // only rays that pass a squall: five probes of the weather field along the ray
+  var smax = 0.0; var tb = 0.0;
+  for (var k = 0; k < 5; k++) {
+    let tk = tEnd * (0.04 + 0.24 * f32(k));
+    let sk = wxStorm(wxCell(ro.xz + d.xz * tk));
+    if (sk > smax) { smax = sk; tb = tk; }
+  }
+  if (smax < 0.02) { return vec4f(0.0); }
+  // what falls here: the realm at the squall the ray meets (one blend per ray)
+  let rw = realmWeights(ro.xz + d.xz * tb);
+  var amt = 0.0; var kind = 0; var kw = 0.0;
+  for (var i = 0; i < 4; i++) {
+    if (rw.id[i] < 0) { continue; }
+    amt += rw.w[i] * wxPrecip(rw.id[i]);
+    if (rw.w[i] > kw) { kw = rw.w[i]; kind = wxKind(rw.id[i]); }
+  }
+  let tm = FR.time.x;
+  let L = FR.sun.xyz;
+  let sc = sunCol();
+  let amb = mix(rowv(S3).rgb, rowv(S2).rgb, 0.5) * rowv(S3).w;
+  var bow = select(vec3f(0.0), rainbow(d, L), (kind == 0) && L.y > 0.0);
+  // by moonlight the bow is real but the eye sees it colourless and faint (a moonbow)
+  let sunShare = sstep(-0.035, 0.06, sunDirFrom(rowv(S0), FR.sun.w).y);
+  bow = mix(vec3f(luma(bow)) * 0.35, bow, sunShare);
+  let fall = select(select(select(9.0, 7.0, kind == 1), 1.2, kind == 2), 0.5, kind == 3);
+  // march a window around the squall the probes found, in even steps: on u^2 steps the far segments were kilometres
+  // long, a curtain was hit or missed per pixel and the low-res dither showed as a mesh
+  let N = 12;
+  let wa = max(tb - 4000.0, 0.0); let wb = min(tb + 4000.0, tEnd);
+  var T = 1.0; var acc = vec3f(0.0);
+  var t0 = wa;
+  for (var i = 0; i < N; i++) {
+    let t1 = mix(wa, wb, f32(i + 1) / f32(N));
+    let p = ro + d * mix(t0, t1, jit);
+    let st = wxStorm(wxCell(p.xz));
+    if (st > 0.01) {
+      let w = wxAt(p.xz);
+      let base = w.y;
+      if (p.y < base) {
+        // falling streaks and shafts: vertical structure moving down, broken into curtains
+        let cur = sstep(-0.2, 0.5, vn(p.xz * (1.0 / 520.0) + vec2f(tm * 0.002, 0.0), 760u));
+        // one jittered sample per long segment: keep the structure broad, or it turns into dither the upsample cannot
+        // resolve (fine streaks are composite.wgsl rainNear's job)
+        let stk = 0.78 + 0.22 * vn(vec2f((p.x + p.z * 0.7) * (1.0 / 160.0), (p.y + tm * fall * 6.0) * (1.0 / 900.0)), 761u);
+        // virga evaporates on the way down; snow and spores thin out towards the ground less
+        var fade = sstep(base - 2600.0, base - 300.0, p.y) * 0.6 + 0.4;
+        if (kind == 1) { fade = sstep(base - 900.0, base - 150.0, p.y); }
+        let dn = 0.00045 * st * amt * cur * stk * fade * select(1.0, 1.3, kind == 2);
+        let a = 1.0 - exp(-dn * (t1 - t0));
+        // lit by the sky, and by the sun where it gets under the cloud (forward scattering)
+        let sv = cloudShadowF(p, L, rowv(C0), rowv(C1), rowv(C2), rowv(C3)) * sstep(0.0, 0.04, L.y);
+        var lit = amb * select(0.75, 1.0, kind == 2) + sc * sv * (0.08 + 0.5 * hg(dot(d, L), 0.7)) + sc * sv * bow * 0.5;
+        if (kind == 3) { lit += rowv(S7).rgb * (0.4 + rowv(S7).w * 4.0); } // spores glow
+        if (kind == 1) { lit *= vec3f(1.05, 0.92, 0.95); }                // virga takes the dust's tint
+        acc += T * lit * a; T *= 1.0 - a;
+      }
+    }
+    t0 = t1;
+  }
+  return vec4f(acc, 1.0 - T);
 }

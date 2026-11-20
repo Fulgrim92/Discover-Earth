@@ -368,7 +368,9 @@ fn applyFog(col: vec3f, ro: vec3f, d: vec3f, t: f32) -> vec3f {
   let Lu = S.rgb / max(1.0 - S.a, 0.05);
   var c = col * T + Lu * (1.0 - dot(T, vec3f(0.3333)));
   // low mist: lit by the sky and the key light
-  let om = f1.w * odMist(ro.y, d.y, t, f2.x, f2.y);
+  // fog banks (common.wgsl wxFogBank) drift through: thicker low mist where a bank lies over the path
+  let fb = 0.5 * (wxFogBank(ro.xz) + wxFogBank(ro.xz + d.xz * min(t, 6000.0)));
+  let om = f1.w * odMist(ro.y, d.y, t, f2.x, f2.y) * (1.0 + 3.0 * fb);
   let mu = dot(d, FR.sun.xyz);
   let sc = sunCol();
   let cm = f1.rgb * (mix(rowv(S3).rgb, rowv(S2).rgb, 0.4) * 1.2 + sc * (0.12 + hg(mu, 0.6) * f2.w * 0.5)) + rowv(S7).rgb * rowv(S7).w;

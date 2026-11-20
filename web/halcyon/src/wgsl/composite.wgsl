@@ -336,5 +336,54 @@ struct VO { @builtin(position) pos: vec4f }
     let sh = sunShafts(uv, jit);
     col += sunCol() * sh * ph * sstep(0.004, 0.03, ph) * air * rowv(F2).w * 0.35;
   }
+  col = rainNear(col, d, pix);
   return vec4f(col, 1.0);
+}
+
+// ---- precipitation around the camera (sky programmer): three shells of drops at 1.5, 4 and 10 m, anchored in the
+// world and falling; each drop is a streak along its velocity relative to the drone during a 1/60 s exposure, so
+// flying fast slants and lengthens them like a real camera; snow falls slowly as soft flakes, spores drift ----
+fn rainNear(col: vec3f, d: vec3f, pix: f32) -> vec3f {
+  let amt = FR.sky.w;
+  if (amt < 0.01 || isOff(OFF_RAIN)) { return col; }
+  let kind = i32(FR.wx.w + 0.5);
+  let hl = length(d.xz);
+  if (hl < 0.08) { return col; }
+  let hd = d.xz / hl;
+  let tang = vec2f(-hd.y, hd.x);
+  let fall = select(select(8.0, 1.1, kind == 2), 0.35, kind == 3);
+  let rel = vec3f(0.0, -fall, 0.0) - FR.wx.xyz; // drop velocity seen from the drone
+  let vu = dot(rel.xz, tang); let vv = rel.y;
+  let sp = max(length(vec2f(vu, vv)), 0.3);
+  let dir = vec2f(vu, vv) / sp;
+  let lit = luma(mix(rowv(S3).rgb, rowv(S2).rgb, 0.5) * rowv(S3).w) * 0.9 + luma(sunCol()) * 0.06;
+  var acc = 0.0;
+  for (var k = 0; k < 3; k++) {
+    let R = 1.5 * pow(2.6, f32(k));
+    let t = R / hl;
+    // cylinder coordinates around the camera: arc length and height (m), moving with the drops
+    let ang = atan2(hd.y, hd.x);
+    let uv = vec2f(ang * R, d.y * t) - vec2f(vu, vv) * FR.time.x;
+    let cs = select(vec2f(0.22, 1.2), vec2f(0.3, 0.3), kind >= 2) * (0.6 + 0.4 * f32(k));
+    let g = uv / cs;
+    let ci = floor(g);
+    let f = (g - ci) * cs;
+    let ix = i32(ci.x); let iy = i32(ci.y);
+    if (hf(ix, iy, 900u + u32(k)) > amt * 0.55) { continue; }
+    let c = vec2f(hf(ix, iy, 903u), hf(ix, iy, 906u)) * cs * vec2f(0.8, 0.6) + cs * vec2f(0.1, 0.2);
+    // streak: a segment along the relative motion, as long as the motion during the exposure
+    let len = select(sp / 60.0, 0.012, kind >= 2);
+    let q = f - c;
+    let along = clamp(dot(q, dir), -len * 0.5, len * 0.5);
+    let dist = length(q - dir * along);
+    let wpx = pix * t;                                // one pixel at this shell
+    let wid = max(select(0.0012, 0.006, kind >= 2), wpx * 0.7);
+    let core = exp(-(dist * dist) / (wid * wid));
+    // thin or far drops cover less than a pixel: keep their energy, not their width
+    acc += core * min(select(0.0012, 0.006, kind >= 2) / wid, 1.0) * select(0.5, 0.9, kind >= 2) * (1.0 - 0.25 * f32(k));
+  }
+  acc = min(acc, 1.0) * sstep(0.0, 0.3, amt);
+  var tint = vec3f(1.0);
+  if (kind == 3) { tint = rowv(S7).rgb / max(luma(rowv(S7).rgb), 1e-3) * 1.5; }
+  return mix(col, vec3f(lit) * tint * select(1.0, 1.4, kind == 2), acc * 0.35);
 }

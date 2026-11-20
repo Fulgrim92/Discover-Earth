@@ -38,7 +38,8 @@ import { G, H, fail, initDevice, Unsupported, bgl, bindGroup, tex, buffer, FRAME
   setTimerBase, tsBoth, TS_BAKE, TS_OPAQUE, TS_CLOUDS, TS_COMPOSITE, TS_FX, TS_BLOOM, TS_FINAL, TS_LIFE, TS_WEATHER,
   TS_FLORA, TS_FAUNA } from './gpu.js';
 import { TABLE, ROWF, F, realmCentre, CURATED, REALM_NAMES } from './realms.js';
-import { skyTick, SKY_IN } from './realms.js'; // the sky turns (sky programmer)
+import { skyTick, SKY_IN } from './realms.js';
+import { wxTick, WX_IN, WX_CAM, WX_BOLT } from './weather.js'; // weather at the camera (sky programmer) // the sky turns (sky programmer)
 import { heightAt, heightBatch, blendAtA, W_IN, W_NEAR, setFootprint } from './world.js';
 import { CLK, C_DT, C_TIME, C_FRAME_MS, C_PREV } from './clock.js';
 import { quatFromYawPitchRoll, quatRotate, mat4ViewRot, mat4PerspRevZ, mat4Mul, mat4Invert } from './math.js';
@@ -97,11 +98,11 @@ P.xrenter = P.xrmock > 0 && (P.shot || P.alloc || num('xrenter', 0) > 0);
 // ---------- ablation (?off=) ----------
 // bit i of Frame.flags = OFF_NAMES[i]; the same bits are named constants OFF_* in wgsl/common.wgsl
 export const OFF_NAMES = ['flora', 'fauna', 'particles', 'tshadow', 'tdetail', 'tao', 'fshadow', 'clouds', 'cloudshadow',
-  'water', 'rings', 'drone', 'msaa', 'tmat', 'trealm', 'tflat', 'tgeo', 'tvert', 'sky', 'tgrid', 'veil', 'atmo']; // tmat..tgrid: terrain-art's bits
+  'water', 'rings', 'drone', 'msaa', 'tmat', 'trealm', 'tflat', 'tgeo', 'tvert', 'sky', 'tgrid', 'veil', 'atmo', 'rain']; // tmat..tgrid: terrain-art's bits
 const OFF_ALL = (1 << 13) - 1; // off=all: the original 13 costs (the terrain diagnostic bits are not costs)
 export const OFF_FLORA = 1, OFF_FAUNA = 2, OFF_PARTICLES = 4, OFF_TSHADOW = 8, OFF_TDETAIL = 16, OFF_TAO = 32,
   OFF_FSHADOW = 64, OFF_CLOUDS = 128, OFF_CLOUDSHADOW = 256, OFF_WATER = 512, OFF_RINGS = 1024, OFF_DRONE = 2048,
-  OFF_MSAA = 4096, OFF_TGEO = 65536, OFF_TGRID = 524288, OFF_VEIL = 1048576, OFF_ATMO = 2097152;
+  OFF_MSAA = 4096, OFF_TGEO = 65536, OFF_TGRID = 524288, OFF_VEIL = 1048576, OFF_ATMO = 2097152, OFF_RAIN = 4194304;
 function parseOff(list) {
   let b = 0;
   for (const w of list.split(',')) {
@@ -342,6 +343,7 @@ async function init() {
   perf.dyn.target = P.target;
   perf.dyn.timer = G.timestamp;
   terrain.weather[0] = num('rain', 0); terrain.weather[1] = num('wet', 0); // weather stub (fx/terrain.js)
+  WXO[0] = num('rain', -1); WXO[1] = num('wet', -1); // rain=/wet= override the weather field (prepareFrame)
   clipmap.init(ctx); terrain.init(ctx); clouds.init(ctx); composite.init(ctx); rings.init(ctx); drone.init(ctx); post.init(ctx);
   flora.init(ctx); fauna.init(ctx); particles.init(ctx);
   if (XR.state > 0) xrfx.init(ctx);
@@ -507,7 +509,9 @@ function keyLightDir(fr, row) {
 // accumulated sun motion in degrees (a monotonic key for re-baking sun shadows)
 const SKY_PERIOD = 900;
 let realmBufG = null;
-const SKYM = new Float64Array(3); // previous s, accumulated motion (deg), time of day: typed, never boxed
+const CAMP = new Float64Array(3); // the camera a frame ago
+const WXO = new Float64Array(2); // rain=, wet= URL overrides (-1: none)
+const SKYM = new Float64Array(4); // previous s, accumulated motion (deg), time of day: typed, never boxed
 const SKY_TOD = Math.max(P.tod, -1); // a small int or a constant: read once
 function skyTime(fr) {
   SKYM[2] = SKY_TOD >= 0 ? SKY_TOD : (CLK[C_TIME] / SKY_PERIOD) % 1;
@@ -521,6 +525,15 @@ function prepareFrame() {
   const fr = ctx.frame, dt = CLK[C_DT], timeS = CLK[C_TIME];
   skyTime(fr);
   W_IN[0] = cam[0]; W_IN[1] = cam[2]; blendAtA(rowTmp);
+  // weather at the camera (realm weights from blendAtA) and the camera's velocity for the rain streaks
+  WX_IN[0] = cam[0]; WX_IN[1] = cam[2]; WX_IN[2] = CLK[C_TIME]; wxTick();
+  SKYM[3] = 1 / Math.max(CLK[C_DT], 1e-3);
+  for (let i = 0; i < 3; i++) { fr[FO.wx + i] = frameNo === 0 ? 0 : Math.min(Math.max((cam[i] - CAMP[i]) * SKYM[3], -60), 60); CAMP[i] = cam[i]; }
+  fr[FO.wx + 3] = WX_CAM[2]; fr[FO.sky + 3] = WX_CAM[1];
+  // terrain-art's rain intensity (FR.mc[0].w) is the liquid rain at the camera; wetness integrates in fx/terrain.js and
+  // starts at its steady state so a capture inside a shower shows wet ground
+  terrain.weather[0] = WXO[0] >= 0 ? WXO[0] : OFF & OFF_RAIN ? 0 : WX_CAM[0];
+  if (frameNo === 0 && WXO[1] < 0) terrain.weather[1] = terrain.weather[0];
   for (let i = 0; i < ROWF; i++) fr[FO.row + i] = rowTmp[i];
   const drift = 0; // the suns move along their arcs in the realm table now (skyTime)
   const s0 = F.S0 * 4;
