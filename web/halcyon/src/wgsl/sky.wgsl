@@ -1,4 +1,4 @@
-// sky.wgsl: analytic sky per realm (sun, glow, stars, aurora, ringed giant, moons) and the fog integrals.
+// sky.wgsl: the sky per realm (physical air from the atmo LUT, sun, moon, stars, aurora, ringed giant) and fog.
 // (Clouds are volumetric: clouds.wgsl.) Shared by the opaque-pass sky draw, the composite and reflections.
 
 fn rowv(f: u32) -> vec4f { return FR.row[f]; }
@@ -13,42 +13,33 @@ fn dirAzEl(az: f32, el: f32) -> vec3f {
   return vec3f(sin(a) * cos(e), sin(e), -cos(a) * cos(e));
 }
 
-fn sunCol() -> vec3f {
-  let L = FR.sun.xyz;
-  return rowv(S1).rgb * rowv(S0).z * sstep(-0.035, 0.06, L.y);
-}
+// the key light's colour x irradiance at the camera's realm row: the sun, or the moon at night (common.wgsl)
+fn sunCol() -> vec3f { return keyLight(rowv(S0), rowv(S1), rowv(S8), FR.sun.w).col; }
 
-// base sky gradient without the sun disc / night objects (used by fog and reflections)
+// ---- the physical sky (fx/atmo.js bakes the sky-view LUT for this frame's camera, air, sun and moon) ----
+fn atmoUV(d: vec3f) -> vec2f {
+  let az = atan2(d.x, -d.z) * (0.5 / PI);
+  let el = asin(clamp(d.y, -1.0, 1.0));
+  let v = clamp(0.5 + 0.5 * sign(el) * sqrt(abs(el) / (0.5 * PI)), 0.5 / 128.0, 127.5 / 128.0);
+  return vec2f(az, v * (128.0 / 129.0));
+}
+// display radiance of the clear sky along d (in-scattered light only); a = mean transmittance along d
+fn atmoSky(d: vec3f) -> vec4f { return textureSampleLevel(atmoT, atmoS, atmoUV(d), 0.0); }
+// per-frame values: x 0 = sun irradiance at the camera, x 1 = moon irradiance at the camera
+fn atmoInfo(i: i32) -> vec3f { return textureLoad(atmoT, vec2i(i, 128), 0).rgb; }
+
+// sky without the sun / moon discs and the night objects (used by fog, reflections, cloud ambient)
 fn skyBase(d: vec3f) -> vec3f {
-  let L = FR.sun.xyz;
-  let I = rowv(S3).w;
-  let zen = rowv(S2).rgb * I;
-  let hor = rowv(S3).rgb * I;
-  let sw = rowv(S4).rgb * I;
-  let y = max(d.y, 0.0);
-  let t = pow(1.0 - y, rowv(S2).w);
-  var c = mix(zen, hor, t);
-  let dl = length(d.xz); let ll = length(L.xz);
-  var az = 0.5;
-  if (dl > 1e-4 && ll > 1e-4) { az = dot(d.xz / dl, L.xz / ll) * 0.5 + 0.5; }
-  let sunw = pow(az, rowv(S4).w) * t * t;
-  c = mix(c, sw, sunw * 0.85);
-  // afterglow band for suns below the horizon
-  c += sw * rowv(S6).z * exp(-y * 14.0) * pow(az, 2.5) * 0.7;
+  var c = atmoSky(d).rgb;
   // Lumen: warm rose air under the ringed giant (light thrown back by its day side)
   let gz = rowv(S5).z;
   if (gz > 0.01) {
     let G = giantDir();
+    let dl = length(d.xz);
     var ga = 0.5;
     if (dl > 1e-4) { ga = dot(d.xz / dl, normalize(G.xz)) * 0.5 + 0.5; }
-    c += vec3f(0.95, 0.38, 0.42) * I * gz * pow(ga, 6.0) * exp(-y * 5.0) * 0.55;
+    c += vec3f(0.95, 0.38, 0.42) * luma(rowv(S3).rgb) * gz * pow(ga, 6.0) * exp(-max(d.y, 0.0) * 5.0) * 0.6;
   }
-  // below the horizon: a slightly darker haze
-  if (d.y < 0.0) { c = mix(c, hor * 0.75, sstep(0.0, -0.25, d.y)); }
-  // Mie glow around the sun
-  let mu = dot(d, L);
-  let sc = sunCol();
-  c += sc * rowv(S1).w * (hg(mu, 0.8) * 0.06 + hg(mu, 0.35) * 0.04);
   return c;
 }
 
@@ -60,31 +51,35 @@ fn starCol(t: f32) -> vec3f {
 }
 const MW_N: vec3f = vec3f(0.36, 0.46, 0.81); // Milky Way pole
 
-fn stars(d: vec3f, pix: f32, mw: f32) -> vec3f {
+// Stars with real statistics: counts rise ~2.8x per magnitude (N(<m) ~ 10^(0.45 m)) down to magnitude 9, flux
+// 10^(-0.4 m) relative to the moon's (a full moon is magnitude -12.7), drawn as a pixel-sized point spread so the
+// energy does not depend on resolution, dimmed by the air along the view. unit = irradiance of a magnitude-0 star.
+fn stars(d: vec3f, pix: f32, unit: f32) -> vec3f {
   var s = vec3f(0.0);
-  let band = exp(-pow(dot(d, normalize(MW_N)), 2.0) * 22.0);
-  for (var l = 0; l < 3; l++) {
-    let sc = 110.0 * pow(2.1, f32(l));
+  let sig = max(pix * 0.6, 2.5e-4);
+  let norm = unit / (2.0 * PI * sig * sig);
+  for (var l = 0; l < 2; l++) {
+    let sc = select(110.0, 260.0, l == 1);
     let p = d * sc;
     let c = floor(p);
     let ci = vec3i(c);
     let h = hf3(ci.x, ci.y, ci.z + l * 1000);
-    // more (faint) stars per cell in the finer layers and inside the galactic band
-    let prob = (0.03 + 0.015 * f32(l)) * (1.0 + band * mw * 2.5);
+    // ~70k stars per layer over the sky (about 1/3 of the cells hold one)
+    let prob = select(0.33, 0.06, l == 1);
     if (h < prob) {
       let o = vec3f(hf3(ci.x, ci.y, ci.z + 77), hf3(ci.x, ci.y, ci.z + 78), hf3(ci.x, ci.y, ci.z + 79));
-      let sp = c + 0.15 + 0.7 * o;
-      let dd = length(p - sp);
-      let rad = max(pix * sc * 0.55, 0.02);
-      // magnitude: most stars faint, a few very bright (brighter in the coarse layer)
-      let m = h / prob;
-      let mag = exp(-m * 7.0 - f32(l) * 1.2) * 7.0;
-      let tw = 0.82 + 0.18 * sin(FR.time.x * (1.7 + 4.0 * o.x) + o.y * 40.0);
+      let sp = normalize(c + 0.15 + 0.7 * o);
+      let dd = length(d - sp);
+      // magnitude by inverse CDF: most stars faint, a handful brighter than magnitude 1
+      let m = 9.0 + log(max(h / prob, 1e-7)) / (0.45 * 2.302585) + f32(l) * 1.2;
+      let flux = exp2(-1.328771 * m); // 10^(-0.4 m)
+      // scintillation: a little, more near the horizon
+      let tw = 1.0 + (0.08 + 0.25 * (1.0 - d.y)) * sin(FR.time.x * (9.0 + 13.0 * o.x) + o.y * 40.0);
       let ct = fract(o.z * 7.31 + o.x * 3.1);
-      s += starCol(ct * ct) * mag * tw * exp(-dd * dd / (rad * rad)) * min(1.0, 0.02 / (rad * rad) + 0.25);
+      s += starCol(ct * ct) * (flux * tw * exp(-dd * dd / (2.0 * sig * sig)));
     }
   }
-  return s;
+  return s * norm;
 }
 
 // faint galactic band with dust lanes (Ice and Lumen nights)
@@ -135,7 +130,7 @@ fn aurora(d: vec3f) -> vec3f {
     let fr = f32(r);
     // ribbons run roughly east-west across the northern sky, one nearly overhead, one low on the horizon
     let ang = 0.12 + fr * 0.21 - fr * fr * 0.05;
-    let off = select(select(select(-1.0, -2.3, r == 1), -4.6, r == 2), 1.5, r == 3);
+    let off = select(select(select(-1.35, -2.4, r == 1), -4.6, r == 2), 1.6, r == 3);
     let wdt = 0.03 + 0.012 * fr;             // sheet half-thickness
     let bright = select(1.0, 0.7, r == 3);
     let ax = vec2f(cos(ang), sin(ang));
@@ -157,6 +152,8 @@ fn aurora(d: vec3f) -> vec3f {
         if (abs(a1 - a0) > 1e-3) { I = dh * 0.5 * (erfA(a1) - erfA(a0)) / (a1 - a0) / wdt; }
         else { I = dh * exp(-a0 * a0) / (wdt * 1.7724539); }
       }
+      // grazing paths (looking straight up a sheet, fold edges) saturate softly: no overhead wash, no streaks
+      I = I / (1.0 + I * 0.8);
       if (I > 1e-4) {
         // where in the segment the ray is closest to the sheet
         var hs = select(h, hp, abs(fp) < abs(f));
@@ -228,7 +225,8 @@ fn giant(d: vec3f) -> vec4f {
     }
     let rim = pow(1.0 - max(dot(N, -d), 0.0), 3.0);
     // night side: faint violet sky-shine; day side rim haze
-    col = pc * (lit * 1.25 + 0.018) + vec3f(0.55, 0.45, 1.0) * rim * (0.08 + 0.6 * lit);
+    let Eg = rowv(A2).rgb * rowv(S0).z * 0.55; // the star's light on the giant's cloud tops (albedo ~0.55)
+    col = pc * Eg * (lit + 0.006) + vec3f(0.55, 0.45, 1.0) * luma(Eg) * rim * (0.05 + 0.35 * lit);
     a = sstep(0.0, 0.002, disc);
   }
   // rings
@@ -247,7 +245,7 @@ fn giant(d: vec3f) -> vec4f {
         let shadow = 1.0 - select(0.0, 0.9 * sstep(1.04, 0.96, ax), bs < 0.0);
         // lit face vs. back face of the rings
         let face = 0.55 + 0.45 * abs(dot(L, pole));
-        let rc = vec3f(0.9, 0.8, 0.7) * (0.85 * shadow * face + 0.03);
+        let rc = vec3f(0.9, 0.8, 0.7) * rowv(A2).rgb * rowv(S0).z * 0.5 * (0.85 * shadow * face + 0.01);
         if (tr < tp) { col = mix(col, rc, dens); a = max(a, dens); }
         else if (a < 1.0) { col = mix(rc, col, a); a = max(a, dens); }
       }
@@ -262,44 +260,69 @@ fn giant(d: vec3f) -> vec4f {
     if (dm > 0.0 && bm > 0.0) {
       let N = normalize(d * (bm - sqrt(dm)) - M);
       let mc = select(vec3f(0.8, 0.85, 0.95), vec3f(0.95, 0.75, 0.85), m == 1);
-      col = mix(col, mc * (sstep(-0.1, 0.3, dot(N, L)) + 0.03), sstep(0.0, 2e-5, dm));
+      col = mix(col, mc * rowv(A2).rgb * rowv(S0).z * 0.4 * (sstep(-0.1, 0.3, dot(N, L)) + 0.01), sstep(0.0, 2e-5, dm));
       a = max(a, sstep(0.0, 2e-5, dm));
     }
   }
   return vec4f(col, a);
 }
 
+// sun and moon discs: radiance = irradiance at the camera / the disc's solid angle (energy-correct, so the sun
+// blooms and the moon is exactly as bright as the light it casts), soft limb, antialiased edge
+fn bodyDisc(d: vec3f, B: vec3f, rad: f32, pix: f32) -> f32 {
+  let ang = acos(clamp(dot(d, B), -1.0, 1.0));
+  return 1.0 - sstep(rad - pix * 0.5, rad + pix * 0.5, ang);
+}
+
 fn skyFull(d: vec3f, pix: f32) -> vec3f {
+  let A = atmoSky(d);
   var c = skyBase(d);
-  let L = FR.sun.xyz;
-  let mu = dot(d, L);
-  let dr = radians(rowv(S0).w * 0.5);
-  let s5 = rowv(S5);
-  // S5.w with no giant: the key light is a moon (Aurora Ice): a grey disc with maria, the sky stays night
-  let moon = sstep(0.5, 0.9, s5.w) * (1.0 - sstep(0.01, 0.2, s5.z));
-  var disc = sstep(cos(dr), cos(dr * 0.85), mu);
-  if (moon > 0.0 && disc > 0.0) {
-    let tu = normalize(cross(L, vec3f(0.0, 1.0, 0.0)));
-    let tv = cross(tu, L);
-    let q = vec2f(dot(d, tu), dot(d, tv)) / sin(dr);
+  let drift = FR.sun.w;
+  let up = sstep(-0.004, 0.004, d.y); // the sea horizon hides what is below
+  // the sun: limb-darkened disc
+  let Ls = sunDirFrom(rowv(S0), drift);
+  let rs = radians(rowv(S0).w * 0.5);
+  let ds = bodyDisc(d, Ls, rs, pix);
+  if (ds > 0.0) {
+    let om = 2.0 * PI * (1.0 - cos(rs));
+    let rho = clamp(acos(clamp(dot(d, Ls), -1.0, 1.0)) / rs, 0.0, 1.0);
+    let limb = 1.0 - 0.6 * (1.0 - sqrt(1.0 - rho * rho));
+    c += min(atmoInfo(0) / om * limb * 1.15, vec3f(30000.0)) * ds * up;
+  }
+  // the moon: lit by the sun's direction (phase), maria, a little earthshine
+  let Lm = moonDirFrom(rowv(S8), drift);
+  let rm = radians(rowv(S8).w * 0.5);
+  let dm = bodyDisc(d, Lm, rm, pix);
+  if (dm > 0.0 && rowv(S8).z > 0.0) {
+    let tu = normalize(cross(Lm, vec3f(0.0, 1.0, 0.0)));
+    let tv = cross(tu, Lm);
+    let q = vec2f(dot(d, tu), dot(d, tv)) / sin(rm);
+    let N = normalize(-Lm + (tu * q.x + tv * q.y) * 0.98);
+    let ph = sstep(-0.05, 0.15, dot(N, Ls)) + 0.015;
     let mar = sstep(0.05, 0.45, fbm(q * 1.7 + 3.0, 4, 470u) * 0.5 + 0.5);
-    let cr = 1.0 - 0.25 * sstep(0.55, 0.8, vn(q * 7.0, 471u) * 0.5 + 0.5);
-    disc *= mix(1.0, mix(1.0, 0.55, mar) * cr, moon);
+    let cr = 1.0 - 0.2 * sstep(0.55, 0.8, vn(q * 7.0, 471u) * 0.5 + 0.5);
+    let om = 2.0 * PI * (1.0 - cos(rm));
+    c += atmoInfo(1) / om * (mix(1.15, 0.7, mar) * cr * ph) * dm * up;
   }
-  c += sunCol() * disc * mix(60.0, 22.0, moon);
-  let night = max(1.0 - sstep(-0.05, 0.1, L.y), moon);
-  if (s5.x > 0.01 && d.y > 0.0) {
-    let hz = sstep(0.0, 0.12, d.y);
-    let mw = sstep(0.45, 0.9, s5.x);
-    var sky = stars(d, pix, mw) * 0.55;
-    sky += milkyWay(d) * mw;
-    c += sky * s5.x * mix(0.25, 1.0, night) * hz;
+  // stars and the Milky Way come out as the sun goes down (or always in a realm that asks for them, S5.x)
+  let s5 = rowv(S5);
+  let night = 1.0 - sstep(-0.21, -0.035, Ls.y);
+  let vis = clamp(max(night, s5.x), 0.0, 1.0);
+  var g = vec4f(0.0);
+  // a neighbouring realm's sky features come in with its weight squared: at a small weight nothing lone shows
+  let gw = s5.z * s5.z;
+  if (gw > 0.001 && d.y > -0.05) { g = giant(d); g.a *= gw; }
+  if (vis > 0.01 && d.y > 0.0) {
+    let unit = 0.9 * 8.3e-6; // a magnitude-0 star: 10^(-0.4 * 12.7) of a full moon (0.9 in every realm)
+    var sk = stars(d, pix, unit);
+    sk += milkyWay(d) * sstep(0.45, 0.9, s5.x);
+    c += sk * vis * A.a * (1.0 - g.a);
   }
-  if (s5.y > 0.01) { c += aurora(d) * s5.y; }
-  if (s5.z > 0.01 && d.y > -0.05) {
-    let g = giant(d);
-    c = mix(c, g.rgb * s5.z + c * 0.12, g.a * s5.z);
-  }
+  // the aurora is only seen once the sun is well down (in a Drift it comes out with the dark, not as a streak)
+  let aw = s5.y * (1.0 - sstep(-0.16, -0.02, Ls.y));
+  if (aw > 0.01) { c += aurora(d) * aw * mix(1.0, A.a, 0.6); }
+  // the giant is seen through the air in front of it: dimmed by its transmittance, the in-scatter stays
+  if (g.a > 0.0) { c += g.rgb * gw * A.a; }
   return c;
 }
 
@@ -321,23 +344,30 @@ fn odMist(y0: f32, dy: f32, t: f32, top: f32, k: f32) -> f32 {
   return odExp(y0 - top, dy, tc, k) + (t - tc);
 }
 
+// Aerial perspective from the realm's air: Rayleigh (8 km) and Mie (A1.w km) extinction along the segment, plus
+// the realm's extra ground haze (F0.w, falloff F2.z); the in-scattered light is the clear sky along the same
+// direction scaled to this segment's opacity. Then the low mist (F1, F2.x, F2.y).
 fn applyFog(col: vec3f, ro: vec3f, d: vec3f, t: f32) -> vec3f {
+  let a0 = rowv(A0); let a1 = rowv(A1);
   let f0 = rowv(F0); let f1 = rowv(F1); let f2 = rowv(F2);
-  let oa = f0.w * odExp(max(ro.y, 0.0), d.y, t, f2.z);
+  let y0 = max(ro.y, 0.0);
+  let oR = odExp(y0, d.y, t, 1.0 / 8000.0);
+  let oM = odExp(y0, d.y, t, 1.0 / (max(a1.w, 0.2) * 1000.0));
+  let oH = f0.w * odExp(y0, d.y, t, f2.z);
+  let tau = a1.rgb * (1e-6 * a0.x) * oR + vec3f(3.996e-6 * a0.y / 0.9 * oM + oH);
+  let T = exp(-tau);
+  let S = atmoSky(vec3f(d.x, max(d.y, 0.0) + 0.01, d.z));
+  let Lu = S.rgb / max(1.0 - S.a, 0.05);
+  var c = col * T + Lu * (1.0 - dot(T, vec3f(0.3333)));
+  // low mist: lit by the sky and the key light
   let om = f1.w * odMist(ro.y, d.y, t, f2.x, f2.y);
-  let L = FR.sun.xyz;
-  let mu = dot(d, L);
+  let mu = dot(d, FR.sun.xyz);
   let sc = sunCol();
-  let hz = skyBase(vec3f(d.x, max(d.y, 0.02) * 0.35, d.z));
-  let ca = hz * f0.rgb * 1.6 + sc * hg(mu, 0.7) * f2.w * 0.25;
-  let I = rowv(S3).w;
-  let cm = f1.rgb * (mix(rowv(S3).rgb, rowv(S2).rgb, 0.4) * I * 1.2 + sc * (0.12 + hg(mu, 0.6) * f2.w * 0.5)) + rowv(S7).rgb * rowv(S7).w;
-  let ta = exp(-oa); let tm = exp(-om);
-  var c = col * ta + ca * (1.0 - ta);
+  let cm = f1.rgb * (mix(rowv(S3).rgb, rowv(S2).rgb, 0.4) * 1.2 + sc * (0.12 + hg(mu, 0.6) * f2.w * 0.5)) + rowv(S7).rgb * rowv(S7).w;
+  let tm = exp(-om);
   c = c * tm + cm * (1.0 - tm);
   return c;
 }
-
 
 struct SkyOut { @builtin(position) pos: vec4f }
 @vertex fn vsSky(@builtin(vertex_index) i: u32) -> SkyOut {

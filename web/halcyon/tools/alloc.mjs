@@ -53,6 +53,7 @@ const PLATFORM = {
   'fx/particles.js:draw': 'GPURenderPassEncoder (motes + transparent fauna), when it runs',
   'fx/rings.js:pass': 'GPURenderPassEncoder (effects pass)',
   'fx/clipmap.js:bakeLevel': 'GPURenderPassEncoder x2 when a clip level re-bakes',
+  'fx/atmo.js:bake': 'GPUComputePassEncoder (atmosphere LUT bake, once per frame)',
   'fx/clouds.js:draw': 'GPUComputePassEncoder (weather window, first view) + GPURenderPassEncoder (cloud march)',
   'perf.js:frameEnd': 'resolveQuerySet / copyBufferToBuffer argument wrappers',
   'perf.js:afterSubmit': 'mapAsync() promise + then() promise, once per 16 frames (GPU timer readback)',

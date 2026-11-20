@@ -26,7 +26,7 @@ struct VOut {
   let gp = mc.xy + vec2f(f32(ix - hg), f32(iz - hg)) * s;
   let half = f32(hg) * s;
   let cam = VW.cam.xyz;
-  let dc = max(abs(gp.x - VW.anc.x), abs(gp.y - VW.anc.z)) / half; // morph from the head: same mesh in both eyes
+  let dc = max(abs(gp.x - cam.x), abs(gp.y - cam.z)) / half;
   var m = clamp((dc - 0.62) / 0.26, 0.0, 1.0);
   if (li + 1u >= nLevels()) { m = 0.0; }
   let odd = vec2f(f32(ix & 1), f32(iz & 1));
@@ -228,6 +228,13 @@ fn shadeL(off: u32, l0: u32, e: f32, p: vec2f) -> vec4f {
   if (e > 0.0 && l0 + off < n) { s = mix(s, clipSH(clipLevel(p, l0 + off + 1u, 4.0), p), e); }
   return s;
 }
+// pure rotation by ~36.9 deg (rot2 in common.wgsl also scales by 2.03): takes value noise off the world axes
+fn rotq(q: vec2f) -> vec2f { return vec2f(0.8 * q.x - 0.6 * q.y, 0.6 * q.x + 0.8 * q.y); }
+fn lvlColor(l: u32) -> vec3f {
+  var c = array<vec3f, 9>(vec3f(1.0), vec3f(1.0, 0.1, 0.1), vec3f(1.0, 0.55, 0.1), vec3f(1.0, 1.0, 0.1), vec3f(0.2, 1.0, 0.2),
+    vec3f(0.1, 1.0, 1.0), vec3f(0.2, 0.3, 1.0), vec3f(0.7, 0.2, 1.0), vec3f(0.45));
+  return c[min(l, 8u)];
+}
 fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
 
 @fragment fn fs(in: VOut) -> FOut {
@@ -266,8 +273,7 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
   let slope = 1.0 - gn.y;
   let h = p.y;
   let ndvG = max(dot(gn, V), 0.04);
-  var fp = dist * 2.0 * VW.fwd.w * VW.size.w * inverseSqrt(ndvG); // pixel footprint on the surface (m)
-  if (isOff(OFF_TDETAIL)) { fp = max(fp, 8.0); } // ablation: every micro-detail octave fades out as if far away
+  let fp = dist * 2.0 * VW.fwd.w * VW.size.w * inverseSqrt(ndvG); // pixel footprint on the surface (m)
 
   // realm blend
   let rw = realmWeights(p.xz);
@@ -342,13 +348,15 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
   grass = mix(grass, mix(grass * 0.55, vec3f(0.07, 0.05, 0.055), 0.5) * (0.85 + 0.3 * gd.x), heather * 0.5);
   grass = mix(grass, mix(grass, vec3f(0.16, 0.14, 0.06), 0.6) * (0.85 + 0.3 * gd.x), ochre * 0.35);
   // close turf: blade-scale tone so the ground under the flora is never a smear
+  // (rotated domains: value noise on the world axes, thresholded or not, reads as a mosaic of axis-aligned
+  // rectangles at 1080p, where these octaves are a few pixels across or more)
   let wT = bl(0.08, fp);
-  if (wT > 0.0) { grass *= 1.0 + 0.25 * vn(p.xz * (1.0 / 0.08), 236u) * wT; }
+  if (wT > 0.0) { grass *= 1.0 + 0.25 * vn(rotq(p.xz * (1.0 / 0.08)), 236u) * wT; }
   // mid distance (30-500 m): clump mottling (1-3 m) and wind streaks (grass bent the same way, 2 m wide, 25 m long),
   // each fading to its mean as it drops under a few pixels, so the turf keeps a grain instead of a smear
   let wCl = bl(2.2, fp);
   if (wCl > 0.0 && M0v.w > 0.0) {
-    let cl1 = vn(p.xz * (1.0 / 2.2), 238u) + 0.5 * vn(p.xz * (1.0 / 0.9), 239u) * bl(0.9, fp);
+    let cl1 = vn(rotq(p.xz * (1.0 / 2.2)), 238u) + 0.5 * vn(rotq(rotq(p.xz * (1.0 / 0.9))), 239u) * bl(0.9, fp);
     grass *= 1.0 + 0.16 * cl1 * wCl;
   }
   let wWs = bl(2.5, fp);
@@ -358,7 +366,12 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
     grass = mix(grass, grass * vec3f(1.22, 1.2, 1.05), sstep(0.1, 0.6, st) * 0.6 * wWs); // sheen where blades lean
   }
   let wC = bl(0.35, fp);
-  if (wC > 0.0) { grass *= 1.0 - 0.3 * sstep(0.15, 0.6, vn(p.xz * (1.0 / 0.35), 237u)) * wC; } // soil between tufts
+  if (wC > 0.0) {
+    // soil between tufts: two rotated, offset octaves so no lattice cell edge survives the threshold, and a soft one
+    let q = p.xz * (1.0 / 0.35);
+    let sn = 0.65 * vn(rotq(q), 237u) + 0.35 * vn(rotq(rotq(q * 0.61 + 17.3)), 235u);
+    grass *= 1.0 - 0.3 * sstep(0.0, 0.7, sn) * wC;
+  }
 
   let soil = mix(vec3f(0.085, 0.07, 0.05), M1v.rgb * 1.4, 0.4) * (0.85 + 0.3 * gd.x);
   var scree = M1v.rgb * 1.35;
@@ -765,9 +778,11 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
   if (dot(n, V) < 0.02) { n = normalize(n + V * (0.02 - dot(n, V))); }
 
   // ---- light ----
-  let L = sunDirFrom(S0v, FR.sun.w);
-  let horizon = sstep(-0.035, 0.06, L.y);
-  let sunC = S1v.rgb * S0v.z * horizon;
+  // key light: the sun or the moon (common.wgsl keyLight; they set and rise across a Drift)
+  let KLv = keyLight(S0v, S1v, bfx(rw, S8), FR.sun.w);
+  let L = KLv.dir;
+  let horizon = select(0.0, 1.0, max(KLv.col.r, max(KLv.col.g, KLv.col.b)) > 1e-4);
+  let sunC = KLv.col;
   let jit = ign(in.pos.xy);
   var sh = 0.0;
   let ndl = dot(n, L);
@@ -837,6 +852,12 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
   if (VW.cam.w == 4.0) { o.c = vec4f(n * 0.5 + 0.5, 1.0); }
   if (VW.cam.w == 9.0) { o.c = vec4f(mA.xyw, 1.0); }  // masks A: sink distance, pillar wall, veins
   if (VW.cam.w == 10.0) { o.c = vec4f(mB.xyz, 1.0); } // masks B: crevasse, crystal, cone/berg
+  // dbg=20: clip level sampled here (0 white, 1 red, 2 orange, 3 yellow, 4 green, 5 cyan, 6 blue, 7 violet, 8 grey),
+  // darkened inside the cross-fade; dbg=21: the mesh ring drawing this pixel, same colours; dbg=22: age of the
+  // sampled level's bake (green just baked -> red 10 s+; a level re-baked every frame stays bright green)
+  if (VW.cam.w == 20.0) { o.c = vec4f(lvlColor(l0) * (1.0 - 0.5 * e), 1.0); }
+  if (VW.cam.w == 21.0) { o.c = vec4f(lvlColor(in.lvl), 1.0); }
+  if (VW.cam.w == 22.0) { let ag = clamp((FR.time.x - FR.lv[l0].w) / 10.0, 0.0, 1.0); o.c = vec4f(ag, 1.0 - ag, 0.0, 1.0); }
   o.d = vec4f(dist, 0.0, 0.0, 1.0);
   return o;
 }

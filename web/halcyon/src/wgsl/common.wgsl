@@ -8,7 +8,8 @@ struct Frame {
   lv: array<vec4f, 12>, // per clip level: texel-0 world x, z, texel size, baked flag
   mc: array<vec4f, 12>, // per clip level: mesh centre x, z, vertex spacing, 0
   row: array<vec4f, ROW>, // realm row blended at the camera
-  flags: vec4f,  // x: ablation bits OFF_* (bench ?off=..., 0 in normal play), yzw: 0
+  flags: vec4f,  // x: ablation bits OFF_* (bench ?off=..., 0 in normal play), yz: cloud-shadow map texel-0 x, z,
+                 // w: its texel size (fx/atmo.js; 0 = not baked yet)
 }
 
 // Ablation bits (URL ?off=flora,fauna,...; main.js OFF_NAMES). A set bit switches that cost off: draws are skipped
@@ -26,6 +27,8 @@ const OFF_WATER: u32 = 512u;      // water shading in the composite (composite.w
 const OFF_RINGS: u32 = 1024u;     // rings and their sparks/guide (JS)
 const OFF_DRONE: u32 = 2048u;     // drone body, props, lights, shadow (JS)
 const OFF_MSAA: u32 = 4096u;      // opaque pass without MSAA (JS, at init)
+const OFF_VEIL: u32 = 1048576u;     // the Drift veil in the cloud pass (clouds.wgsl veilMarch)
+const OFF_ATMO: u32 = 2097152u;    // the per-frame atmosphere LUT bake: baked once, then frozen (fx/atmo.js)
 fn isOff(b: u32) -> bool { return (u32(FR.flags.x) & b) != 0u; }
 struct View {
   vp: mat4x4f,   // projection * view rotation (camera-relative world)
@@ -257,25 +260,66 @@ fn cloudShadow(p: vec3f, L: vec3f, rw: RWt) -> f32 {
 }
 // the same with the cloud fields given (life.wgsl passes the camera row: flora, fauna, particles, drone)
 // cost ablation: false drops cloud shadows everywhere (terrain, water glitter, life)
-const CLOUD_SHADOW_ON: bool = true;
 fn cloudShadowF(p: vec3f, L: vec3f, c0: vec4f, c1: vec4f, c2: vec4f, c3: vec4f) -> f32 {
-  if (!CLOUD_SHADOW_ON || L.y < 0.005 || isOff(OFF_CLOUDSHADOW)) { return 1.0; }
+  if (L.y < 0.005 || isOff(OFF_CLOUDSHADOW)) { return 1.0; }
   var tr = 1.0;
   let ly = max(L.y, 0.1);
   if (c0.x > 0.005) {
     let mid = mix(c0.y, c0.z, 0.2);
     if (p.y < mid) {
       let xz = p.xz + L.xz * ((mid - p.y) / ly);
-      let cv = cloudCov(cloudField(xz, c3.x), c0.x);
-      tr = 1.0 - sstep(0.05, 0.6, cv) * clamp(c0.w * 0.85, 0.0, 0.88);
+      let uv = csmUV(xz);
+      if (csmIn(uv)) { tr = 1.0 - textureSampleLevel(csmT, atmoS, uv, 0.0).x; }
+      else { // beyond the map (> 12 km): the coverage field itself
+        let cv = cloudCov(cloudField(xz, c3.x), c0.x);
+        tr = 1.0 - sstep(0.05, 0.6, cv) * clamp(c0.w * 0.85, 0.0, 0.88);
+      }
     }
   }
   if (c1.w > 0.005 && p.y < c2.y) {
     // through the cloud sea: thickness above p along the sun
     let th = (c2.y - max(p.y, c2.x)) / ly;
     let xz = p.xz + L.xz * ((c2.y - p.y) / ly);
-    let od = th * c2.z * 0.03 * seaCov(xz);
+    let uv = csmUV(xz);
+    let od = th * c2.z * 0.03 * select(seaCov(xz), textureSampleLevel(csmT, atmoS, uv, 0.0).y, csmIn(uv));
     tr *= mix(1.0, max(exp(-od), 0.06), c1.w);
   }
   return tr;
+}
+
+// ---- sky light (sky/atmosphere programmer) ----
+// The sky-view LUT of the physical atmosphere for this frame's camera (fx/atmo.js, wgsl/atmo.wgsl): rows 0..127
+// are display radiance over the sphere (u = azimuth, v = elevation, denser near the horizon), a = mean
+// transmittance along the view; row 128 holds per-frame values (atmoInfo).
+@group(0) @binding(3) var atmoT: texture_2d<f32>;
+@group(0) @binding(4) var atmoS: sampler;
+// the cloud-shadow map (fx/atmo.js csCloudShadow): x main-layer occlusion, y cloud-sea coverage, top-down
+@group(0) @binding(5) var csmT: texture_2d<f32>;
+fn csmUV(xz: vec2f) -> vec2f { return (xz - FR.flags.yz) / (FR.flags.w * f32(textureDimensions(csmT).x)); }
+fn csmIn(uv: vec2f) -> bool { return FR.flags.w > 0.0 && all(uv > vec2f(0.002)) && all(uv < vec2f(0.998)); }
+
+// The key light is the sun or the moon, whichever is brighter where the realms blend: each body blends its own
+// elevation across the Drift, so the sun sets and the moon rises (no disc slides across the sky); the light
+// direction is their brightness-weighted mean, which only swings while both are at the horizon and dim.
+const MOON_COL: vec3f = vec3f(0.94, 0.95, 1.0);
+fn moonDirFrom(s8: vec4f, drift: f32) -> vec3f {
+  let el = radians(s8.x + drift * 0.25); let az = radians(s8.y + drift * 0.5);
+  return vec3f(sin(az) * cos(el), sin(el), -cos(az) * cos(el));
+}
+// relative air mass (Kasten-Young) for a body at height y = sin(elevation)
+fn airMass(y: f32) -> f32 {
+  let e = degrees(asin(clamp(y, -1.0, 1.0)));
+  return 1.0 / (max(y, 0.0) + 0.50572 * pow(max(e + 6.07995, 0.3), -1.6364));
+}
+struct KL { dir: vec3f, col: vec3f }
+fn keyLight(s0: vec4f, s1: vec4f, s8: vec4f, drift: f32) -> KL {
+  let sd = sunDirFrom(s0, drift);
+  let sc = s1.rgb * s0.z * sstep(-0.035, 0.06, sd.y);
+  let md = moonDirFrom(s8, drift);
+  let mc = MOON_COL * s8.z * sstep(-0.035, 0.06, md.y) * exp(-0.22 * airMass(md.y));
+  let ws = luma(sc) + 1e-5; let wm = luma(mc);
+  var o: KL;
+  o.dir = normalize(sd * ws + md * wm);
+  o.col = sc + mc;
+  return o;
 }

@@ -1,0 +1,29 @@
+{
+  "defaults": {"w": 960, "h": 540, "t": 20, "hud": 0, "fov": 62},
+  "shots": [
+    {"name": "home_ice_mid_5m_along", "params": {"realm": 0, "pos": "0,5,-3229", "agl": 1, "yaw": 0, "pitch": 2}},
+    {"name": "home_ice_mid_5m_across", "params": {"realm": 0, "pos": "0,5,-3229", "agl": 1, "yaw": 90, "pitch": 2}},
+    {"name": "home_ice_q25_5m_across", "params": {"realm": 0, "pos": "0,5,-3087", "agl": 1, "yaw": 90, "pitch": 2}},
+    {"name": "home_ice_q75_5m_across", "params": {"realm": 0, "pos": "0,5,-3389", "agl": 1, "yaw": 90, "pitch": 2}},
+    {"name": "home_ice_mid_150m_along", "params": {"realm": 0, "pos": "0,150,-3229", "agl": 1, "yaw": 0, "pitch": -8}},
+    {"name": "home_ice_mid_150m_across", "params": {"realm": 0, "pos": "0,150,-3229", "agl": 1, "yaw": 90, "pitch": -8}},
+    {"name": "home_ice_q25_150m_across", "params": {"realm": 0, "pos": "0,150,-3087", "agl": 1, "yaw": 90, "pitch": -8}},
+    {"name": "home_ice_q75_150m_across", "params": {"realm": 0, "pos": "0,150,-3389", "agl": 1, "yaw": 90, "pitch": -8}},
+    {"name": "home_mirror_mid_5m_along", "params": {"realm": 0, "pos": "-1988,5,-1704", "agl": 1, "yaw": 311, "pitch": 2}},
+    {"name": "home_mirror_mid_5m_across", "params": {"realm": 0, "pos": "-1988,5,-1704", "agl": 1, "yaw": 41, "pitch": 2}},
+    {"name": "home_mirror_q25_5m_across", "params": {"realm": 0, "pos": "-1794,5,-1538", "agl": 1, "yaw": 41, "pitch": 2}},
+    {"name": "home_mirror_q75_5m_across", "params": {"realm": 0, "pos": "-2182,5,-1871", "agl": 1, "yaw": 41, "pitch": 2}},
+    {"name": "home_mirror_mid_150m_along", "params": {"realm": 0, "pos": "-1988,150,-1704", "agl": 1, "yaw": 311, "pitch": -8}},
+    {"name": "home_mirror_mid_150m_across", "params": {"realm": 0, "pos": "-1988,150,-1704", "agl": 1, "yaw": 41, "pitch": -8}},
+    {"name": "home_mirror_q25_150m_across", "params": {"realm": 0, "pos": "-1794,150,-1538", "agl": 1, "yaw": 41, "pitch": -8}},
+    {"name": "home_mirror_q75_150m_across", "params": {"realm": 0, "pos": "-2182,150,-1871", "agl": 1, "yaw": 41, "pitch": -8}},
+    {"name": "painted_lumen_mid_5m_along", "params": {"realm": 1, "pos": "772,5,-3586", "agl": 1, "yaw": 12, "pitch": 2}},
+    {"name": "painted_lumen_mid_5m_across", "params": {"realm": 1, "pos": "772,5,-3586", "agl": 1, "yaw": 102, "pitch": 2}},
+    {"name": "painted_lumen_q25_5m_across", "params": {"realm": 1, "pos": "735,5,-3412", "agl": 1, "yaw": 102, "pitch": 2}},
+    {"name": "painted_lumen_q75_5m_across", "params": {"realm": 1, "pos": "813,5,-3777", "agl": 1, "yaw": 102, "pitch": 2}},
+    {"name": "painted_lumen_mid_150m_along", "params": {"realm": 1, "pos": "772,150,-3586", "agl": 1, "yaw": 12, "pitch": -8}},
+    {"name": "painted_lumen_mid_150m_across", "params": {"realm": 1, "pos": "772,150,-3586", "agl": 1, "yaw": 102, "pitch": -8}},
+    {"name": "painted_lumen_q25_150m_across", "params": {"realm": 1, "pos": "735,150,-3412", "agl": 1, "yaw": 102, "pitch": -8}},
+    {"name": "painted_lumen_q75_150m_across", "params": {"realm": 1, "pos": "813,150,-3777", "agl": 1, "yaw": 102, "pitch": -8}}
+  ]
+}
