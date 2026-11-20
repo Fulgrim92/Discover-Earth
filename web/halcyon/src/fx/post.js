@@ -1,5 +1,5 @@
 // fx/post.js: bloom chain (6 levels down, tent up), then tone map / grade / vignette / dither into the canvas.
-import { G, shader, bgl, bindGroup, tex, pipeline } from '../gpu.js';
+import { G, shader, bgl, bindGroup, tex, pipeline, tsBoth, tsBegin, tsEnd, TS_BLOOM, TS_FINAL } from '../gpu.js';
 import POST from '../wgsl/post.wgsl';
 
 const NB = 6;
@@ -15,8 +15,8 @@ export function init(ctx) {
   pDown = pipeline({ label: 'bloomDown', module: mod, fs: 'fsDown', layouts: lay, targets: [{ format: 'rgba16float' }] });
   pUp = pipeline({ label: 'bloomUp', module: mod, fs: 'fsUp', layouts: lay, targets: [{ format: 'rgba16float' }] });
   pFinal = pipeline({ label: 'final', module: mod, fs: 'fsFinal', layouts: lay, targets: [{ format: G.canvasFormat }] });
-  finalDesc[0] = { colorAttachments: [{ view: null, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }] };
-  finalDesc[1] = { colorAttachments: [{ view: null, loadOp: 'load', storeOp: 'store' }] };
+  finalDesc[0] = { colorAttachments: [{ view: null, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }], timestampWrites: tsBoth(TS_FINAL) };
+  finalDesc[1] = { colorAttachments: [{ view: null, loadOp: 'load', storeOp: 'store' }], timestampWrites: tsBoth(TS_FINAL) };
 }
 
 export function bind(ctx, tg) {
@@ -30,11 +30,11 @@ export function bind(ctx, tg) {
   for (let i = 0; i < NB; i++) {
     const src = i === 0 ? tg.compV : down[i - 1];
     downBG[i] = bindGroup(bl1, [src, ctx.linear, tg.sceneV]);
-    downDesc[i] = { colorAttachments: [{ view: down[i], loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }] };
+    downDesc[i] = { colorAttachments: [{ view: down[i], loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }], timestampWrites: i === 0 ? tsBegin(TS_BLOOM) : undefined };
   }
   for (let i = NB - 2; i >= 0; i--) {
     upBG[i] = bindGroup(bl1, [up[i + 1], ctx.linear, down[i]]);
-    upDesc[i] = { colorAttachments: [{ view: up[i], loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }] };
+    upDesc[i] = { colorAttachments: [{ view: up[i], loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }], timestampWrites: i === 0 ? tsEnd(TS_BLOOM) : undefined };
   }
   finalBG = bindGroup(bl1, [tg.compV, ctx.linear, up[0]]);
 }

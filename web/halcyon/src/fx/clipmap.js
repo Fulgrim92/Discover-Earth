@@ -1,6 +1,6 @@
 // fx/clipmap.js: 9 levels of 512x512 height/gradient + 2 mask arrays, baked on the GPU when a level's snapped
 // centre moves (at most one level per frame in flight, all at once on start).
-import { G, shader, bgl, bindGroup, tex, buffer, pipeline, FO } from '../gpu.js';
+import { G, shader, bgl, bindGroup, tex, buffer, pipeline, FO, tsBegin, tsEnd, TS_BAKE } from '../gpu.js';
 import CLIP from '../wgsl/clip.wgsl';
 import TERRFN from '../wgsl/terrfn.wgsl';
 import BAKE from '../wgsl/bake.wgsl';
@@ -40,13 +40,13 @@ export function init(ctx) {
     { view: tmpH.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } },
     { view: tmpA.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } },
     { view: tmpB.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } },
-  ] };
+  ], timestampWrites: tsBegin(TS_BAKE) };
   const tmpHView = tmpH.createView();
   for (let i = 0; i < LEVELS; i++) {
     bakeBuf[i] = buffer(16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'bakeU' + i);
     bakeBG[i] = bindGroup(bl1, [bakeBuf[i]]);
     gradBG[i] = bindGroup(bl2, [bakeBuf[i], tmpHView]);
-    gradDesc[i] = { colorAttachments: [{ view: data.createView({ dimension: '2d', baseArrayLayer: i, arrayLayerCount: 1 }), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }] };
+    gradDesc[i] = { colorAttachments: [{ view: data.createView({ dimension: '2d', baseArrayLayer: i, arrayLayerCount: 1 }), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }], timestampWrites: tsEnd(TS_BAKE) };
     cpDstA[i] = { texture: maskA, origin: { x: 0, y: 0, z: i } };
     cpDstB[i] = { texture: maskB, origin: { x: 0, y: 0, z: i } };
     have[i * 2] = 1e30; have[i * 2 + 1] = 1e30;

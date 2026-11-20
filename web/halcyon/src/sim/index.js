@@ -82,7 +82,8 @@ export function createSim(world, opts) {
     cameraMode: typeof opts.cameraMode === 'number' ? opts.cameraMode : 1,
     sport: 0,
     boost: 0,
-    step, teleport, setXRSticks, setHeadPose, startAudio, attach, press, jumpToRealm,
+    dtIn: new Float64Array(1), // step() with no argument reads dt from here (no boxed double per frame)
+    step, teleport, setXRSticks, setHeadPose, startAudio, pauseAudio: AU.pause, attach, press, jumpToRealm,
     setStickMode: IN.setStickMode,
     _dbg: { D, IN, R, CAM, M, F },
   };
@@ -184,7 +185,7 @@ export function createSim(world, opts) {
     IN.attachKeyboard(window);
     let show = opts.hud !== false;
     try { if (new URLSearchParams(location.search).get('hud') === '0') show = false; } catch (e) { /* no location */ }
-    HUD.attach(canvas, show);
+    HUD.attach(canvas, show, opts.help);
     PANEL.attach();
     const first = () => { AU.start(); window.removeEventListener('pointerdown', first); window.removeEventListener('keydown', first); };
     window.addEventListener('pointerdown', first);
@@ -252,9 +253,11 @@ export function createSim(world, opts) {
   }
 
   function step(dt) {
-    if (!(dt > 0)) dt = 0;
-    if (dt > 0.1) dt = 0.1;
-    F[F_DT] = dt;
+    // dt goes straight into the typed array: reassigning the parameter (undefined | double) would make V8's
+    // mid tier (Maglev) keep it tagged and box a fresh number every frame
+    if (dt === undefined) F[F_DT] = sim.dtIn[0]; else F[F_DT] = dt;
+    const d0 = F[F_DT];
+    F[F_DT] = d0 > 0.1 ? 0.1 : d0 > 0 ? d0 : 0;
     if (sim.flightMode !== M[M_MODE]) applyMode(sim.flightMode);
 
     IN.ARG[0] = F[F_DT];

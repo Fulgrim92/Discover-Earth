@@ -1,7 +1,7 @@
 // Cameras: FPV (gimbal in GPS, fixed uptilt in Angle/Acro), chase, line-of-sight. Writes sim.cam.
 // No allocations per frame: scalar inputs come in the ARG slots, terrain through terrain.js.
 
-import { qmul, qaxisA, qyawA, qlook, vrot, qheadingA } from './qmath.js';
+import { qmul, qyawA, qlook, vrot, qheadingA } from './qmath.js';
 import * as T from './terrain.js';
 
 export const CAM_FPV = 0, CAM_CHASE = 1, CAM_LOS = 2, N_CAM = 3;
@@ -57,11 +57,15 @@ export function update(out, camMode, flightMode, rp, rq, vel, crashed) {
   if (camMode === CAM_FPV) {
     if (flightMode === 0 && !crashed) {
       // 3-axis gimbal: level, follows heading, pitch from the gimbal control
-      qyawA(qa, S, S_PSI); qaxisA(qb, 1, 0, 0, ARG, 1); qmul(qc, qa, qb);
+      // = qaxisA(qb, 1, 0, 0, ARG, 1), written out: reached only in FPV, qaxisA was compiled by V8's mid tier with
+      // generic Math.sin/cos calls that boxed both results every frame (here the Math calls are inlined)
+      const h = 0.5 * ARG[1], s = Math.sin(h);
+      qyawA(qa, S, S_PSI); qb[0] = s; qb[1] = 0 * s; qb[2] = 0 * s; qb[3] = Math.cos(h); qmul(qc, qa, qb);
       out[7] = FOV_GPS;
     } else {
       S[S_ANG] = flightMode === 2 ? UPTILT_ACRO : UPTILT_ANGLE;
-      qaxisA(qb, 1, 0, 0, S, S_ANG);
+      const h = 0.5 * S[S_ANG], s = Math.sin(h); // = qaxisA(qb, 1, 0, 0, S, S_ANG)
+      qb[0] = s; qb[1] = 0 * s; qb[2] = 0 * s; qb[3] = Math.cos(h);
       qmul(qc, rq, qb);
       out[7] = flightMode === 2 ? FOV_ACRO : FOV_ANGLE;
     }

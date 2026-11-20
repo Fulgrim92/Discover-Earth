@@ -175,6 +175,15 @@ export function hu(x, y, s) {
   return h >>> 0;
 }
 export function hf(x, y, s) { return (hu(x, y, s) >>> 8) * (1 / 16777216); }
+// hu(x, y, s) >>> 8: always a small integer, so it is returned unboxed even when V8 does not inline it
+// (hot paths use hu8(...) * (1 / 16777216), bit-identical to hf)
+export function hu8(x, y, s) {
+  let h = Math.imul(x, 0x8da6b343) ^ Math.imul(y, 0xd8163841) ^ Math.imul(s, 0xcb1ab31f);
+  h ^= h >>> 16; h = Math.imul(h, 0x7feb352d);
+  h ^= h >>> 15; h = Math.imul(h, 0x846ca68b);
+  h ^= h >>> 16;
+  return h >>> 8;
+}
 
 const CUR_OFF = NREALM * ROWF;
 for (let k = 0; k < 9; k++) {
@@ -216,23 +225,35 @@ function site(i, j, k) {
     SX[k] = TABLE[o]; SZ[k] = TABLE[o + 1]; SI[k] = TABLE[o + 2];
     return;
   }
-  SX[k] = Math.fround((i + (hf(i, j, 101) - 0.5) * 2 * JIT) * CELL);
-  SZ[k] = Math.fround((j + (hf(i, j, 102) - 0.5) * 2 * JIT) * CELL);
+  SX[k] = Math.fround((i + (hu8(i, j, 101) * (1 / 16777216) - 0.5) * 2 * JIT) * CELL);
+  SZ[k] = Math.fround((j + (hu8(i, j, 102) * (1 / 16777216) - 0.5) * 2 * JIT) * CELL);
   SI[k] = hu(i, j, 103) % NREALM;
 }
 
-function vnz(px, py, s) {
+// Hot-path calling convention (no double crosses a function boundary, so nothing is boxed even when V8 does not
+// inline): inputs and results go through small Float64Array scratch slots.
+const ZQ = new Float64Array(3); // vnz: x, y in; value out
+function vnz(s) {
+  const px = ZQ[0], py = ZQ[1];
   const ix = Math.floor(px), iy = Math.floor(py);
   const fx = px - ix, fy = py - iy;
   const ux = fx * fx * fx * (fx * (fx * 6 - 15) + 10), uy = fy * fy * fy * (fy * (fy * 6 - 15) + 10);
-  const a = hf(ix, iy, s) * 2 - 1, b = hf(ix + 1, iy, s) * 2 - 1, c = hf(ix, iy + 1, s) * 2 - 1, d = hf(ix + 1, iy + 1, s) * 2 - 1;
-  return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
+  const a = hu8(ix, iy, s) * (1 / 16777216) * 2 - 1, b = hu8(ix + 1, iy, s) * (1 / 16777216) * 2 - 1;
+  const c = hu8(ix, iy + 1, s) * (1 / 16777216) * 2 - 1, d = hu8(ix + 1, iy + 1, s) * (1 / 16777216) * 2 - 1;
+  ZQ[2] = a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
 }
 
-export function realmWeights(x0, z0) {
+export const W_IN = new Float64Array(2); // realmWeightsA() input: x, z
+export function realmWeights(x0, z0) { W_IN[0] = x0; W_IN[1] = z0; realmWeightsA(); }
+export function realmWeightsA() {
+  const x0 = W_IN[0], z0 = W_IN[1];
   const ax = x0 / 2600, az = z0 / 2600, bx = x0 / 800, bz = z0 / 800;
-  const x = x0 + 650 * vnz(ax, az, 901) + 180 * vnz(bx, bz, 903);
-  const z = z0 + 650 * vnz(ax + 3.3, az + 8.1, 902) + 180 * vnz(bx + 1.9, bz + 4.4, 904);
+  ZQ[0] = ax; ZQ[1] = az; vnz(901); const n1 = ZQ[2];
+  ZQ[0] = bx; ZQ[1] = bz; vnz(903); const n2 = ZQ[2];
+  ZQ[0] = ax + 3.3; ZQ[1] = az + 8.1; vnz(902); const n3 = ZQ[2];
+  ZQ[0] = bx + 1.9; ZQ[1] = bz + 4.4; vnz(904); const n4 = ZQ[2];
+  const x = x0 + 650 * n1 + 180 * n2;
+  const z = z0 + 650 * n3 + 180 * n4;
   const bi = Math.floor(x / CELL + 0.5), bj = Math.floor(z / CELL + 0.5);
   let dmin = 1e30, kmin = 0;
   for (let j = -1, k = 0; j <= 1; j++) {
@@ -278,6 +299,11 @@ export function blendAt(x, z, outRow) {
   realmWeights(x, z);
   blendFields(outRow, 0, 0, ROW);
   return outRow;
+}
+// same, position from W_IN (no boxed arguments)
+export function blendAtA(outRow) {
+  realmWeightsA();
+  blendFields(outRow, 0, 0, ROW);
 }
 
 // WGSL constants generated from this table.

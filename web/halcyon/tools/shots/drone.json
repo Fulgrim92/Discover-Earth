@@ -1,0 +1,11 @@
+{
+  "defaults": { "w": 960, "h": 540, "t": 20, "hud": 0, "sim": 1, "fov": 40, "realm": 0 },
+  "shots": [
+    { "name": "drone_cam_34",   "params": { "orbit": "0.75,145,22" } },
+    { "name": "drone_cam_side", "params": { "orbit": "0.9,95,4" } },
+    { "name": "drone_cam_top",  "params": { "orbit": "0.8,180,60" } },
+    { "name": "drone_five_34",  "params": { "orbit": "0.7,150,20", "fm": 2 } },
+    { "name": "drone_five_low", "params": { "orbit": "0.7,30,-12", "fm": 2 } },
+    { "name": "drone_far",      "params": { "orbit": "60,160,8", "fov": 30 } }
+  ]
+}

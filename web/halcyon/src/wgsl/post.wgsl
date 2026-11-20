@@ -88,6 +88,10 @@ fn oetf(c: vec3f) -> vec3f {
   let g0 = FR.row[G0]; let g1 = FR.row[G1]; let g2 = FR.row[G2]; let g3 = FR.row[G3];
   c = mix(c, b, g2.w);
   c *= exp2(g0.x);
+  // misc.w bits: 1 = Display-P3 output, 2 = HDR canvas (toneMapping 'extended'): keep HR x SDR white of headroom
+  let mw = u32(FR.misc.w + 0.5);
+  var HR = 1.0;
+  if ((mw & 2u) != 0u) { HR = 2.5; c *= 1.0 / HR; }
   // tone map: blend Neutral and AgX by the realm row
   let tn = neutral(c);
   var t = tn;
@@ -105,10 +109,12 @@ fn oetf(c: vec3f) -> vec3f {
   let v = 1.0 - g1.w * 0.22 * pow(dot(q * vec2f(asp * 0.75, 1.0), q * vec2f(asp * 0.75, 1.0)) * 0.5, 1.3);
   t *= v;
   // Display-P3: convert linear sRGB primaries to P3
-  if (FR.misc.w > 0.5) {
+  if ((mw & 1u) != 0u) {
     t = mat3x3f(0.8225, 0.0332, 0.0171, 0.1774, 0.9669, 0.0724, 0.0, 0.0, 0.9108) * t;
   }
-  var e = oetf(clamp(t, vec3f(0.0), vec3f(1.0)));
+  // HDR: the graded image fills [0, 1] of the shoulder-compressed range; scale it back up into the headroom
+  t = clamp(t, vec3f(0.0), vec3f(1.0)) * HR;
+  var e = oetf(t);
   // triangular dither
   let n1 = ign(in.pos.xy); let n2 = ign(in.pos.xy + vec2f(17.0, 59.0));
   e += (n1 + n2 - 1.0) / 255.0;

@@ -1,5 +1,5 @@
 // fx/composite.js: full-screen composite (water, fog, cloud sea, high clouds) over the resolved opaque scene.
-import { G, shader, bgl, bindGroup, pipeline } from '../gpu.js';
+import { G, shader, bgl, bindGroup, pipeline, tsBoth, TS_COMPOSITE } from '../gpu.js';
 import { clip } from './clipmap.js';
 import CLIP from '../wgsl/clip.wgsl';
 import SKY from '../wgsl/sky.wgsl';
@@ -16,7 +16,7 @@ export function init(ctx) {
 // (re)bind to the view targets
 export function bind(ctx, tg) {
   bg2 = bindGroup(bl2, [tg.sceneV, tg.distV, tg.cloudV, ctx.linear]);
-  desc = { colorAttachments: [{ view: tg.compV, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }] };
+  desc = { colorAttachments: [{ view: tg.compV, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }], timestampWrites: tsBoth(TS_COMPOSITE) };
 }
 
 export function draw(ctx, enc, view) {

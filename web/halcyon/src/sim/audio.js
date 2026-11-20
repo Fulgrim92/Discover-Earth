@@ -92,6 +92,13 @@ export function start() {
   }
 }
 
+// tab hidden: suspend the context (no CPU, no sound); visible again: resume (only if it was started)
+export function pause(on) {
+  if (!A.ctx) return;
+  if (on && A.ctx.state === 'running') A.ctx.suspend();
+  else if (!on && A.ctx.state === 'suspended') A.ctx.resume();
+}
+
 export function setMuted(on) {
   S[S_MUTED] = on ? 1 : 0;
   if (A.ctx) A.master.gain.setTargetAtTime(on ? 0 : 0.7, A.ctx.currentTime, 0.05);

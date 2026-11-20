@@ -1,0 +1,9 @@
+{
+  "defaults": { "w": 960, "h": 540, "t": 20, "hud": 0, "sim": 1, "fov": 62, "realm": 0 },
+  "shots": [
+    { "name": "rings_300m",     "params": { "pos": "-259.8,167.6,150", "yaw": 60, "pitch": -1, "fov": 40 } },
+    { "name": "rings_120m",     "params": { "pos": "-98.3,165.6,68.8", "yaw": 55, "pitch": -1.4 } },
+    { "name": "ring_next_5m",   "params": { "pos": "-2.8,163.2,4.8", "yaw": 30, "pitch": -6.2, "fov": 75 } },
+    { "name": "ring_idle_5m",   "params": { "pos": "-50,152.6,33.2", "yaw": 60, "pitch": -5.7, "fov": 75 } }
+  ]
+}

@@ -185,11 +185,14 @@ web/halcyon/
   tools/build.mjs        esbuild bundle + WGSL minify -> dist/index.html (single file), prints byte size
   tools/shot.mjs         headless Chromium (SwiftShader WebGPU) -> PNGs from a step list
   tools/shots/*.json     step lists: per-realm hero views, stereo, fly-throughs
-  tools/alloc.mjs        the zero-allocation gate
+  tools/alloc.mjs        the zero-allocation gate (scripted frame loop, --trace-gc + sampling heap profile)
+  tools/bench.mjs        headless smoke test of ?bench=1 (report shape, GPU timer readback)
+  tools/play.mjs         scripted flights (?script=) -> frames + contact sheet; --dry runs the sim in node
 ```
 
 URL parameters (all optional) make captures deterministic: `realm`, `pos=x,y,z`, `yaw`, `pitch`, `fov`, `t`
-(freeze time), `w`, `h`, `scale`, `stereo`, `hud=0`, `bench=1`, `quality=low|high`. The page sets
+(freeze time), `w`, `h`, `scale`, `stereo`, `hud=0`, `bench=1`, `quality=low|high`; the full list (script, sim,
+orbit, present, alloc, dynres, target, hdr, stride, inflight, ...) is at the top of `src/main.js`. The page sets
 `window.__halcyon = {ready, frame, error}` and the harness waits for `ready` (all clip levels baked) before
 grabbing. Shader compile errors and uncaptured GPU errors must surface in `__halcyon.error` and fail the shot.
 

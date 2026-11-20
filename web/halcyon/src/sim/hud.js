@@ -18,7 +18,8 @@ export const visible = new Uint8Array(1);
 
 const SZ = 76; // stick box CSS px
 
-export function attach(canvas, show) {
+// help: false skips the centred key help (the page shows its own start overlay)
+export function attach(canvas, show, help) {
   if (typeof document === 'undefined') return;
   const parent = canvas && canvas.parentElement ? canvas.parentElement : document.body;
   const root = document.createElement('div');
@@ -44,7 +45,7 @@ export function attach(canvas, show) {
   H.cr = cv('right:18px;bottom:16px', SZ, SZ);
   H.ccx = cv('left:50%;top:12px;margin-left:-90px', 180, 16);
   H.help = el('left:50%;top:50%;transform:translate(-50%,-50%);text-align:left;font-size:14px;line-height:1.7;' +
-    'transition:opacity 1.5s ease;opacity:1');
+    'transition:opacity 1.5s ease;opacity:' + (help === false ? '0' : '1'));
   H.help.textContent =
     'wasd  left stick (throttle / climb, yaw)      arrows  right stick (pitch, roll)\n' +
     'f  flight mode (gps / angle / acro)      x  normal / sport      space or shift  boost (gps)\n' +

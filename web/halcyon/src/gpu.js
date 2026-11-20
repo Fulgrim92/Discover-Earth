@@ -10,21 +10,62 @@ export function fail(msg) {
   console.error('[halcyon] ' + m);
 }
 
-export const G = { device: null, queue: null, adapter: null, f32filter: false, timestamp: false, clipFormat: 'rgba32float', canvasFormat: 'bgra8unorm', p3: false };
+export const G = { device: null, queue: null, adapter: null, f32filter: false, timestamp: false, clipFormat: 'rgba32float', canvasFormat: 'bgra8unorm', p3: false, hdr: false, lost: null };
 
-export async function initDevice() {
-  if (!navigator.gpu) throw new Error('WebGPU is not available in this browser');
-  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-  if (!adapter) throw new Error('no WebGPU adapter');
+// Errors that mean "this machine cannot run HALCYON" (shown as a friendly message, not a stack trace)
+export class Unsupported extends Error {}
+
+export async function initDevice(opts) {
+  if (!navigator.gpu) throw new Unsupported('nogpu');
+  let adapter = null;
+  try { adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }); } catch (e) { adapter = null; }
+  if (!adapter) throw new Unsupported('noadapter');
   const req = [];
   if (adapter.features.has('float32-filterable')) { req.push('float32-filterable'); G.f32filter = true; }
-  if (adapter.features.has('timestamp-query')) { req.push('timestamp-query'); G.timestamp = true; }
+  if (adapter.features.has('timestamp-query') && !(opts && opts.noTimer)) { req.push('timestamp-query'); G.timestamp = true; }
   const device = await adapter.requestDevice({ requiredFeatures: req });
   device.addEventListener('uncapturederror', (e) => fail('GPU: ' + e.error.message));
-  device.lost.then((i) => { if (i.reason !== 'destroyed') fail('device lost: ' + i.message); });
+  device.lost.then((i) => {
+    if (i.reason === 'destroyed') return;
+    fail('device lost: ' + i.message);
+    if (G.lost) G.lost(i);
+  });
   G.device = device; G.queue = device.queue; G.adapter = adapter;
   G.clipFormat = G.f32filter ? 'rgba32float' : 'rgba16float';
+  if (G.timestamp) initTimestamps();
   return device;
+}
+
+// ---------- GPU pass timer (timestamp-query) ----------
+// Each timed pass names a slot in TS_PASSES. Modules put tsBoth/tsBegin/tsEnd(slot) into their pass descriptors
+// at init (undefined when the feature is missing, which WebGPU treats as absent). The objects are mutated in place
+// by setTimerBase() before each view, so no descriptor is rebuilt per frame. perf.js resolves and reads them back.
+export const TS_BAKE = 0, TS_OPAQUE = 1, TS_CLOUDS = 2, TS_COMPOSITE = 3, TS_FX = 4, TS_BLOOM = 5, TS_FINAL = 6, TS_N = 7;
+export const TS_PASSES = ['bake', 'opaque', 'clouds', 'composite', 'fx', 'bloom', 'final'];
+export const TS_SLOTS = 32;                 // frames in the query ring
+export const TS_PER_FRAME = 32;             // passes x (begin, end) x 2 views = 28, padded: resolve offsets must be 256-byte aligned
+export const TS = { set: null, both: [], begin: [], end: [] };
+
+function initTimestamps() {
+  TS.set = G.device.createQuerySet({ type: 'timestamp', count: TS_SLOTS * TS_PER_FRAME, label: 'timer' });
+  for (let i = 0; i < TS_N; i++) {
+    TS.both[i] = { querySet: TS.set, beginningOfPassWriteIndex: i * 2, endOfPassWriteIndex: i * 2 + 1 };
+    TS.begin[i] = { querySet: TS.set, beginningOfPassWriteIndex: i * 2 };
+    TS.end[i] = { querySet: TS.set, endOfPassWriteIndex: i * 2 + 1 };
+  }
+}
+export function tsBoth(i) { return TS.set ? TS.both[i] : undefined; }
+export function tsBegin(i) { return TS.set ? TS.begin[i] : undefined; }
+export function tsEnd(i) { return TS.set ? TS.end[i] : undefined; }
+// point every timed pass at frame slot `slot`, view `view` (called before each view is encoded)
+export function setTimerBase(slot, view) {
+  if (!TS.set) return;
+  const base = slot * TS_PER_FRAME + view * TS_N * 2;
+  for (let i = 0; i < TS_N; i++) {
+    const b = base + i * 2;
+    TS.both[i].beginningOfPassWriteIndex = b; TS.both[i].endOfPassWriteIndex = b + 1;
+    TS.begin[i].beginningOfPassWriteIndex = b; TS.end[i].endOfPassWriteIndex = b + 1;
+  }
 }
 
 // Uniform block sizes (bytes). Offsets in floats, matching common.wgsl Frame/View.

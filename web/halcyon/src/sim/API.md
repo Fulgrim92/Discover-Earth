@@ -38,7 +38,7 @@ const sim = createSim(world, opts);
 
 `opts` (all optional): `flightMode` (0), `cameraMode` (1 = chase), `spawn: [x, z]` (default: the tour's first
 realm, Home), `wind: [m/s, dirRad, gustiness 0..1]` (fixed wind instead of the realm table), `seed` (gust noise),
-`hud: false`.
+`hud: false`, `help: false` (HUD without the key-help line; the page shows its own start overlay).
 
 ## Per frame
 
@@ -46,6 +46,7 @@ realm, Home), `wind: [m/s, dirRad, gustiness 0..1]` (fixed wind instead of the r
 sim.setXRSticks(lx, ly, rx, ry); // optional, before step: XR sticks override gamepad + keyboard for this step
 sim.setHeadPose(pose7 | null);   // optional: [px,py,pz,qx,qy,qz,qw] stored in sim.headPose (sim.hasHeadPose)
 sim.step(dt);                    // real seconds; clamped to 0.1; fixed 240 Hz substeps; allocation-free
+// or: sim.dtIn[0] = dt; sim.step();  -- the same without passing a double (a non-inlined call boxes it: 16 B/frame)
 // then read sim.cam, sim.drone, sim.rings ...
 ```
 
@@ -100,6 +101,7 @@ line-of-sight origin.
 - `sim.attach(canvas)`: keyboard + gamepad listeners, the HUD overlay (unless `?hud=0` or `opts.hud === false`),
   the controller settings panel, and audio start on the first pointer/key gesture.
 - `sim.startAudio()`: call from a user gesture (also done by attach).
+- `sim.pauseAudio(on)`: suspend (true) / resume (false) the AudioContext, e.g. while the tab is hidden.
 
 ## Bindings
 
