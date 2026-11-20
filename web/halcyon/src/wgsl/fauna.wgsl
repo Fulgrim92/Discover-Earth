@@ -49,7 +49,7 @@ fn wingDim(kind: u32) -> vec3f {
   return vec3f(0.82, 0.3, 0.45);
 }
 
-struct Bird { ok: bool, p: vec3f, fwd: vec3f, up: vec3f, flapA: f32, flapP: f32, size: f32, kind: u32, h: u32 }
+struct Bird { ok: bool, p: vec3f, fwd: vec3f, up: vec3f, flapA: f32, flapP: f32, size: f32, kind: u32, h: u32, pet: f32 }
 
 fn flockCell(g: u32, fi: u32) -> vec2i {
   let fg = FG[g];
@@ -67,10 +67,13 @@ fn bird(ii: u32) -> Bird {
   let fi = li / per; let k = li % per;
   let ci = flockCell(g, fi);
   let hc = hu(ci.x, ci.y, 9100u + g);
-  if (lfRand(hc, 1u) > fg.w * rowv(V2)[g]) { return B; }
+  let cen = (vec2f(ci) + 0.5 + (vec2f(lfRand(hc, 2u), lfRand(hc, 3u)) - 0.5) * 0.5) * fg.x;
+  // The Drift: a flock exists by the realm weights at its own home, not at the camera, so creatures cross borders
+  // and thin out through the zone without popping
+  let rwc = realmWeights(cen);
+  if (lfRand(hc, 1u) > fg.w * bf(rwc, V2)[g]) { return B; }
   let hb = hu(i32(hc), i32(k), 0x33u);
   let t = FR.time.x;
-  let cen = (vec2f(ci) + 0.5 + (vec2f(lfRand(hc, 2u), lfRand(hc, 3u)) - 0.5) * 0.5) * fg.x;
   B.kind = g; B.h = hb; B.size = 1.0;
   let w1 = vec3f(vn(vec2f(t * 0.11, f32(k) * 3.1), 911u), vn(vec2f(t * 0.09, f32(k) * 3.1 + 7.0), 912u), vn(vec2f(t * 0.13, f32(k) * 3.1 + 3.0), 913u));
   if (g == 0u || g == 2u) {
@@ -110,19 +113,36 @@ fn bird(ii: u32) -> Bird {
     // seabirds wheeling over a steep coastal slope
     let s0 = clipS(clipLevel(cen, 0u, 8.0), cen);
     let st = length(s0.yz);
-    let v4 = rowv(V4);
-    let skyMode = v4.x > 0.5 || v4.y > 0.5; // Stone: over the cloud sea; Ice: snow petrels over the ice
+    let v4 = bf(rwc, V4);
+    if (v4.y > 0.5) {
+      // Aurora Ice: snow petrels in a loose swirling flock low over the ice, catching the aurora (all 12 per colony)
+      let r = 14.0 + 40.0 * lfRand(hb, 1u);
+      let cw = select(-1.0, 1.0, lfRand(hb, 7u) > 0.3);
+      let v = 9.0 + 3.0 * lfRand(hb, 2u);
+      let a = t * v / r * cw + lfRand(hb, 3u) * 6.2832;
+      let wob = vec2f(sin(t * 0.21 + f32(k)), cos(t * 0.17 + f32(k) * 1.7)) * 18.0;
+      let p2 = cen + vec2f(w1.x, w1.y) * 40.0 + wob + vec2f(cos(a), sin(a)) * r;
+      let y = max(heightAny(p2), 0.0) + 14.0 + 30.0 * lfRand(hb, 4u) + 8.0 * sin(t * 0.4 + lfRand(hb, 5u) * 6.0);
+      B.p = vec3f(p2.x, y, p2.y);
+      let tg = vec2f(-sin(a), cos(a)) * cw;
+      B.fwd = normalize(vec3f(tg.x, 0.05 * cos(t * 0.4), tg.y));
+      let bank = atan(v * v / (r * 9.8));
+      B.up = normalize(vec3f(0.0, cos(bank), 0.0) - vec3f(cos(a), 0.0, sin(a)) * sin(bank));
+      B.flapP = t * 5.0 * 6.2832 + lfRand(hb, 6u) * 6.2832;
+      B.flapA = 0.7 * sstep(0.2, 0.6, sin(t * 0.8 + lfRand(hb, 7u) * 6.2832));
+      B.size = 2.0;
+      B.pet = 1.0;
+    } else {
+    let skyMode = v4.x > 0.5; // Stone: over the cloud sea
     if (!skyMode && (s0.x < -60.0 || s0.x > 220.0 || st < 0.2)) { return B; }
     let r = select(18.0, 40.0, skyMode) + select(50.0, 90.0, skyMode) * lfRand(hb, 1u);
-    if (v4.y > 0.5) { B.size = 2.0; } // petrels: read from a drone at 30-100 m
     let cw = select(-1.0, 1.0, lfRand(hc, 7u) > 0.5);
     let v = 8.0 + 3.0 * lfRand(hb, 2u);
     let a = t * v / r * cw + lfRand(hb, 3u) * 6.2832;
     let c2 = cen + vec2f(w1.x, w1.y) * 25.0;
     let p2 = c2 + vec2f(cos(a), sin(a)) * r;
     var y = max(s0.x, 0.0) + 30.0 + 70.0 * lfRand(hb, 4u) + 6.0 * sin(t * 0.3 + lfRand(hb, 5u) * 6.0);
-    if (v4.x > 0.5) { y = rowv(C2).y + 12.0 + 55.0 * lfRand(hb, 4u) + 4.0 * sin(t * 0.3 + lfRand(hb, 5u) * 6.0); }
-    if (v4.y > 0.5) { y = max(s0.x, 0.0) + 28.0 + 60.0 * lfRand(hb, 4u) + 5.0 * sin(t * 0.3 + lfRand(hb, 5u) * 6.0); }
+    if (v4.x > 0.5) { y = bf(rwc, C2).y + 12.0 + 55.0 * lfRand(hb, 4u) + 4.0 * sin(t * 0.3 + lfRand(hb, 5u) * 6.0); }
     y = max(y, heightAny(p2) + 10.0);
     B.p = vec3f(p2.x, y, p2.y);
     let tg = vec2f(-sin(a), cos(a)) * cw;
@@ -132,6 +152,7 @@ fn bird(ii: u32) -> Bird {
     B.up = normalize(vec3f(0.0, cos(bank), 0.0) + inward * sin(bank));
     B.flapP = t * 3.6 * 6.2832 + lfRand(hb, 6u) * 6.2832;
     B.flapA = 0.65 * sstep(0.35, 0.75, sin(t * 0.37 + lfRand(hb, 7u) * 6.2832));
+    }
   }
   let d = length(B.p - VW.cam.xyz);
   B.size *= sstep(1500.0, 1000.0, d);
@@ -191,7 +212,7 @@ fn birdVertex(vi: u32, B: Bird, mirror: bool) -> BV {
     let chord = wd.y * mix(1.0, 0.45, span01 * span01);
     let sweep = -0.25 * wd.y * span01 * span01;
     let cc = f32(c.y);
-    let xc = 0.08 - cc * chord + sweep + select(0.0, 0.1, B.kind == 0u);
+    var xc = 0.08 - cc * chord + sweep + select(0.0, 0.1, B.kind == 0u);
     let dI = vec2f(cos(ai), sin(ai));
     let dO = vec2f(cos(ao), sin(ao));
     var sp: vec2f; var nn: vec2f;
@@ -206,7 +227,7 @@ fn birdVertex(vi: u32, B: Bird, mirror: bool) -> BV {
   var n = normalize(fwd * ln.x + up * ln.y + side * ln.z);
   if (mirror) { wp.y = -wp.y; n.y = -n.y; }
   o.wp = wp; o.n = n; o.loc = loc; o.part = part; o.kind = B.kind;
-  if (B.kind == 1u && rowv(V4).y > 0.5) { o.kind = 3u; } // snow petrel: gull shape, own colour and light
+  if (B.pet > 0.5) { o.kind = 4u; } // snow petrel: gull shape, own colour and light
   o.sh = select(0.0, lfCloudShadow(B.p), FR.sun.y > -0.03); // birds fly above the terrain's shadows: cloud shadow only, no march per vertex
   o.pos = VW.vp * vec4f(wp - cam, 1.0);
   return o;
@@ -235,7 +256,7 @@ fn birdAlbedo(in: BV) -> vec3f {
     if (in.part == 1u) { return mix(vec3f(0.42, 0.45, 0.5), vec3f(0.015), sstep(0.8, 0.9, in.loc.x)); }
     return mix(vec3f(0.85, 0.85, 0.83), vec3f(0.85, 0.6, 0.1), sstep(0.25, 0.27, in.loc.x));
   }
-  if (k == 3u) { return mix(vec3f(0.93, 0.95, 0.97), vec3f(0.02), sstep(0.3, 0.33, in.loc.x) * f32(in.part == 0u)); }
+  if (k == 4u) { return mix(vec3f(0.9, 0.92, 0.94), vec3f(0.02), sstep(0.25, 0.27, in.loc.x) * f32(in.part == 0u)); } // petrel, black bill
   if (in.part == 1u) { return mix(vec3f(0.16, 0.14, 0.12), vec3f(0.03, 0.03, 0.03), sstep(0.5, 0.7, in.loc.x)); }
   var c = mix(vec3f(0.2, 0.17, 0.14), vec3f(0.45, 0.42, 0.38), sstep(0.2, -0.6, in.loc.y));
   c = mix(c, vec3f(0.02), sstep(0.3, 0.34, in.loc.x));
@@ -258,11 +279,11 @@ fn birdShade(in: BV) -> vec3f {
   var col = alb * (sc * in.sh * (wrap + thru) + lfAmb(n.y, alb));
   let hv = normalize(L + V);
   col += sc * in.sh * pow(max(dot(n, hv), 0.0), 30.0) * 0.04;
-  if (in.kind == 3u) {
-    // snow petrels catch the aurora: its colour from above and from the rim, and a faint glow of their own
+  if (in.kind == 4u) {
+    // snow petrels in the polar night: lit by the aurora above them and the snow below
     let m6 = rowv(M6);
     let fres = pow(1.0 - abs(dot(n, V)), 2.0);
-    col += alb * m6.rgb * m6.w * (0.6 * max(n.y, 0.0) + 1.8 * fres + 0.3);
+    col += alb * m6.rgb * m6.w * (0.9 * max(n.y, 0.0) + 0.8 * fres + 0.15) + alb * lfAmb(-1.0, vec3f(0.8)) * max(-n.y, 0.0) * 0.6;
   }
   return col;
 }
@@ -324,9 +345,9 @@ fn jelly(ii: u32) -> Jelly {
   let fg = FG[3];
   let ci = flockCell(3u, li);
   let hc = hu(ci.x, ci.y, 9203u);
-  if (lfRand(hc, 1u) > fg.w * rowv(V2).w) { return J; }
-  let t = FR.time.x;
   let cen = (vec2f(ci) + 0.5 + (vec2f(lfRand(hc, 2u), lfRand(hc, 3u)) - 0.5) * 0.7) * fg.x;
+  if (lfRand(hc, 1u) > fg.w * bf(realmWeights(cen), V2).w) { return J; } // by the weights at its home (The Drift)
+  let t = FR.time.x;
   let ph = lfRand(hc, 4u) * 100.0;
   let drift = vec2f(sin(t * 0.013 + ph), cos(t * 0.011 + ph * 1.3)) * 45.0;
   let p2 = cen + drift;
@@ -458,16 +479,20 @@ fn bellPt(J: Jelly, ring: u32, seg: u32) -> vec3f {
     let rim = sstep(0.82, 0.98, ring);
     let beat = 0.6 + 0.8 * in.pr.x;
     let spots = sstep(0.6, 0.9, vn(vec2f(in.loc.x * 40.0, ring * 12.0 + t * 0.3), 950u)) * 0.5;
-    c = glow * (0.08 + fres * 0.9 + canal * 0.7 + gon * 2.2 * beat + rim * 2.0 * beat + spots * fres);
+    // a real medusa: clear jelly that shows mostly at grazing angles, light living in the gonads and canals,
+    // the margin a soft row of photophores rather than an outline
+    let pho = pow(0.5 + 0.5 * cos(in.loc.x * 6.2832 * 32.0), 8.0) * rim;
+    c = glow * (0.02 + fres * 0.35 + canal * 0.35 + gon * 1.3 * beat + pho * 1.4 * beat + spots * fres * 0.5);
+    c += lfAmb(n.y, vec3f(0.6, 0.65, 0.7)) * fres * 0.25; // the jelly lit by the sky
     c += vec3f(0.85, 0.75, 1.0) * sunCol() * pow(max(dot(-V, L), 0.0), 6.0) * 0.08;
     if (!ff) { c *= 0.6; }
-    a = clamp(0.06 + fres * 0.5 + rim * 0.3, 0.0, 0.75);
+    a = clamp(0.03 + fres * 0.45 + rim * 0.12, 0.0, 0.6);
   } else {
     let x = abs(in.loc.x);
     let core = sstep(1.0, 0.0, x);
     let beads = 0.5 + 0.5 * pow(0.5 + 0.5 * sin(in.loc.y * 60.0 - t * 3.0), 6.0);
     if (in.part == 1u) {
-      c = glow * core * (0.25 + 0.9 * beads) * (1.0 - 0.6 * in.loc.y);
+      c = glow * core * (0.1 + 0.6 * beads) * (1.0 - 0.6 * in.loc.y);
       a = core * 0.35 * (1.0 - in.loc.y * 0.7);
     } else {
       c = mix(glow, vec3f(1.0, 0.6, 0.85), 0.35) * core * 0.35 * (1.0 - in.loc.y * 0.5);

@@ -13,8 +13,7 @@ fn lfAmb(ny: f32, alb: vec3f) -> vec3f {
 
 // terrain-matched meadow albedo: terrain.wgsl base grass M0 * (0.85 + 0.22 nL) with its ridge / hollow tint from
 // the broad concavity (clip aux at level >= 5). Keep in step with terrain.wgsl.
-fn lfGrassAlb(p: vec2f) -> vec3f {
-  let m0 = rowv(M0);
+fn lfGrassAlb(p: vec2f, m0: vec4f) -> vec3f {
   let nL = fbm(p * (1.0 / 380.0), 3, 200u);
   var g = m0.rgb * (0.85 + 0.22 * nL);
   let lc = clipLevel(p, 5u, 4.0);
