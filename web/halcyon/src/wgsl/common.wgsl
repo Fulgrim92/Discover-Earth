@@ -8,7 +8,25 @@ struct Frame {
   lv: array<vec4f, 12>, // per clip level: texel-0 world x, z, texel size, baked flag
   mc: array<vec4f, 12>, // per clip level: mesh centre x, z, vertex spacing, 0
   row: array<vec4f, ROW>, // realm row blended at the camera
+  flags: vec4f,  // x: ablation bits OFF_* (bench ?off=..., 0 in normal play), yzw: 0
 }
+
+// Ablation bits (URL ?off=flora,fauna,...; main.js OFF_NAMES). A set bit switches that cost off: draws are skipped
+// in JS where they can be, everything else early-outs in the shader through isOff(). Bench and debugging only.
+const OFF_FLORA: u32 = 1u;        // flora draws (JS)
+const OFF_FAUNA: u32 = 2u;        // birds, bird mirror, jellies (JS)
+const OFF_PARTICLES: u32 = 4u;    // particle/mote pass (JS)
+const OFF_TSHADOW: u32 = 8u;      // terrain sun shadow march (terrain.wgsl)
+const OFF_TDETAIL: u32 = 16u;     // terrain micro-detail normal (terrain.wgsl)
+const OFF_TAO: u32 = 32u;         // terrain concavity AO (terrain.wgsl)
+const OFF_FSHADOW: u32 = 64u;     // flora/fauna/particle sun shadow march (life.wgsl lfShadow)
+const OFF_CLOUDS: u32 = 128u;     // cloud march and the weather bake (JS + clouds.wgsl)
+const OFF_CLOUDSHADOW: u32 = 256u; // cloud shadows on everything (cloudShadowF)
+const OFF_WATER: u32 = 512u;      // water shading in the composite (composite.wgsl)
+const OFF_RINGS: u32 = 1024u;     // rings and their sparks/guide (JS)
+const OFF_DRONE: u32 = 2048u;     // drone body, props, lights, shadow (JS)
+const OFF_MSAA: u32 = 4096u;      // opaque pass without MSAA (JS, at init)
+fn isOff(b: u32) -> bool { return (u32(FR.flags.x) & b) != 0u; }
 struct View {
   vp: mat4x4f,   // projection * view rotation (camera-relative world)
   ivp: mat4x4f,
@@ -212,7 +230,7 @@ fn cloudShadow(p: vec3f, L: vec3f, rw: RWt) -> f32 {
 }
 // the same with the cloud fields given (life.wgsl passes the camera row: flora, fauna, particles, drone)
 fn cloudShadowF(p: vec3f, L: vec3f, c0: vec4f, c1: vec4f, c2: vec4f, c3: vec4f) -> f32 {
-  if (L.y < 0.005) { return 1.0; }
+  if (L.y < 0.005 || isOff(OFF_CLOUDSHADOW)) { return 1.0; }
   var tr = 1.0;
   let ly = max(L.y, 0.1);
   if (c0.x > 0.005) {

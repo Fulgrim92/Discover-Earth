@@ -14,10 +14,17 @@
 //                    with at most inflight=<n> (2) frames queued on the GPU; inflight=0: no cap
 //   alloc=1          zero-allocation gate hooks (tools/alloc.mjs): warm=<frames>, frames=<frames>
 //   dynres=0|1, target=<gpu ms>, hdr=1, stereo=1, scale=<fixed internal scale>, quality=low|high, hud=0, audio=1
+//   off=<list>       ablation for benching: comma list of OFF_NAMES (flora, fauna, particles, tshadow, tdetail, tao,
+//                    fshadow, clouds, cloudshadow, water, rings, drone, msaa), sent as bits in Frame.flags
+//                    (OFF_* in common.wgsl); off=all switches everything off
+//   split=1          opaque pass split into terrain / flora / fauna passes, timed separately (TS_FLORA, TS_FAUNA;
+//                    costs an extra MSAA store and load per split, so totals read a little high)
+//   bench=1          renders at a fixed 1920x1080 canvas (w=, h= override) with dynamic resolution on (dynres=0: off)
 // Debug: dbg=1 no water, 2 terrain albedo, 3 sun shadow, 4 terrain normal, 5 water reflection only, 6 water
 // refraction only, 7 water normal, 8 no fog, 9 no clouds. staged=1 (+verbose=1) times each pass of a static shot separately.
-import { G, H, fail, initDevice, Unsupported, bgl, bindGroup, tex, buffer, FRAME_FLOATS, VIEW_FLOATS, FO, VO,
-  setTimerBase, tsBoth, TS_BAKE, TS_OPAQUE, TS_CLOUDS, TS_COMPOSITE, TS_FX, TS_BLOOM, TS_FINAL, TS_LIFE, TS_WEATHER } from './gpu.js';
+import { G, H, fail, initDevice, Unsupported, bgl, bindGroup, tex, buffer, FRAME_FLOATS, VIEW_FLOATS, FO, VO, pipelinesReady,
+  setTimerBase, tsBoth, TS_BAKE, TS_OPAQUE, TS_CLOUDS, TS_COMPOSITE, TS_FX, TS_BLOOM, TS_FINAL, TS_LIFE, TS_WEATHER,
+  TS_FLORA, TS_FAUNA } from './gpu.js';
 import { TABLE, ROWF, F, realmCentre, CURATED, REALM_NAMES } from './realms.js';
 import { heightAt, heightBatch, blendAtA, W_IN, W_NEAR } from './world.js';
 import { CLK, C_DT, C_TIME, C_FRAME_MS, C_PREV } from './clock.js';
@@ -59,6 +66,31 @@ const P = {
   orbit: Q.has('orbit') ? Q.get('orbit').split(',').map(parseFloat) : null, timer: num('timer', 1) > 0,
 };
 if (P.bench && !P.script) P.script = 'bench';
+// bench: a fixed 1920x1080 canvas whatever the window, so runs on different screens compare
+if (P.bench && !P.w) { P.w = 1920; P.h = 1080; P.benchFixed = true; }
+P.split = num('split', 0) > 0;
+
+// ---------- ablation (?off=) ----------
+// bit i of Frame.flags = OFF_NAMES[i]; the same bits are named constants OFF_* in wgsl/common.wgsl
+export const OFF_NAMES = ['flora', 'fauna', 'particles', 'tshadow', 'tdetail', 'tao', 'fshadow', 'clouds', 'cloudshadow',
+  'water', 'rings', 'drone', 'msaa'];
+export const OFF_FLORA = 1, OFF_FAUNA = 2, OFF_PARTICLES = 4, OFF_TSHADOW = 8, OFF_TDETAIL = 16, OFF_TAO = 32,
+  OFF_FSHADOW = 64, OFF_CLOUDS = 128, OFF_CLOUDSHADOW = 256, OFF_WATER = 512, OFF_RINGS = 1024, OFF_DRONE = 2048,
+  OFF_MSAA = 4096;
+function parseOff(list) {
+  let b = 0;
+  for (const w of list.split(',')) {
+    const k = w.trim().toLowerCase();
+    if (!k) continue;
+    if (k === 'all') { b = (1 << OFF_NAMES.length) - 1; continue; }
+    const i = OFF_NAMES.indexOf(k);
+    if (i < 0) console.warn('[halcyon] off=: unknown name "' + k + '" (known: ' + OFF_NAMES.join(', ') + ')');
+    else b |= 1 << i;
+  }
+  return b;
+}
+const OFF = Q.has('off') ? parseOff(Q.get('off')) : 0;
+H.off = OFF_NAMES.filter((n, i) => OFF & (1 << i));
 const SCRIPTED = P.script !== '';
 const CAPTURE = P.shot && SCRIPTED;         // tools/play.mjs drives frames through __halcyon.capture(t)
 const STATIC = P.shot && !SCRIPTED;         // one frame from the URL camera
@@ -113,7 +145,9 @@ function freeFly(dt) {
 }
 
 // ---------- renderer state ----------
-const ctx = { frame: new Float32Array(FRAME_FLOATS), frameBuf: null, views: [], bgl0: null, linear: null, quality: P.quality, msaa: 4 };
+const ctx = { frame: new Float32Array(FRAME_FLOATS), frameBuf: null, views: [], bgl0: null, linear: null, quality: P.quality,
+  msaa: OFF & OFF_MSAA ? 1 : 4 };
+let splitDesc = null; // ?split=1: [terrain, flora, fauna] pass descriptors
 let context = null, canvas, tg, opaqueDesc, nViews = 1, offTex = null, offView = null;
 const owned = [];
 const CMD = [null];
@@ -147,8 +181,21 @@ function makeTargets(w, h) {
     ca[1].view = T(w, h, 'r16float', RA, { samples: ctx.msaa, label: 'distMS' }).createView();
     ca[1].resolveTarget = t.distV; ca[1].storeOp = 'discard';
   }
-  opaqueDesc = { colorAttachments: ca, depthStencilAttachment: { view: depth.createView(), depthClearValue: 0, depthLoadOp: 'clear', depthStoreOp: 'discard' },
+  const depthV = depth.createView();
+  opaqueDesc = { colorAttachments: ca, depthStencilAttachment: { view: depthV, depthClearValue: 0, depthLoadOp: 'clear', depthStoreOp: 'discard' },
     timestampWrites: tsBoth(TS_OPAQUE) };
+  if (P.split) {
+    // the same attachments in three passes: the first clears and stores, the middle loads and stores, the last
+    // loads and resolves (MSAA) like the single pass does
+    const att = (a, load, last) => ({ view: a.view, loadOp: load ? 'load' : 'clear', clearValue: a.clearValue,
+      storeOp: last ? a.storeOp : 'store', resolveTarget: last ? a.resolveTarget : undefined });
+    const mk = (k, ts) => ({
+      colorAttachments: [att(ca[0], k > 0, k === 2), att(ca[1], k > 0, k === 2)],
+      depthStencilAttachment: { view: depthV, depthClearValue: 0, depthLoadOp: k > 0 ? 'load' : 'clear', depthStoreOp: k === 2 ? 'discard' : 'store' },
+      timestampWrites: tsBoth(ts),
+    });
+    splitDesc = [mk(0, TS_OPAQUE), mk(1, TS_FLORA), mk(2, TS_FAUNA)];
+  }
   t.cloudV = clouds.bind(ctx, t);
   composite.bind(ctx, t);
   rings.bind(ctx, t);
@@ -214,11 +261,11 @@ function toggleHDR() {
 }
 
 async function init() {
-  await initDevice({ noTimer: !P.timer });
+  await initDevice({ noTimer: !P.timer, syncPipelines: num('asyncpipes', 1) === 0 });
   canvas = document.getElementById('c');
   const W = P.w || Math.round(innerWidth * devicePixelRatio), Hh = P.h || Math.round(innerHeight * devicePixelRatio);
   canvas.width = W; canvas.height = Hh;
-  if (P.w) { canvas.style.width = P.w + 'px'; canvas.style.height = P.h + 'px'; } else fitCanvas();
+  if (P.w && !P.benchFixed) { canvas.style.width = P.w + 'px'; canvas.style.height = P.h + 'px'; } else if (!P.w) fitCanvas();
   if (P.shot) {
     // Headless capture: WebGPU canvas presentation is not reliable under SwiftShader, so the final pass renders to
     // an offscreen texture that is read back into a 2D canvas once per shot (harness only, outside the frame loop).
@@ -254,8 +301,10 @@ async function init() {
     });
   }
   perf.initTimer();
-  perf.dyn.enabled = P.scale > 0 ? false : P.dynres >= 0 ? P.dynres > 0 : !P.shot && !P.bench && !P.alloc;
+  // on in play and in bench unless dynres=0 (or a fixed scale=); off for shots and the alloc gate, which need fixed targets
+  perf.dyn.enabled = P.scale > 0 ? false : P.dynres >= 0 ? P.dynres > 0 : !P.shot && !P.alloc;
   perf.dyn.target = P.target;
+  perf.dyn.timer = G.timestamp;
   clipmap.init(ctx); terrain.init(ctx); clouds.init(ctx); composite.init(ctx); rings.init(ctx); drone.init(ctx); post.init(ctx);
   flora.init(ctx); fauna.init(ctx); particles.init(ctx);
   layoutViews();
@@ -357,14 +406,18 @@ function writeView(v) {
 const TSLOT = new Int32Array(1); // this frame's GPU timer slot
 function renderView(v, enc, target, first) {
   writeView(v);
-  const p = enc.beginRenderPass(opaqueDesc);
-  drone.drawBody(ctx, p, v);
+  let p = enc.beginRenderPass(splitDesc ? splitDesc[0] : opaqueDesc);
+  if (!(OFF & OFF_DRONE)) drone.drawBody(ctx, p, v);
   terrain.draw(ctx, p, v);
-  flora.draw(ctx, p, v); fauna.draw(ctx, p, v);
+  if (splitDesc) { p.end(); p = enc.beginRenderPass(splitDesc[1]); }
+  if (!(OFF & OFF_FLORA)) flora.draw(ctx, p, v);
+  if (splitDesc) { p.end(); p = enc.beginRenderPass(splitDesc[2]); }
+  if (!(OFF & OFF_FAUNA)) fauna.draw(ctx, p, v);
   p.end();
   if (clouds.draw(ctx, enc, v)) perf.markRan(TSLOT[0], TS_WEATHER); // + the weather window bake (first view)
   composite.draw(ctx, enc, v);
-  if (particles.draw(ctx, enc, v)) perf.markRan(TSLOT[0], TS_LIFE); // fauna's transparent jellies + motes
+  // fauna's transparent jellies + motes (off=fauna hides the jellies through the fauna row, see prepareFrame)
+  if (!(OFF & OFF_PARTICLES) && particles.draw(ctx, enc, v)) perf.markRan(TSLOT[0], TS_LIFE);
   rings.pass(ctx, enc, v, drone.drawFx);
   post.draw(ctx, enc, v, target, first);
 }
@@ -379,10 +432,13 @@ function prepareFrame() {
   const el = ((rowTmp[s0] + drift * 0.5) * Math.PI) / 180, az = ((rowTmp[s0 + 1] + drift) * Math.PI) / 180;
   fr[FO.sun] = Math.sin(az) * Math.cos(el); fr[FO.sun + 1] = Math.sin(el); fr[FO.sun + 2] = -Math.cos(az) * Math.cos(el); fr[FO.sun + 3] = drift;
   fr[FO.time] = timeS; fr[FO.time + 1] = dt; fr[FO.time + 2] = frameNo; fr[FO.time + 3] = P.quality;
+  fr[FO.flags] = OFF;
+  if (OFF & OFF_FAUNA) for (let i = 0; i < 4; i++) fr[FO.row + F.V2 * 4 + i] = 0; // no fauna anywhere (incl. jellies)
   const sim = R.sim;
   if (sim) {
-    drone.update(sim, sim.cameraMode === 0 ? 0 : 1);
+    drone.update(sim, sim.cameraMode === 0 || OFF & OFF_DRONE ? 0 : 1);
     rings.update(sim);
+    if (OFF & OFF_RINGS) rings.hide();
   }
 }
 
@@ -405,6 +461,7 @@ function renderFrame(bakeAll) {
     renderView(v, enc, target, i === 0);
   }
   perf.markRan(slot, TS_OPAQUE); perf.markRan(slot, TS_COMPOSITE); perf.markRan(slot, TS_FX);
+  if (splitDesc) { perf.markRan(slot, TS_FLORA); perf.markRan(slot, TS_FAUNA); }
   perf.markRan(slot, TS_BLOOM); perf.markRan(slot, TS_FINAL);
   perf.markRan(slot, TS_CLOUDS);
   perf.frameEnd(enc, slot);
@@ -482,12 +539,18 @@ function frame(now) {
   renderFrame(frameNo === 0);
 
   if (P.shot) { running = false; G.queue.onSubmittedWorkDone().then(shotDone); return; }
+  // once: the first frame has finished on the GPU (or, where a broken swap chain never settles the queue, 30 frames on)
+  if (frameNo === 1) G.queue.onSubmittedWorkDone().then(playReady);
+  else if (frameNo === 30 && !H.ready) playReady();
   if (P.bench) benchFrame();
   if (P.alloc) allocFrame();
   if (SCRIPTED && R.player.done && !P.bench) R.player.reset(P.alloc); // loops (alloc: from the start realm)
   if (P.frames > 0 && !P.alloc && !P.bench && frameNo >= P.frames) { running = false; H.done = true; return; }
   if (running) requestAnimationFrame(frame);
 }
+
+// __halcyon.ready outside shot mode: pipelines compiled and the first frame finished on the GPU
+function playReady() { H.realm = REALM_NAMES[W_NEAR[2]]; H.ready = true; }
 
 // any gamepad button (or stick throw) also starts
 function pollStartButton(sim) {
@@ -517,6 +580,8 @@ async function finishBench() {
   for (let i = 0; i < 3; i++) { await Promise.race([G.queue.onSubmittedWorkDone(), sleep(400)]); await sleep(50); }
   const r = perf.benchReport({
     script: R.player.name, w: canvas.width, h: canvas.height, internal: [tg.w, tg.h], scale: internalScale(),
+    resolution: P.benchFixed ? 'fixed 1920x1080 canvas (bench default), internal = 1920x1080 x dynres scale' : 'w=' + P.w + ' h=' + P.h + ' from the URL',
+    off: H.off, offBits: OFF, split: !!splitDesc, msaa: ctx.msaa,
     quality: ['low', 'normal', 'high'][P.quality], stereo: nViews === 2, adapter: adapterInfo(), stride: P.stride,
     inflight: MAX_INFLIGHT, present: !OFFSCREEN,
     route: 'Home Fjords rings, boost transit, Stone Forest rings, Lumen Deep rings, FPV (fixed dt 1/' + P.fps + ')',
@@ -671,6 +736,10 @@ async function capture(t) {
 
 function boot() {
   init().then(async () => {
+    // every pipeline compiles in parallel (createRenderPipelineAsync, gpu.js) behind the start overlay
+    const t0 = performance.now();
+    await pipelinesReady(overlay ? overlay.progress : null);
+    H.compileMs = Math.round(performance.now() - t0);
     if (CAPTURE) {
       H.capture = capture;
       H.scriptReady = true;

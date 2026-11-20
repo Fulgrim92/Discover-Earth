@@ -235,7 +235,8 @@ fn strataAt(s: f32) -> vec3f {
   let slope = 1.0 - gn.y;
   let h = p.y;
   let ndvG = max(dot(gn, V), 0.04);
-  let fp = dist * 2.0 * VW.fwd.w * VW.size.w * inverseSqrt(ndvG); // pixel footprint on the surface (m)
+  var fp = dist * 2.0 * VW.fwd.w * VW.size.w * inverseSqrt(ndvG); // pixel footprint on the surface (m)
+  if (isOff(OFF_TDETAIL)) { fp = max(fp, 8.0); } // ablation: every micro-detail octave fades out as if far away
 
   // realm blend
   let rw = realmWeights(p.xz);
@@ -628,12 +629,12 @@ fn strataAt(s: f32) -> vec3f {
   if (horizon > 0.0 && dot(gn, L) > -0.1) {
     var steps = i32(mix(22.0, 10.0, sstep(400.0, 4000.0, dist)));
     if (q < 0.5) { steps = steps / 2 + 1; }
-    sh = sunShadow(p + gn * (0.3 + dist * 0.002), L, dist, S6v.y, jit, steps);
+    if (isOff(OFF_TSHADOW)) { sh = 1.0; } else { sh = sunShadow(p + gn * (0.3 + dist * 0.002), L, dist, S6v.y, jit, steps); }
     sh *= cloudShadow(p, L, rw); // cloud shadows (common.wgsl, same coverage field as the cloud pass)
   }
   // occlusion from the baked ring concavity at three scales
   let occ = max(ca, 0.0) * 0.9 + max(cb, 0.0) * 1.6 + max(cc, 0.0) * 2.2;
-  let ao = clamp(1.0 - occ, 0.3, 1.0) * clamp(1.0 - max(conc, 0.0) * 0.5, 0.55, 1.0);
+  let ao = select(clamp(1.0 - occ, 0.3, 1.0) * clamp(1.0 - max(conc, 0.0) * 0.5, 0.55, 1.0), 1.0, isOff(OFF_TAO));
 
   let zen = S2v.rgb * S3v.w;
   let hor = S3v.rgb * S3v.w;

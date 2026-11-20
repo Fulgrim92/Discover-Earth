@@ -46,6 +46,7 @@ fn lfFogT(ro: vec3f, d: vec3f, t: f32) -> vec3f {
 fn lfShadow(p: vec3f, dist: f32, jit: f32, steps: i32) -> f32 {
   let L = FR.sun.xyz;
   if (L.y < -0.03) { return 0.0; }
+  if (isOff(OFF_FSHADOW)) { return lfCloudShadow(p); }
   let sh = sunShadow(p, L, dist, rowv(S6).y, jit, steps);
   if (sh < 0.02) { return sh; }
   return sh * lfCloudShadow(p);

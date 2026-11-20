@@ -177,7 +177,7 @@ struct VO { @builtin(position) pos: vec4f }
 
   var tEnd = dist;
   // water plane at sea level
-  if (ro.y > 0.0 && d.y < 0.0 && (VW.cam.w == 0.0 || VW.cam.w >= 5.0)) {
+  if (ro.y > 0.0 && d.y < 0.0 && (VW.cam.w == 0.0 || VW.cam.w >= 5.0) && !isOff(OFF_WATER)) {
     let tw = ro.y / -d.y;
     // r16float distance is quantised (0.5 m at 1 km): allow for it, or 4 cm of water flickers in and out
     if (tw < dist + max(0.6, dist * 0.0015)) {

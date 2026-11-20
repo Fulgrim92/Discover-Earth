@@ -98,6 +98,9 @@ export function upload() {
   G.queue.writeBuffer(ringBuf, 0, inst);
 }
 
+// ablation (?off=rings): no rings and no spark guide this frame (after update)
+export function hide() { S[1] = 0; FX.u[FXO.sp0 + 3] = 0; FX.u[FXO.sp1 + 3] = 0; }
+
 // the effects pass for one view: drone shadow / props / lights (drawFx), then rings and sparks
 export function pass(ctx, enc, view, drawFx) {
   const p = enc.beginRenderPass(FX.desc);

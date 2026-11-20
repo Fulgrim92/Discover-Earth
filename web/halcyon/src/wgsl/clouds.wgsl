@@ -336,8 +336,9 @@ struct CF { @location(0) front: vec4f, @location(1) refl: vec4f, @location(2) di
   var o: CF;
   o.refl = vec4f(0.0);
   o.dist = vec4f(dist, 0.0, 0.0, 1.0);
+  if (isOff(OFF_CLOUDS)) { o.front = vec4f(0.0); return o; } // ablation (common.wgsl)
   // the water plane: march the mirrored ray for the reflection, the front only up to the water
-  if (ro.y > 0.0 && d.y < 0.0) {
+  if (ro.y > 0.0 && d.y < 0.0 && !isOff(OFF_WATER)) {
     let tw = ro.y / -d.y;
     if (tw < tmax + max(0.6, tmax * 0.0015)) {
       tmax = tw;

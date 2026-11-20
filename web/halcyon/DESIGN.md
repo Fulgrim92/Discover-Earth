@@ -187,6 +187,8 @@ web/halcyon/
   tools/shots/*.json     step lists: per-realm hero views, stereo, fly-throughs
   tools/alloc.mjs        the zero-allocation gate (scripted frame loop, --trace-gc + sampling heap profile)
   tools/bench.mjs        headless smoke test of ?bench=1 (report shape, GPU timer readback)
+  tools/dyntest.mjs      dynamic-resolution controller against synthetic GPU-time feeds (node, no browser)
+  tools/readytest.mjs    __halcyon.ready outside shot mode, start overlay progress while pipelines compile
   tools/play.mjs         scripted flights (?script=) -> frames + contact sheet; --dry runs the sim in node
 ```
 
@@ -194,7 +196,13 @@ URL parameters (all optional) make captures deterministic: `realm`, `pos=x,y,z`,
 (freeze time), `w`, `h`, `scale`, `stereo`, `hud=0`, `bench=1`, `quality=low|high`; the full list (script, sim,
 orbit, present, alloc, dynres, target, hdr, stride, inflight, ...) is at the top of `src/main.js`. The page sets
 `window.__halcyon = {ready, frame, error}` and the harness waits for `ready` (all clip levels baked) before
-grabbing. Shader compile errors and uncaptured GPU errors must surface in `__halcyon.error` and fail the shot.
+grabbing; outside shot mode `ready` turns true once the pipelines have compiled and the first frame has finished.
+
+Benching on the reference machine: `?bench=1` renders a fixed 1920x1080 canvas with dynamic resolution on (`dynres=0`
+for a fixed internal 1920x1080). `off=<names>` switches costs off one by one (flora, fauna, particles, tshadow,
+tdetail, tao, fshadow, clouds, cloudshadow, water, rings, drone, msaa, or `all`): bits in `Frame.flags`, named
+`OFF_*` in common.wgsl. `split=1` splits the opaque pass into terrain / flora / fauna and times each (`gpuPassMs`
+opaque = terrain + sky + drone); it adds an MSAA store and load per split, so compare totals with `split=0`. Shader compile errors and uncaptured GPU errors must surface in `__halcyon.error` and fail the shot.
 
 Headless Chromium flags that work here: `--enable-unsafe-webgpu --enable-features=Vulkan --use-angle=swiftshader
 --use-webgpu-adapter=swiftshader --ignore-gpu-blocklist`. SwiftShader is a CPU rasteriser: expect seconds per frame;
