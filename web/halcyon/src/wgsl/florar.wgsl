@@ -277,6 +277,20 @@ fn mushCR(t: f32) -> vec2f {
   return 0.5 * (2.0 * p1 + (p2 - p0) * f + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * f2 + (3.0 * p1 - p0 - 3.0 * p2 + p3) * f3);
 }
 
+// subtropical crown: a cluster of 6 rounded sub-crowns (cauliflower lobes) at random bearings and heights, so the
+// canopy reads as many trees' worth of billowing foliage instead of one lumpy dome; 0..1 how far out on a lobe
+fn crownLobe(k: u32, a: f32, h: u32) -> f32 {
+  let y = crownProf(k).y;
+  var lob = 0.0;
+  for (var i = 0u; i < 6u; i++) {
+    let th = lfRand(h, 60u + i) * 6.2832;
+    let e = 0.42 + 0.5 * lfRand(h, 70u + i);
+    var da = a - th; da = da - 6.2832 * round(da / 6.2832);
+    let dy = y - e;
+    lob = max(lob, exp(-(da * da * 2.6 + dy * dy * 26.0)));
+  }
+  return lob;
+}
 fn lathePt(kind: u32, k: u32, a: f32, H: f32, R: f32, h: u32) -> vec3f {
   var pr: vec2f;
   if (kind == K_MUSH) { pr = mushProf(k); } else { pr = crownProf(k); }
@@ -286,8 +300,9 @@ fn lathePt(kind: u32, k: u32, a: f32, H: f32, R: f32, h: u32) -> vec3f {
     let sd = f32(h & 1023u);
     let ca = vec2f(cos(a), sin(a));
     let l = vn(ca * 1.7 + vec2f(sd, f32(k) * 0.9), 840u) * 0.55 + vn(ca * 4.3 + vec2f(sd, f32(k) * 2.1), 841u) * 0.3;
-    r *= 1.0 + 0.5 * l;
-    y += l * 0.08 * H;
+    let lob = crownLobe(k, a, h);
+    r *= 0.72 + 0.62 * lob + 0.22 * l;
+    y += (lob * 0.07 + l * 0.04) * H;
   }
   if (kind == K_MUSH && k >= 4u) {
     // scalloped cap rim
@@ -305,7 +320,7 @@ fn lathePt(kind: u32, k: u32, a: f32, H: f32, R: f32, h: u32) -> vec3f {
   let r1 = lfRand(I.h, 21u); let r2 = lfRand(I.h, 22u); let r3 = lfRand(I.h, 23u);
   let sizeF = 0.25 + 0.75 * I.fade;
   var wp: vec3f; var n: vec3f; var loc: vec2f; var alb = I.alb; var emis = vec3f(0.0); var tr = 0.3;
-  var shp = vec4f(0.0);
+  var shp = vec4f(0.0); var lobe = 1.0;
   if (I.kind == K_MUSH || I.kind == K_CROWN) {
     let isM = I.kind == K_MUSH;
     let NS = select(CROWN_SEG, MUSH_SEG, isM); let NR = select(CROWN_RING, MUSH_RING, isM);
@@ -353,6 +368,7 @@ fn lathePt(kind: u32, k: u32, a: f32, H: f32, R: f32, h: u32) -> vec3f {
     } else {
       alb = select(alb, vec3f(0.12, 0.1, 0.08), ring <= 1u);
       shp = vec4f(H, R, r1, 0.0);
+      lobe = select(crownLobe(ring, a, I.h), 1.0, ring >= 8u); // out on a sub-crown (1) or in a fold (0)
       tr = 0.25;
     }
   } else {
@@ -392,7 +408,7 @@ fn lathePt(kind: u32, k: u32, a: f32, H: f32, R: f32, h: u32) -> vec3f {
     tr = select(0.0, 0.3, I.kind == K_SHARD);
   }
   o.wp = wp; o.n = n; o.loc = loc; o.alb = alb; o.emis = emis; o.shp = shp;
-  o.prm = vec4f(I.sh, 1.0, tr, I.fade);
+  o.prm = vec4f(I.sh, mix(0.45, 1.0, sstep(0.15, 0.7, lobe)), tr, I.fade); // folds between sub-crowns: deep shade
   o.pos = VW.vp * vec4f(wp - cam, 1.0);
   return o;
 }
@@ -525,6 +541,7 @@ struct FOut { @location(0) c: vec4f, @location(1) d: vec4f }
     alb *= 0.65 + 0.5 * sstep(-0.4, 0.5, gap);
     alb = mix(vec3f(luma(alb)), alb, 0.7);
     ao = mix(0.5, 1.0, sstep(2.0, 6.5, in.loc.y)) * (0.7 + 0.3 * sstep(-0.5, 0.3, gap));
+    alb *= mix(0.85, 1.12, sstep(0.55, 1.0, in.prm.y));                // outer leaves on the sub-crowns lighter, younger
   } else if (kind == K_CRYSTAL || kind == K_SHARD) {
     n = normalize(cross(dpdx(in.wp), dpdy(in.wp)));
     if (dot(n, V) < 0.0) { n = -n; }
