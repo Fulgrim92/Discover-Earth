@@ -26,7 +26,7 @@ struct VOut {
   let gp = mc.xy + vec2f(f32(ix - hg), f32(iz - hg)) * s;
   let half = f32(hg) * s;
   let cam = VW.cam.xyz;
-  let dc = max(abs(gp.x - VW.anc.x), abs(gp.y - VW.anc.z)) / half; // morph from the head: same mesh in both eyes
+  let dc = max(abs(gp.x - cam.x), abs(gp.y - cam.z)) / half;
   var m = clamp((dc - 0.62) / 0.26, 0.0, 1.0);
   if (li + 1u >= nLevels()) { m = 0.0; }
   let odd = vec2f(f32(ix & 1), f32(iz & 1));
@@ -77,15 +77,21 @@ fn vn3d(p: vec3f) -> vec4f {
 
 // rock surface: lumps, grain and cracks from 3D noise (no stretching on cliffs). Returns (albedo factor, dH/dp).
 // sc scales the pattern (basalt fine, limestone coarse); cr is the crack strength.
+// two fixed 3D rotations (orthonormal) that take value noise off the world axes: its lattice otherwise shows as
+// rounded square tiles on flat faces (zero-contours of axis-aligned value noise), a jigsaw on lit pillar walls
+const RQ1 = mat3x3f(0.6667, 0.6667, -0.3333, -0.3333, 0.6667, 0.6667, 0.6667, -0.3333, 0.6667);
+const RQ2 = mat3x3f(0.36, 0.48, -0.8, -0.8, 0.6, 0.0, 0.48, 0.64, 0.6);
 fn rockDetail(p: vec3f, fp: f32, sc: f32, cr: f32) -> vec4f {
   var a = 1.0; var g = vec3f(0.0);
   let l0 = 3.1 * sc; let w0 = bl(l0, fp);
   if (w0 > 0.0) {
-    let n = vn3d(p / l0 + vec3f(0.0, 0.0, 17.0));
+    let n0 = vn3d(RQ1 * (p / l0) + vec3f(0.0, 0.0, 17.0));
+    let n = vec4f(n0.x, transpose(RQ1) * n0.yzw);  // gradient back to world axes
     g += n.yzw * (0.35 * w0);                 // lumps: 0.35 l0 amplitude
     a += n.x * 0.1 * w0;
-    // cracks: thin dark grooves where a second noise crosses zero
-    let m = vn3d(p / (l0 * 0.8) + vec3f(31.0, 7.0, 0.0));
+    // cracks: thin dark grooves where a second, rotated and lump-warped noise crosses zero
+    let m0 = vn3d(RQ2 * (p / (l0 * 0.8)) + n0.yzw * 0.25 + vec3f(31.0, 7.0, 0.0));
+    let m = vec4f(m0.x, transpose(RQ2) * m0.yzw);
     let cw = 0.09;
     let inC = 1.0 - sstep(0.0, cw, abs(m.x));
     g += sign(m.x) * m.yzw * (0.6 * inC * cr * w0);
@@ -93,13 +99,15 @@ fn rockDetail(p: vec3f, fp: f32, sc: f32, cr: f32) -> vec4f {
   }
   let l1 = 0.42 * sc; let w1 = bl(l1, fp);
   if (w1 > 0.0) {
-    let n = vn3d(p / l1);
+    let n0 = vn3d(RQ2 * (p / l1));
+    let n = vec4f(n0.x, transpose(RQ2) * n0.yzw);
     g += n.yzw * (0.09 * w1);
     a += n.x * 0.12 * w1;
   }
   let l2 = 0.11 * sc; let w2 = bl(l2, fp);
   if (w2 > 0.0) {
-    let n = vn3d(p / l2 + vec3f(5.0, 3.0, 1.0));
+    let n0 = vn3d(RQ1 * (p / l2) + vec3f(5.0, 3.0, 1.0));
+    let n = vec4f(n0.x, transpose(RQ1) * n0.yzw);
     g += n.yzw * (0.07 * w2);
     a += n.x * 0.08 * w2;
   }
@@ -110,11 +118,12 @@ fn rockDetail(p: vec3f, fp: f32, sc: f32, cr: f32) -> vec4f {
 fn groundDetail(xz: vec2f, fp: f32) -> vec4f {
   var v = 0.0; var g = vec2f(0.0);
   let w0 = bl(1.7, fp);
-  if (w0 > 0.0) { let n = vnoised(xz * (1.0 / 1.7), 230u); g += n.yz * (0.07 * w0); v += n.x * 0.5 * w0; }
+  // rotated domains (rotq, ~37 deg; its transpose brings the gradient back), never on world axes
+  if (w0 > 0.0) { let n = vnoised(rotq(xz * (1.0 / 1.7)), 230u); g += rotT(n.yz) * (0.07 * w0); v += n.x * 0.5 * w0; }
   let w1 = bl(0.55, fp);
-  if (w1 > 0.0) { let n = vnoised(xz * (1.0 / 0.55), 231u); g += n.yz * (0.07 * w1); v += n.x * 0.3 * w1; }
+  if (w1 > 0.0) { let n = vnoised(rotq(rotq(xz * (1.0 / 0.55))), 231u); g += rotT(rotT(n.yz)) * (0.07 * w1); v += n.x * 0.3 * w1; }
   let w2 = bl(0.16, fp);
-  if (w2 > 0.0) { let n = vnoised(xz * (1.0 / 0.16), 232u); g += n.yz * (0.05 * w2); v += n.x * 0.2 * w2; }
+  if (w2 > 0.0) { let n = vnoised(rotq(xz * (1.0 / 0.16)) + vec2f(3.7, 1.3), 232u); g += rotT(n.yz) * (0.05 * w2); v += n.x * 0.2 * w2; }
   return vec4f(v, g, 0.0);
 }
 
@@ -227,6 +236,14 @@ fn shadeL(off: u32, l0: u32, e: f32, p: vec2f) -> vec4f {
   if (e > 0.0 && l0 + off < n) { s = mix(s, clipSH(clipLevel(p, l0 + off + 1u, 4.0), p), e); }
   return s;
 }
+// pure rotation by ~36.9 deg (rot2 in common.wgsl also scales by 2.03): takes value noise off the world axes
+fn rotq(q: vec2f) -> vec2f { return vec2f(0.8 * q.x - 0.6 * q.y, 0.6 * q.x + 0.8 * q.y); }
+fn rotT(q: vec2f) -> vec2f { return vec2f(0.8 * q.x + 0.6 * q.y, -0.6 * q.x + 0.8 * q.y); } // inverse of rotq
+fn lvlColor(l: u32) -> vec3f {
+  var c = array<vec3f, 9>(vec3f(1.0), vec3f(1.0, 0.1, 0.1), vec3f(1.0, 0.55, 0.1), vec3f(1.0, 1.0, 0.1), vec3f(0.2, 1.0, 0.2),
+    vec3f(0.1, 1.0, 1.0), vec3f(0.2, 0.3, 1.0), vec3f(0.7, 0.2, 1.0), vec3f(0.45));
+  return c[min(l, 8u)];
+}
 
 // ---- deferred terrain shading ----
 // The terrain mesh is dense (sliver triangles at grazing angles) and the material is heavy, so the raster pass only
@@ -309,12 +326,11 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   let slope = 1.0 - gn.y;
   let h = p.y;
   let ndvG = max(dot(gn, V), 0.04);
-  var fp = dist * 2.0 * VW.fwd.w * VW.size.w * inverseSqrt(ndvG); // pixel footprint on the surface (m)
-  if (isOff(OFF_TDETAIL)) { fp = max(fp, 8.0); } // ablation: every micro-detail octave fades out as if far away
+  let fp = dist * 2.0 * VW.fwd.w * VW.size.w * inverseSqrt(ndvG); // pixel footprint on the surface (m)
 
   // realm blend
   var rw: RWt;
-  if (isOff(OFF_TREALM)) { rw.id = vec4i(i32(FR.flags.y), -1, -1, -1); rw.w = vec4f(1.0, 0.0, 0.0, 0.0); rw.near = vec4f(0.0); }
+  if (isOff(OFF_TREALM)) { rw.id = vec4i(i32(FR.mc[4].w), -1, -1, -1); rw.w = vec4f(1.0, 0.0, 0.0, 0.0); rw.near = vec4f(0.0); }
   else { rw = realmWeightsMap(p.xz); }
   // the skin drifts (common.wgsl driftW): materials come from flow-displaced, sharpened weights; light does not
   var rwm = driftWM(p.xz, rw);
@@ -407,13 +423,15 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   grass = mix(grass, mix(grass * 0.55, vec3f(0.07, 0.05, 0.055), 0.5) * (0.85 + 0.3 * gd.x), heather * 0.3);
   grass = mix(grass, mix(grass, vec3f(0.16, 0.14, 0.06), 0.6) * (0.85 + 0.3 * gd.x), ochre * 0.18); // ochre and heather only as accents
   // close turf: blade-scale tone so the ground under the flora is never a smear
+  // (rotated domains: value noise on the world axes, thresholded or not, reads as a mosaic of axis-aligned
+  // rectangles at 1080p, where these octaves are a few pixels across or more)
   let wT = bl(0.08, fp);
-  if (wT > 0.0) { grass *= 1.0 + 0.25 * vn(p.xz * (1.0 / 0.08), 236u) * wT; }
+  if (wT > 0.0) { grass *= 1.0 + 0.25 * vn(rotq(p.xz * (1.0 / 0.08)), 236u) * wT; }
   // mid distance (30-500 m): clump mottling (1-3 m) and wind streaks (grass bent the same way, 2 m wide, 25 m long),
   // each fading to its mean as it drops under a few pixels, so the turf keeps a grain instead of a smear
   let wCl = bl(2.2, fp);
   if (wCl > 0.0 && M0v.w > 0.0) {
-    let cl1 = vn(p.xz * (1.0 / 2.2), 238u) + 0.5 * vn(p.xz * (1.0 / 0.9), 239u) * bl(0.9, fp);
+    let cl1 = vn(rotq(p.xz * (1.0 / 2.2)), 238u) + 0.5 * vn(rotq(rotq(p.xz * (1.0 / 0.9))), 239u) * bl(0.9, fp);
     grass *= 1.0 + 0.16 * cl1 * wCl;
   }
   let wWs = bl(2.5, fp);
@@ -423,7 +441,12 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
     grass = mix(grass, grass * vec3f(1.22, 1.2, 1.05), sstep(0.1, 0.6, st) * 0.6 * wWs); // sheen where blades lean
   }
   let wC = bl(0.35, fp);
-  if (wC > 0.0) { grass *= 1.0 - 0.3 * sstep(0.15, 0.6, vn(p.xz * (1.0 / 0.35), 237u)) * wC; } // soil between tufts
+  if (wC > 0.0) {
+    // soil between tufts: two rotated, offset octaves so no lattice cell edge survives the threshold, and a soft one
+    let q = p.xz * (1.0 / 0.35);
+    let sn = 0.65 * vn(rotq(q), 237u) + 0.35 * vn(rotq(rotq(q * 0.61 + 17.3)), 235u);
+    grass *= 1.0 - 0.3 * sstep(0.0, 0.7, sn) * wC;
+  }
 
   let soil = mix(vec3f(0.085, 0.07, 0.05), M1v.rgb * 1.4, 0.4) * (0.85 + 0.3 * gd.x);
   var scree = M1v.rgb * 1.35;
@@ -857,9 +880,11 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   if (dot(n, V) < 0.02) { n = normalize(n + V * (0.02 - dot(n, V))); }
 
   // ---- light ----
-  let L = sunDirFrom(S0v, FR.sun.w);
-  let horizon = sstep(-0.035, 0.06, L.y);
-  let sunC = S1v.rgb * S0v.z * horizon;
+  // key light: the sun or the moon (common.wgsl keyLight; they set and rise across a Drift)
+  let KLv = keyLight(S0v, S1v, bfx(rw, S8), FR.sun.w);
+  let L = KLv.dir;
+  let horizon = select(0.0, 1.0, max(KLv.col.r, max(KLv.col.g, KLv.col.b)) > 1e-4);
+  let sunC = KLv.col;
   let jit = ign(fragXY);
   var sh = 0.0;
   let ndl = dot(n, L);
@@ -932,6 +957,12 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   if (VW.cam.w == 4.0) { o.c = vec4f(n * 0.5 + 0.5, 1.0); }
   if (VW.cam.w == 9.0) { o.c = vec4f(mA.xyw, 1.0); }  // masks A: sink distance, pillar wall, veins
   if (VW.cam.w == 10.0) { o.c = vec4f(mB.xyz, 1.0); } // masks B: crevasse, crystal, cone/berg
+  // dbg=20: clip level sampled here (0 white, 1 red, 2 orange, 3 yellow, 4 green, 5 cyan, 6 blue, 7 violet, 8 grey),
+  // darkened inside the cross-fade; dbg=21: the mesh ring drawing this pixel, same colours; dbg=22: age of the
+  // sampled level's bake (green just baked -> red 10 s+; a level re-baked every frame stays bright green)
+  if (VW.cam.w == 20.0) { o.c = vec4f(lvlColor(l0) * (1.0 - 0.5 * e), 1.0); }
+  if (VW.cam.w == 21.0) { o.c = vec4f(lvlColor(l0), 1.0); } // (deferred: the drawn level is not known here)
+  if (VW.cam.w == 22.0) { let ag = clamp((FR.time.x - FR.lv[l0].w) / 10.0, 0.0, 1.0); o.c = vec4f(ag, 1.0 - ag, 0.0, 1.0); }
   o.d = vec4f(dist, 0.0, 0.0, 1.0);
   return o;
 }

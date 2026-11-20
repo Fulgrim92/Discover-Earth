@@ -55,6 +55,7 @@ const PLATFORM = {
   'fx/rings.js:pass': 'GPURenderPassEncoder (effects pass)',
   'fx/clipmap.js:bakeLevel': 'GPURenderPassEncoder x2 when a clip level re-bakes',
   'fx/clipmap.js:bakeRealm': 'GPUComputePassEncoder + queue.writeBuffer() when the realm map recentres (every 8 km)',
+  'fx/atmo.js:bake': 'GPUComputePassEncoder (atmosphere LUT bake, once per frame)',
   'fx/clouds.js:draw': 'GPUComputePassEncoder (weather window, first view) + GPURenderPassEncoder (cloud march)',
   'perf.js:frameEnd': 'resolveQuerySet / copyBufferToBuffer argument wrappers',
   'perf.js:afterSubmit': 'mapAsync() promise + then() promise, once per 16 frames (GPU timer readback)',

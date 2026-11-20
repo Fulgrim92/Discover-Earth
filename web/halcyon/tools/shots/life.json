@@ -17,6 +17,8 @@
     { "name": "meadow_stereo",  "params": { "realm": 0, "pos": "300,1.6,-200", "agl": 1, "yaw": 248, "pitch": -6, "stereo": 1 } },
     { "name": "meadow_low_q",   "params": { "realm": 0, "pos": "300,1.6,-200", "agl": 1, "yaw": 248, "pitch": -6, "quality": "low" } },
     { "name": "meadow_mid",     "params": { "realm": 0, "pos": "300,40,-200", "agl": 1, "yaw": 200, "pitch": -22 } },
+    { "name": "sheep_near",      "params": { "realm": 0, "pos": "224,3,-222", "agl": 1, "yaw": 318, "pitch": -10 } },
+    { "name": "sheep_drone",     "params": { "realm": 0, "pos": "260,60,-150", "agl": 1, "yaw": 300, "pitch": -35 } },
     { "name": "drift_ice_5",     "params": { "realm": 0, "pos": "0,5,-3234", "agl": 1, "yaw": 0, "pitch": -8 } },
     { "name": "drift_ice_150",   "params": { "realm": 0, "pos": "0,150,-3234", "agl": 1, "yaw": 0, "pitch": -24 } },
     { "name": "drift_painted_5", "params": { "realm": 0, "pos": "3076,5,262", "agl": 1, "yaw": 95, "pitch": -8 } },

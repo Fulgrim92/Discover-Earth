@@ -21,6 +21,7 @@ export {
 
 const DEG = Math.PI / 180;
 const TWO_PI = 6.283185307179586;
+const SPAWN_BACK = 40, SPAWN_SIDE = 7; // m before / beside the first ring of a realm (spawnAtRing)
 
 // realm wind: [base m/s, direction (yaw convention: 0 blows toward -Z), gustiness 0..1]
 const REALM_WIND = new Float64Array([
@@ -113,6 +114,22 @@ export function createSim(world, opts) {
     F[F_TX] = +x; F[F_TZ] = +z;
     teleportF();
   }
+  // arrive at ring i of the course: SPAWN_BACK m before it along its normal and SPAWN_SIDE m to the side (a ring
+  // centred on, or sitting on, the camera blows out the middle of the first frame), facing it, with it as next
+  let pinNext = -1;
+  function spawnAtRing(i) {
+    const cnt = R.info[R.I_COUNT];
+    if (cnt === 0) { teleportF(); return; }
+    const o = (i < 0 ? 0 : i >= cnt ? cnt - 1 : i) * R.STRIDE;
+    let nx = R.course[o + 3], nz = R.course[o + 5];
+    const l = Math.sqrt(nx * nx + nz * nz);
+    if (l > 1e-3) { nx /= l; nz /= l; } else { nx = 0; nz = -1; }
+    F[F_TX] = R.course[o] - nx * SPAWN_BACK - nz * SPAWN_SIDE;
+    F[F_TZ] = R.course[o + 2] - nz * SPAWN_BACK + nx * SPAWN_SIDE;
+    pinNext = o / R.STRIDE;
+    teleportF();
+    pinNext = -1;
+  }
   // teleport to (F_TX, F_TZ): highest surface within 20 m, then 12 m of clearance, facing the next ring
   function teleportF() {
     const x = F[F_TX], z = F[F_TZ];
@@ -122,7 +139,8 @@ export function createSim(world, opts) {
     let g = 0;
     for (let k = 0; k < 9; k++) if (T.TG[k] > g) g = T.TG[k];
     const g0 = T.TG[0];
-    R.ARG[0] = x; R.ARG[1] = z; R.reacquire();
+    if (pinNext >= 0) R.setNext(pinNext);
+    else { R.ARG[0] = x; R.ARG[1] = z; R.reacquire(); }
     qheadingA(D.q, D.PH, 3);
     const nx = R.info[R.I_NEXT];
     if (nx < R.info[R.I_COUNT]) {
@@ -147,8 +165,7 @@ export function createSim(world, opts) {
     for (let i = 0; i < NCELL; i++) {
       if ((CUR[i * 3 + 2] | 0) === realmId) {
         F[F_TX] = CUR[i * 3]; F[F_TZ] = CUR[i * 3 + 1];
-        teleportF();
-        R.setNext(R.startOfCell(i));
+        spawnAtRing(R.startOfCell(i));
         return true;
       }
     }
@@ -164,8 +181,7 @@ export function createSim(world, opts) {
     for (let i = 0; i < t.length; i++) if (t[i] === c) k = i;
     const n = t[(k + 1) % t.length];
     F[F_TX] = CUR[n * 3]; F[F_TZ] = CUR[n * 3 + 1];
-    teleportF();
-    R.setNext(R.startOfCell(n));
+    spawnAtRing(R.startOfCell(n));
   }
 
   // physical sticks, up/right positive; overrides gamepad and keyboard for the next step only
@@ -370,7 +386,7 @@ export function createSim(world, opts) {
   // start: hover over the first stop of the tour (Home), or the origin
   applyMode(typeof opts.flightMode === 'number' ? opts.flightMode : D.MODE_GPS);
   if (opts.spawn && opts.spawn.length >= 2) teleport(+opts.spawn[0], +opts.spawn[1]);
-  else if (R.tour.length > 0) { const c = R.tour[0]; teleport(CUR[c * 3], CUR[c * 3 + 1]); R.setNext(0); }
+  else if (R.tour.length > 0) spawnAtRing(0);
   else teleport(0, 0);
   M[M_TELEPORTS] = 0;
   return sim;

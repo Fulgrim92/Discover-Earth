@@ -4,7 +4,11 @@
 @group(1) @binding(2) var clipB: texture_2d_array<f32>;
 @group(1) @binding(3) var clipSm: sampler;
 @group(1) @binding(4) var clipSh: texture_2d_array<f32>; // shade: sun shadow, sky visibility, nL, nM (bake.wgsl)
-@group(1) @binding(5) var clipRM: texture_2d_array<f32>; // realm map: skin weight of realm 0-3 (layer 0), 4-7 (layer 1)
+// Heights: r32float, unfilterable on adapters without float32-filterable, so never put through the linear sampler.
+// clipH gathers the 2x2 texels once and blends them in f32 (exact bilinear, same result with or without the feature).
+@group(1) @binding(5) var clipHt: texture_2d_array<f32>;
+@group(1) @binding(6) var clipPt: sampler; // non-filtering, clamp-to-edge
+@group(1) @binding(7) var clipRM: texture_2d_array<f32>; // realm map: skin weight of realm 0-3 (layer 0), 4-7 (layer 1)
 fn clipSH(i: u32, p: vec2f) -> vec4f { return textureSampleLevel(clipSh, clipSm, clipUV(i, p), i, 0.0); }
 
 fn nLevels() -> u32 { return u32(FR.misc.x); }
@@ -31,8 +35,20 @@ fn clipUV(i: u32, p: vec2f) -> vec2f {
   let lv = FR.lv[i];
   return ((p - lv.xy) / lv.z + 0.5) * (1.0 / 512.0);
 }
-fn clipS(i: u32, p: vec2f) -> vec4f { return textureSampleLevel(clipT, clipSm, clipUV(i, p), i, 0.0); }
-fn clipH(i: u32, p: vec2f) -> f32 { return clipS(i, p).x; }
+fn clipH(i: u32, p: vec2f) -> f32 {
+  let t = clipUV(i, p) * 512.0 - 0.5;
+  let b = floor(t);
+  let f = t - b;
+  // footprint centred on the shared corner of texels b and b+1: w = (b.x, b.y), z = (b.x+1, b.y), x = (b.x, b.y+1), y = (b.x+1, b.y+1)
+  let g = textureGather(0, clipHt, clipPt, (b + 1.0) * (1.0 / 512.0), i);
+  return mix(mix(g.w, g.z, f.x), mix(g.x, g.y, f.x), f.y);
+}
+// (h, dh/dx, dh/dz, concavity): exact height from clipH, the rest hardware-filtered from rgba16float
+fn clipS(i: u32, p: vec2f) -> vec4f {
+  var s = textureSampleLevel(clipT, clipSm, clipUV(i, p), i, 0.0);
+  s.x = clipH(i, p);
+  return s;
+}
 fn clipMA(i: u32, p: vec2f) -> vec4f { return textureSampleLevel(clipA, clipSm, clipUV(i, p), i, 0.0); }
 fn clipMB(i: u32, p: vec2f) -> vec4f { return textureSampleLevel(clipB, clipSm, clipUV(i, p), i, 0.0); }
 
@@ -150,12 +166,12 @@ fn surfSpray(p: vec2f, y: f32, sf: ShoreF, amp: f32, t: f32) -> f32 {
 fn rainNow() -> f32 { return FR.mc[0].w; }
 fn groundWet() -> f32 { return FR.mc[1].w; }
 
-// ---- realm map (clipmap.js bakeRealm): the skin weights of every realm on 1024^2 texels of 64 m around FR.flags.zw,
+// ---- realm map (clipmap.js bakeRealm): the skin weights of every realm on 1024^2 texels of 64 m around (FR.mc[2].w, FR.mc[3].w),
 // recomputed when the camera has moved 8 km. Weights are linear in the realms, so bilinear filtering is exact up to
 // the 8-bit storage; 2 fetches replace the warped Voronoi per pixel (heights still use realmWeights at bake time).
 const RM_SPAN: f32 = 65536.0; // 1024 texels x 64 m
 fn realmWeightsMap(p: vec2f) -> RWt {
-  let uv = (p - FR.flags.zw) * (1.0 / RM_SPAN) + 0.5;
+  let uv = (p - vec2f(FR.mc[2].w, FR.mc[3].w)) * (1.0 / RM_SPAN) + 0.5;
   if (any(uv < vec2f(0.002)) || any(uv > vec2f(0.998))) { return realmWeights(p); }
   let a = textureSampleLevel(clipRM, clipSm, uv, 0, 0.0);
   let b = textureSampleLevel(clipRM, clipSm, uv, 1, 0.0);

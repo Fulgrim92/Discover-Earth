@@ -186,8 +186,8 @@ fn widthAt(k: u32, j: u32) -> f32 {
   // colour along the blade: dark roots, lighter tips
   var a2 = alb;
   if (kind == K_GRASS) {
-    // green at the base, olive-straw toward the tip on about a third of the blades (dry ends, as in the photos)
-    let dry = step(0.78, r2) * sstep(0.45, 1.0, s);
+    // green at the base, lighter toward the tip; olive-straw dry ends on a few blades only
+    let dry = step(0.96, r2) * sstep(0.45, 1.0, s); // a few dry tips as accents (the sward reads green)
     a2 = mix(alb * 0.8, alb * vec3f(1.18, 1.12, 0.78), s);
     a2 = mix(a2, mix(alb, vec3f(0.26, 0.23, 0.12), 0.6) * (0.85 + 0.3 * r1), dry * 0.7);
     // dream hybrid toward the Painted Range: strata colours climb the tips in bands
@@ -407,7 +407,7 @@ fn floraLit(n: vec3f, V: vec3f, alb: vec3f, sh: f32, ao: f32, tr: f32, kind: u32
   let back = max(-ndl, 0.0) * tr * 0.55;
   let mu = max(dot(-V, L), 0.0);
   let fwd = (pow(mu, 8.0) * 4.0 + pow(mu, 3.0) * 0.7) * tr;
-  let tcol = alb * vec3f(1.9, 1.75, 0.65) + vec3f(0.012, 0.01, 0.0);
+  let tcol = alb * vec3f(1.3, 1.95, 0.55) + vec3f(0.006, 0.012, 0.0); // leaf transmission: glowing yellow-green, not ochre
   var col = alb * (sc * sh * max(ndl, 0.0) + lfAmb(n.y, alb) * ao) + tcol * sc * sh * (back + fwd) * ao;
   // soft sheen on leaves
   let hv = normalize(L + V);
