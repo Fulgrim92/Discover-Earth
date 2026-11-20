@@ -75,7 +75,7 @@ export function init(ctx) {
   bg = bindGroup(bl, [ubuf, mbuf]);
   const mod = shader(SKY + XRW, 'xr');
   pCtl = pipeline({ label: 'xrControllers', module: mod, vs: 'vsCtl', fs: 'fsCtl', layouts: [ctx.bgl0, bl],
-    targets: [{ format: 'rgba16float' }, { format: 'r16float' }], samples: ctx.msaa,
+    targets: [{ format: 'rgba16float' }, { format: 'rg16float' }], samples: ctx.msaa,
     depth: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' } });
   const over = { color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }, alpha: { srcFactor: 'zero', dstFactor: 'one' } };
   pHud = pipeline({ label: 'xrHud', module: mod, vs: 'vsHud', fs: 'fsHud', layouts: [ctx.bgl0, bl], targets: [{ format: 'rgba16float', blend: over }] });

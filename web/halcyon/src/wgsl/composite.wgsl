@@ -128,7 +128,7 @@ fn reflectRay(P: vec3f, R: vec3f, rw: RWt, pix: f32) -> vec3f {
     let l = clipLevel(hp.xz, 0u, 8.0);
     let cd = clipS(l, hp.xz);
     let n = normalize(vec3f(-cd.y, 1.0, -cd.z));
-    let rq = realmWeights(hp.xz);
+    let rq = realmWeightsMap(hp.xz);
     let m0 = bf(rq, M0).rgb; let m1 = bf(rq, M1).rgb;
     let mb = clipMB(l, hp.xz); let ma = clipMA(l, hp.xz);
     var alb = mix(m0, m1, sstep(0.25, 0.5, 1.0 - n.y));
@@ -196,8 +196,8 @@ struct VO { @builtin(position) pos: vec4f }
     if (tw < dist + max(0.6, dist * 0.0015)) {
       tEnd = tw;
       let P = ro + d * tw;
-      let rw = realmWeights(P.xz);
-      let rwd = driftW(P.xz, rw); // water colour and surface drift with the skin (The Drift)
+      let rw = realmWeightsMap(P.xz);
+      let rwd = driftWM(P.xz, rw); // water colour and surface drift with the skin (The Drift)
       let w0 = bf(rwd, W0); let w1 = bf(rwd, W1); let w2 = bf(rwd, W2);
       let foot = tw * pix / max(-d.y, 0.05);
       var n = waveN(P.xz, w0.w, foot);
@@ -280,7 +280,7 @@ struct VO { @builtin(position) pos: vec4f }
   if (!isSky && tEnd == dist && dist < 2500.0) {
     let P = ro + d * dist;
     if (P.y < 32.0 && P.y > -0.5) {
-      let rw = realmWeights(P.xz);
+      let rw = realmWeightsMap(P.xz);
       let amt = min(bf(rw, G3).w * 1.6, 1.0);
       if (amt > 0.01) {
         let sp = surfSpray(P.xz, P.y, shoreFrame(P.xz), amt, FR.time.x);

@@ -34,10 +34,13 @@ export function initTimer() {
   P.resolve = G.device.createBuffer({ size: TS_SLOTS * TS_PER_FRAME * 8, usage: U.QUERY_RESOLVE | U.COPY_SRC, label: 'tsResolve' });
   for (let h = 0; h < 2; h++) {
     P.read[h] = G.device.createBuffer({ size: HALF_BYTES, usage: U.MAP_READ | U.COPY_DST, label: 'tsRead' + h });
-    const hh = h;
-    P.onMapped[h] = () => onMapped(hh);
+    // named wrappers (not arrows): when V8 inlines onMapped into its caller, the readback's platform ArrayBuffer is
+    // attributed to the caller, and tools/alloc.mjs keys sites by function name (onMapped0/1 -> onMapped)
+    P.onMapped[h] = h === 0 ? onMapped0 : onMapped1;
   }
 }
+function onMapped0() { onMapped(0); }
+function onMapped1() { onMapped(1); }
 
 // call once per frame before encoding: which passes will run, and in how many views
 export function frameBegin(frameNo, nViews) {

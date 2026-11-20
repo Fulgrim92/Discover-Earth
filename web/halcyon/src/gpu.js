@@ -51,8 +51,8 @@ export async function initDevice(opts) {
 // by setTimerBase() before each view, so no descriptor is rebuilt per frame. perf.js resolves and reads them back.
 // TS_FLORA / TS_FAUNA only run with ?split=1, which splits the opaque pass into terrain (+ sky, drone) / flora / fauna.
 export const TS_BAKE = 0, TS_OPAQUE = 1, TS_CLOUDS = 2, TS_COMPOSITE = 3, TS_FX = 4, TS_BLOOM = 5, TS_FINAL = 6, TS_LIFE = 7,
-  TS_WEATHER = 8, TS_FLORA = 9, TS_FAUNA = 10, TS_N = 11;
-export const TS_PASSES = ['bake', 'opaque', 'clouds', 'composite', 'fx', 'bloom', 'final', 'life', 'weather', 'flora', 'fauna'];
+  TS_WEATHER = 8, TS_FLORA = 9, TS_FAUNA = 10, TS_TSHADE = 11, TS_N = 12;
+export const TS_PASSES = ['bake', 'opaque', 'clouds', 'composite', 'fx', 'bloom', 'final', 'life', 'weather', 'flora', 'fauna', 'tshade'];
 // passes encoded once per frame (in the first view's timer block), not once per view
 export const TS_ONCE = (1 << TS_BAKE) | (1 << TS_WEATHER);
 export const TS_SLOTS = 32;                 // frames in the query ring

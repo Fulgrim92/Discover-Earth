@@ -84,7 +84,7 @@ export function init(ctx) {
   const head = CLIP + SKY + LIFE + FLORA;
   pPlace = computePipeline(shader(head + FLORACS, 'flora place'), [ctx.bgl0, clip.bgl, bglC], 'flora place');
   const mod = shader(head + FLORAR, 'flora');
-  const targets = [{ format: 'rgba16float' }, { format: 'r16float' }];
+  const targets = [{ format: 'rgba16float' }, { format: 'rg16float' }];
   const depth = { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' };
   const layouts = [ctx.bgl0, clip.bgl, bglR];
   pStrip = pipeline({ label: 'flora strips', module: mod, vs: 'vsStrip', fs: 'fsFlora', layouts, targets, samples: ctx.msaa, a2c: ctx.msaa > 1, depth, topology: 'triangle-strip' });

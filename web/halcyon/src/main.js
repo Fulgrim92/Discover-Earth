@@ -180,9 +180,9 @@ function makeTargets(w, h) {
   const t = { w, h };
   const ms = ctx.msaa > 1;
   const scene = T(w, h, 'rgba16float', RA | TB, { label: 'scene' });
-  const dist = T(w, h, 'r16float', RA | TB, { label: 'dist' });
+  const dist = T(w, h, 'rg16float', RA | TB, { label: 'dist' }); // x: distance, y: terrain coverage (deferred shading)
   t.sceneV = scene.createView(); t.distV = dist.createView();
-  const depth = T(w, h, 'depth32float', RA, { samples: ctx.msaa, label: 'depth' });
+  const depth = T(w, h, 'depth32float', RA | TB, { samples: ctx.msaa, label: 'depth' }); // read by terrain.shade
   t.compV = T(w, h, 'rgba16float', RA | TB, { label: 'comp' }).createView();
   const ca = [
     { view: t.sceneV, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } },
@@ -191,11 +191,12 @@ function makeTargets(w, h) {
   if (ms) {
     ca[0].view = T(w, h, 'rgba16float', RA, { samples: ctx.msaa, label: 'sceneMS' }).createView();
     ca[0].resolveTarget = t.sceneV; ca[0].storeOp = 'discard';
-    ca[1].view = T(w, h, 'r16float', RA, { samples: ctx.msaa, label: 'distMS' }).createView();
-    ca[1].resolveTarget = t.distV; ca[1].storeOp = 'discard';
+    ca[1].view = T(w, h, 'rg16float', RA | TB, { samples: ctx.msaa, label: 'distMS' }).createView();
+    ca[1].resolveTarget = t.distV; ca[1].storeOp = 'store'; // per-sample terrain marks for terrain.shade
   }
   const depthV = depth.createView();
-  opaqueDesc = { colorAttachments: ca, depthStencilAttachment: { view: depthV, depthClearValue: 0, depthLoadOp: 'clear', depthStoreOp: 'discard' },
+  t.distSV = ca[1].view; t.depthSV = depthV;
+  opaqueDesc = { colorAttachments: ca, depthStencilAttachment: { view: depthV, depthClearValue: 0, depthLoadOp: 'clear', depthStoreOp: 'store' },
     timestampWrites: tsBoth(TS_OPAQUE) };
   if (P.split) {
     // the same attachments in three passes: the first clears and stores, the middle loads and stores, the last
@@ -204,11 +205,12 @@ function makeTargets(w, h) {
       storeOp: last ? a.storeOp : 'store', resolveTarget: last ? a.resolveTarget : undefined });
     const mk = (k, ts) => ({
       colorAttachments: [att(ca[0], k > 0, k === 2), att(ca[1], k > 0, k === 2)],
-      depthStencilAttachment: { view: depthV, depthClearValue: 0, depthLoadOp: k > 0 ? 'load' : 'clear', depthStoreOp: k === 2 ? 'discard' : 'store' },
+      depthStencilAttachment: { view: depthV, depthClearValue: 0, depthLoadOp: k > 0 ? 'load' : 'clear', depthStoreOp: 'store' },
       timestampWrites: tsBoth(ts),
     });
     splitDesc = [mk(0, TS_OPAQUE), mk(1, TS_FLORA), mk(2, TS_FAUNA)];
   }
+  terrain.bind(ctx, t);
   t.cloudV = clouds.bind(ctx, t);
   composite.bind(ctx, t);
   rings.bind(ctx, t);
@@ -443,6 +445,7 @@ function renderView(v, enc, target, first) {
   if (splitDesc) { p.end(); p = enc.beginRenderPass(splitDesc[2]); }
   if (!(OFF & OFF_FAUNA)) fauna.draw(ctx, p, v);
   p.end();
+  terrain.shade(ctx, enc, v); // deferred terrain shading into the resolved scene
   if (clouds.draw(ctx, enc, v)) perf.markRan(TSLOT[0], TS_WEATHER); // + the weather window bake (first view)
   composite.draw(ctx, enc, v);
   // fauna's transparent jellies + motes (off=fauna hides the jellies through the fauna row, see prepareFrame)
@@ -816,6 +819,7 @@ async function stagedFrame() {
   writeView(v);
   await log('flora', (enc) => flora.prepare(ctx, enc, v));
   await log('opaque', (enc) => { const p = enc.beginRenderPass(opaqueDesc); drone.drawBody(ctx, p, v); terrain.draw(ctx, p, v); flora.draw(ctx, p, v); fauna.draw(ctx, p, v); p.end(); });
+  await log('terrain shade', (enc) => terrain.shade(ctx, enc, v));
   await log('clouds', (enc) => clouds.draw(ctx, enc, v));
   await log('composite', (enc) => composite.draw(ctx, enc, v));
   await log('particles', (enc) => particles.draw(ctx, enc, v));

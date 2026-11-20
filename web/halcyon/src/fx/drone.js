@@ -165,7 +165,7 @@ export function init(ctx) {
   bg2 = bindGroup(bl2, [FX.buf, mbuf]);
   const mod = shader(CLIP + SKY + FXU + DRONE, 'drone');
   pBody = pipeline({ label: 'droneBody', module: mod, vs: 'vsBody', fs: 'fsBody', layouts: [ctx.bgl0, clip.bgl, bl2],
-    targets: [{ format: 'rgba16float' }, { format: 'r16float' }], samples: ctx.msaa,
+    targets: [{ format: 'rgba16float' }, { format: 'rg16float' }], samples: ctx.msaa,
     depth: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' } });
 }
 

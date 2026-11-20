@@ -167,14 +167,23 @@ fn realmWeights(p0: vec2f) -> RWt {
 // light). Inside a transition zone the lookup point is displaced by a slow, time-animated flow (two octaves of
 // drifting noise, 20-40 s periods) and the weights are sharpened (w^4), so one realm's surface reaches into the
 // other in tongues and eddies that move like ink in water. One extra realmWeights, only in zone pixels.
-fn driftW(p: vec2f, rw: RWt) -> RWt {
-  if (rw.id[1] < 0) { return rw; }
+fn driftOff(p: vec2f) -> vec2f {
   let t = FR.time.x;
   let q1 = p * (1.0 / 950.0) + vec2f(t * (1.0 / 31.0), t * (1.0 / 47.0));
   let q2 = p * (1.0 / 310.0) - vec2f(t * (1.0 / 23.0), -t * (1.0 / 37.0));
   var d = 420.0 * vec2f(vn(q1, 911u), vn(q1 + vec2f(5.2, 1.7), 912u));
   d += 150.0 * vec2f(vn(q2 + d * (1.0 / 900.0), 913u), vn(q2 + vec2f(2.8, 6.1) + d * (1.0 / 900.0), 914u));
-  var r = realmWeights(p + d);
+  return d;
+}
+fn driftW(p: vec2f, rw: RWt) -> RWt {
+  if (rw.id[1] < 0) { return rw; }
+  let d = driftOff(p);
+  return driftSharpen(p, d, realmWeights(p + d));
+}
+// (clip.wgsl driftWM: the same from the baked realm map)
+fn driftSharpen(p: vec2f, d: vec2f, r0: RWt) -> RWt {
+  var r = r0;
+  let t = FR.time.x;
   // per-realm patch field (~90 m, drifting): near the middle each realm holds patches rather than both averaging
   let q3 = p * (1.0 / 90.0) + d * (1.0 / 300.0) + vec2f(t * (1.0 / 53.0), -t * (1.0 / 71.0));
   var sum = 0.0;

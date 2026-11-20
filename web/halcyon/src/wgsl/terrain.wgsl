@@ -228,8 +228,53 @@ fn shadeL(off: u32, l0: u32, e: f32, p: vec2f) -> vec4f {
   return s;
 }
 
+// ---- deferred terrain shading ----
+// The terrain mesh is dense (sliver triangles at grazing angles) and the material is heavy, so the raster pass only
+// marks coverage (fs: colour 0, dist.y = 1) and fsShade, a full-screen pass after the opaque pass, shades each pixel
+// once from a terrain sample's depth and adds colour x terrain coverage into the resolved scene. Flora, fauna and the
+// drone stay in the MSAA pass, so edges against them and the sky keep their sample coverage. Where the terrain
+// samples of a pixel lie at clearly different depths (a ridge in front of far ground) both are shaded and weighted.
 @fragment fn fs(in: VOut) -> FOut {
-  let p = in.wp;
+  var o: FOut;
+  o.c = vec4f(0.0, 0.0, 0.0, 1.0);
+  o.d = vec4f(length(VW.cam.xyz - in.wp), 1.0, 0.0, 1.0);
+  return o;
+}
+
+@group(2) @binding(0) var tDistMS: texture_multisampled_2d<f32>; // the opaque pass's dist target (y: terrain mark)
+@group(2) @binding(1) var tDepthMS: texture_depth_multisampled_2d;
+const TNS: i32 = 4; // samples (terrain.js rewrites these three declarations for msaa 1)
+
+@vertex fn vsFull(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  let uv = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+  return vec4f(uv * 2.0 - 1.0, 0.0, 1.0);
+}
+fn unproject(fragXY: vec2f, z: f32) -> vec3f {
+  let uv = fragXY * VW.size.zw;
+  let r = VW.ivp * vec4f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, z, 1.0);
+  return VW.cam.xyz + r.xyz / r.w;
+}
+@fragment fn fsShade(@builtin(position) fpos: vec4f) -> @location(0) vec4f {
+  let px = vec2i(fpos.xy);
+  var n0 = 0.0; var n1 = 0.0; var z0 = -1.0; var z1 = -1.0;
+  for (var s = 0; s < TNS; s++) {
+    if (textureLoad(tDistMS, px, s).y > 0.5) {
+      let z = textureLoad(tDepthMS, px, s);
+      if (z0 < 0.0) { z0 = z; n0 = 1.0; }
+      else if (abs(z - z0) <= 0.02 * z0) { n0 += 1.0; }  // same surface (reverse-Z: relative depth)
+      else { if (z1 < 0.0) { z1 = z; } n1 += 1.0; }
+    }
+  }
+  let p0 = unproject(fpos.xy, max(z0, 1e-9));
+  let fwh = min(fwidth(p0.y), 4.0); // uniform control flow here
+  if (n0 == 0.0) { return vec4f(0.0); }
+  let inv = 1.0 / f32(TNS);
+  var c = terrainShade(p0, fpos.xy, fwh).c.rgb * (n0 * inv);
+  if (n1 > 0.0) { c += terrainShade(unproject(fpos.xy, z1), fpos.xy, fwh).c.rgb * (n1 * inv); }
+  return vec4f(c, 0.0);
+}
+
+fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   let cam = VW.cam.xyz;
   let toCam = cam - p;
   let dist = length(toCam);
@@ -237,7 +282,6 @@ fn shadeL(off: u32, l0: u32, e: f32, p: vec2f) -> vec4f {
   let tm = FR.time.x;
   let q = FR.time.w;
   if (isOff(OFF_TFLAT)) { var ob: FOut; ob.c = vec4f(0.12, 0.14, 0.1, 1.0); ob.d = vec4f(dist, 0.0, 0.0, 1.0); return ob; }
-  let fwh = fwidth(p.y); // height change per pixel (strata anti-aliasing); uniform control flow here
 
   // clipmap data at the finest covering level, cross-faded to the next at its edge
   let l0 = clipLevel(p.xz, 0u, 6.0);
@@ -271,9 +315,9 @@ fn shadeL(off: u32, l0: u32, e: f32, p: vec2f) -> vec4f {
   // realm blend
   var rw: RWt;
   if (isOff(OFF_TREALM)) { rw.id = vec4i(i32(FR.flags.y), -1, -1, -1); rw.w = vec4f(1.0, 0.0, 0.0, 0.0); rw.near = vec4f(0.0); }
-  else { rw = realmWeights(p.xz); }
+  else { rw = realmWeightsMap(p.xz); }
   // the skin drifts (common.wgsl driftW): materials come from flow-displaced, sharpened weights; light does not
-  var rwm = driftW(p.xz, rw);
+  var rwm = driftWM(p.xz, rw);
   // Mirror Salt seeks the low ground in a border: salt crust and brine creep along hollows between the neighbour's
   // tussocks and ridges instead of averaging into a pale mid tone
   if (rwm.id[1] >= 0) {
@@ -816,13 +860,17 @@ fn shadeL(off: u32, l0: u32, e: f32, p: vec2f) -> vec4f {
   let L = sunDirFrom(S0v, FR.sun.w);
   let horizon = sstep(-0.035, 0.06, L.y);
   let sunC = S1v.rgb * S0v.z * horizon;
-  let jit = ign(in.pos.xy);
+  let jit = ign(fragXY);
   var sh = 0.0;
   let ndl = dot(n, L);
   // baked shadow: each level marched its own heights toward the sun at bake time; near casters come from the fine
   // level, ridges and mountains from the coarser two (2 extra fetches, no per-pixel march)
-  let sd1 = shadeL(2u, l0, e, p.xz);
-  let sd2 = shadeL(4u, l0, e, p.xz);
+  // the coarse levels are looked up one of their texels towards the sun: a coarse texel straddling a ridge would
+  // otherwise print the shadowed side's value onto the lit face as a saw-tooth edge along the crest
+  let Lh = L.xz / max(length(L.xz), 1e-3);
+  let nL1 = min(l0 + 2u, nLevels() - 1u); let nL2 = min(l0 + 4u, nLevels() - 1u);
+  let sd1 = shadeL(2u, l0, e, p.xz + Lh * FR.lv[nL1].z);
+  let sd2 = shadeL(4u, l0, e, p.xz + Lh * FR.lv[nL2].z);
   var vis = sd0.y * mix(1.0, sd1.y, 0.7);
   if (isOff(OFF_TAO)) { vis = 1.0; }
   if (horizon > 0.0 && dot(gn, L) > -0.1) {

@@ -22,7 +22,7 @@ export const faunaT = { bgl: null };
 export function init(ctx) {
   const mod = shader(CLIP + SKY + LIFE + FAUNA, 'fauna');
   faunaT.bgl = bgl('f', 'lifeT');
-  const targets = [{ format: 'rgba16float' }, { format: 'r16float' }];
+  const targets = [{ format: 'rgba16float' }, { format: 'rg16float' }];
   pBird = pipeline({ label: 'birds', module: mod, vs: 'vsBird', fs: 'fsBird', layouts: [ctx.bgl0, clip.bgl], targets, samples: ctx.msaa,
     depth: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' } });
   const lay = [ctx.bgl0, clip.bgl, faunaT.bgl];

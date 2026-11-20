@@ -4,6 +4,7 @@ import { G, shader, bgl, bindGroup, tex, buffer, pipeline, FO, tsBegin, tsEnd, T
 import CLIP from '../wgsl/clip.wgsl';
 import TERRFN from '../wgsl/terrfn.wgsl';
 import BAKE from '../wgsl/bake.wgsl';
+import RMAP from '../wgsl/realmmap.wgsl';
 
 export const LEVELS = 9;
 export const N = 512;
@@ -24,6 +25,12 @@ let sunSrc = null; // view of the frame's sun drift: copied typed-array to typed
 const SUN_REBAKE = 0.3;
 let cpSrcA, cpSrcB, cpDstA = [], cpDstB = [], cpSize;
 export const clip = { bgl: null, bg: null, data: null, format: '' };
+// realm map (terrain-art; clip.wgsl realmWeightsMap): skin weights of every realm on 1024^2 texels of 64 m around a
+// centre snapped to 1 km, recomputed (one compute dispatch) when the camera is more than RM_MOVE from it
+const RM_N = 1024, RM_MOVE = 8000;
+let rmap, pRealm, rmBG, rmBuf;
+const rmU = new Float32Array(4);
+const rmAt = new Float64Array([1e30, 1e30]);
 
 export function init(ctx) {
   const d = G.device;
@@ -65,11 +72,19 @@ export function init(ctx) {
   cpSrcB = { texture: tmpB, origin: { x: 1, y: 1, z: 0 } };
   cpSize = { width: N, height: N, depthOrArrayLayers: 1 };
 
-  clip.bgl = bgl('aaasa', 'clip');
+  rmap = tex(RM_N, RM_N, 'rgba8unorm', U.STORAGE_BINDING | U.TEXTURE_BINDING, { layers: 2, label: 'realmMap' });
+  rmBuf = buffer(16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'realmMapU');
+  const rbl = d.createBindGroupLayout({ label: 'realm map', entries: [
+    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+    { binding: 1, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: 'rgba8unorm', viewDimension: '2d-array' } }] });
+  pRealm = d.createComputePipeline({ label: 'realm map', layout: d.createPipelineLayout({ bindGroupLayouts: [ctx.bgl0, rbl] }),
+    compute: { module: shader(RMAP, 'realm map'), entryPoint: 'csRealm' } });
+  rmBG = bindGroup(rbl, [rmBuf, rmap.createView({ dimension: '2d-array' })]);
+  clip.bgl = bgl('aaasaa', 'clip');
   const samp = d.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' });
   clip.bg = bindGroup(clip.bgl, [
     data.createView({ dimension: '2d-array' }), maskA.createView({ dimension: '2d-array' }), maskB.createView({ dimension: '2d-array' }), samp,
-    shade.createView({ dimension: '2d-array' }),
+    shade.createView({ dimension: '2d-array' }), rmap.createView({ dimension: '2d-array' }),
   ]);
 }
 
@@ -100,8 +115,20 @@ function bakeLevel(ctx, enc, i, shadeOnly) {
   ctx.frame[o] = cx - 256 * t; ctx.frame[o + 1] = cz - 256 * t; ctx.frame[o + 2] = t; ctx.frame[o + 3] = 1;
 }
 
+// realm map recentre: one compute pass (its encoder is the platform's)
+function bakeRealm(ctx, enc, camX, camZ) {
+  rmAt[0] = Math.round(camX / 1024) * 1024; rmAt[1] = Math.round(camZ / 1024) * 1024;
+  rmU[0] = rmAt[0]; rmU[1] = rmAt[1];
+  G.queue.writeBuffer(rmBuf, 0, rmU);
+  const c = enc.beginComputePass();
+  c.setPipeline(pRealm); c.setBindGroup(0, ctx.views[0].bg0); c.setBindGroup(1, rmBG);
+  c.dispatchWorkgroups(RM_N / 8, RM_N / 8); c.end();
+  ctx.frame[FO.flags + 2] = rmAt[0]; ctx.frame[FO.flags + 3] = rmAt[1];
+}
+
 // Returns the number of levels baked. `all`: bake every stale level now.
 export function update(ctx, enc, camX, camZ, all) {
+  if (Math.abs(camX - rmAt[0]) > RM_MOVE || Math.abs(camZ - rmAt[1]) > RM_MOVE) bakeRealm(ctx, enc, camX, camZ);
   let best = -1, bestDrift = 0;
   for (let i = 0; i < LEVELS; i++) {
     const t = T0 * (1 << i), s = SNAP * t;

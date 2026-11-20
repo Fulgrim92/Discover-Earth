@@ -4,6 +4,7 @@
 @group(1) @binding(2) var clipB: texture_2d_array<f32>;
 @group(1) @binding(3) var clipSm: sampler;
 @group(1) @binding(4) var clipSh: texture_2d_array<f32>; // shade: sun shadow, sky visibility, nL, nM (bake.wgsl)
+@group(1) @binding(5) var clipRM: texture_2d_array<f32>; // realm map: skin weight of realm 0-3 (layer 0), 4-7 (layer 1)
 fn clipSH(i: u32, p: vec2f) -> vec4f { return textureSampleLevel(clipSh, clipSm, clipUV(i, p), i, 0.0); }
 
 fn nLevels() -> u32 { return u32(FR.misc.x); }
@@ -148,3 +149,29 @@ fn surfSpray(p: vec2f, y: f32, sf: ShoreF, amp: f32, t: f32) -> f32 {
 // weather (stub until sky-clouds' rain field arrives): FR.mc[0].w rain intensity 0..1, FR.mc[1].w ground wetness 0..1
 fn rainNow() -> f32 { return FR.mc[0].w; }
 fn groundWet() -> f32 { return FR.mc[1].w; }
+
+// ---- realm map (clipmap.js bakeRealm): the skin weights of every realm on 1024^2 texels of 64 m around FR.flags.zw,
+// recomputed when the camera has moved 8 km. Weights are linear in the realms, so bilinear filtering is exact up to
+// the 8-bit storage; 2 fetches replace the warped Voronoi per pixel (heights still use realmWeights at bake time).
+const RM_SPAN: f32 = 65536.0; // 1024 texels x 64 m
+fn realmWeightsMap(p: vec2f) -> RWt {
+  let uv = (p - FR.flags.zw) * (1.0 / RM_SPAN) + 0.5;
+  if (any(uv < vec2f(0.002)) || any(uv > vec2f(0.998))) { return realmWeights(p); }
+  let a = textureSampleLevel(clipRM, clipSm, uv, 0, 0.0);
+  let b = textureSampleLevel(clipRM, clipSm, uv, 1, 0.0);
+  var r: RWt;
+  r.id = vec4i(-1); r.w = vec4f(0.0); r.near = vec4f(0.0);
+  var k = 0; var sum = 0.0;
+  for (var i = 0; i < 8; i++) {
+    let w = select(b[i & 3], a[i & 3], i < 4);
+    if (w > 0.003 && k < 4) { r.id[k] = i; r.w[k] = w; sum += w; k++; }
+  }
+  if (k == 0) { return realmWeights(p); }
+  r.w /= sum;
+  return r;
+}
+fn driftWM(p: vec2f, rw: RWt) -> RWt {
+  if (rw.id[1] < 0) { return rw; }
+  let d = driftOff(p);
+  return driftSharpen(p, d, realmWeightsMap(p + d));
+}
