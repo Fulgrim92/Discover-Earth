@@ -7,7 +7,7 @@
 // getMappedRange() returns a fresh ArrayBuffer: those are platform allocations we cannot avoid, so they happen once
 // per READ_EVERY frames (about 4 times a second at 60 Hz), never per frame. Without timestamp-query the frame
 // delta drives the controller instead.
-import { G, TS, TS_N, TS_SLOTS, TS_PER_FRAME, TS_PASSES, TS_ONCE, TS_FRAME_Q } from './gpu.js';
+import { G, TS, TS_N, TS_SLOTS, TS_PER_FRAME, TS_PASSES, TS_ONCE } from './gpu.js';
 import { dyn } from './dynres.js';
 
 export const READ_EVERY = TS_SLOTS / 2;
@@ -82,7 +82,7 @@ function onMapped(h) {
   const s0 = P.half[h] * READ_EVERY;
   for (let k = 0; k < READ_EVERY; k++) {
     const slot = s0 + k, nv = P.views[slot];
-    let total = 0, ok = 1;
+    let total = 0, ok = 1, fb = Infinity, fe = -Infinity;
     for (let i = 0; i < TS_N; i++) {
       let ms = 0;
       if (P.ran[slot * TS_N + i]) {
@@ -91,18 +91,16 @@ function onMapped(h) {
           const o = (k * TS_PER_FRAME + v * TS_N * 2 + i * 2) * 2;
           const b = q[o + 1] * 4294967296 + q[o], e = q[o + 3] * 4294967296 + q[o + 2];
           const d = (e - b) * 1e-6;
-          if (d >= 0 && d < 60000) ms += d; // (a software GPU can take seconds per pass)
+          if (d >= 0 && d < 60000) { ms += d; if (b < fb) fb = b; if (e > fe) fe = e; } // (a software GPU can take seconds per pass)
           else { ok = 0; stats.lastBad[0] = i; stats.lastBad[1] = b; stats.lastBad[2] = e; }
         }
       }
       gpuMs[i] = ms; total += ms;
     }
     gpuMs[TS_N] = total;
-    // the frame bracket (gpu.js tsFrameOpen/Close): what the GPU spent on the frame, gaps between passes included
-    const of = (k * TS_PER_FRAME + TS_FRAME_Q) * 2;
-    const fb = q[of + 1] * 4294967296 + q[of], fe = q[of + 3] * 4294967296 + q[of + 2];
+    // the whole frame: the first pass's begin to the final pass's end, gaps between passes included
     const fms = (fe - fb) * 1e-6;
-    if (fms >= 0 && fms < 60000 && fms >= total * 0.999) gpuMs[TS_N + 1] = fms;
+    if (fms >= total * 0.999 && fms < 60000) gpuMs[TS_N + 1] = fms;
     else { ok = 0; stats.lastBad[0] = TS_N; stats.lastBad[1] = fb; stats.lastBad[2] = fe; }
     if (!ok) { stats.invalid++; continue; }
     const f = P.frameOfSlot[slot];
@@ -169,10 +167,10 @@ export function benchReport(meta) {
 
 // ------------------------------------------------------------------------------------------------ pass guard
 // ?bench=1 only: every render/compute pass begun between frameBegin and frameEnd must be timed, either by its own
-// timestampWrites or by lying inside an open bracket (a begin-only ... end-only pair of the same slot); a timed slot
+// timestampWrites or by lying between a begin-only and an end-only pass of the same slot; a timed slot
 // must be marked as ran (else its time is dropped from the report) and a slot marked as ran must have been timed. A
 // violation is an error in the bench report (timerErrors, timerOk false) and fails tools/bench.mjs.
-const GD = { on: false, active: false, frame: 0, open: new Uint8Array(TS_N), used: new Uint8Array(TS_N), errors: new Map() };
+const GD = { on: false, active: false, open: new Uint8Array(TS_N), used: new Uint8Array(TS_N), errors: new Map() };
 function guardErr(msg) { GD.errors.set(msg, (GD.errors.get(msg) || 0) + 1); }
 function guardPass(desc) {
   if (!GD.active) return;
@@ -180,7 +178,6 @@ function guardPass(desc) {
   if (tw) {
     const hasB = tw.beginningOfPassWriteIndex !== undefined, hasE = tw.endOfPassWriteIndex !== undefined;
     const q = (hasB ? tw.beginningOfPassWriteIndex : tw.endOfPassWriteIndex) % TS_PER_FRAME;
-    if (q >= TS_FRAME_Q) { GD.frame = hasB ? 1 : 2; return; }
     const i = (q % (TS_N * 2)) >> 1;
     GD.used[i] = 1;
     if (hasB && !hasE) GD.open[i] = 1; else if (hasE && !hasB) GD.open[i] = 0;
@@ -189,12 +186,10 @@ function guardPass(desc) {
     for (let i = 0; i < TS_N; i++) any |= GD.open[i];
     if (!any) guardErr('untimed pass "' + ((desc && desc.label) || '(no label)') + '"');
   }
-  if (GD.frame !== 1) guardErr('pass "' + ((desc && desc.label) || '(no label)') + '" outside the frame bracket');
 }
-function guardBegin() { GD.active = true; GD.frame = 0; GD.open.fill(0); GD.used.fill(0); }
+function guardBegin() { GD.active = true; GD.open.fill(0); GD.used.fill(0); }
 function guardEnd(slot) {
   GD.active = false;
-  if (GD.frame !== 2) guardErr('frame bracket not closed');
   for (let i = 0; i < TS_N; i++) {
     const ran = P.ran[slot * TS_N + i];
     if (GD.open[i]) guardErr('timer bracket ' + TS_PASSES[i] + ' left open');

@@ -35,7 +35,7 @@
 // Debug: dbg=1 no water, 2 terrain albedo, 3 sun shadow, 4 terrain normal, 5 water reflection only, 6 water
 // refraction only, 7 water normal, 8 no fog, 9 no clouds. staged=1 (+verbose=1) times each pass of a static shot separately.
 import { G, H, fail, initDevice, Unsupported, bgl, bindGroup, tex, buffer, FRAME_FLOATS, VIEW_FLOATS, FO, VO, pipelinesReady,
-  setTimerBase, tsBoth, tsFrameOpen, tsFrameClose, TS_TSHADE, TS_ATMO, TS_RMAP, TS_FPREP, TS_BAKE, TS_OPAQUE, TS_CLOUDS, TS_COMPOSITE, TS_FX, TS_BLOOM, TS_FINAL, TS_LIFE, TS_WEATHER,
+  setTimerBase, tsBoth, TS_TSHADE, TS_ATMO, TS_RMAP, TS_FPREP, TS_BAKE, TS_OPAQUE, TS_CLOUDS, TS_COMPOSITE, TS_FX, TS_BLOOM, TS_FINAL, TS_LIFE, TS_WEATHER,
   TS_FLORA, TS_FAUNA } from './gpu.js';
 import { TABLE, ROWF, F, realmCentre, CURATED, REALM_NAMES } from './realms.js';
 import { skyTick, SKY_IN } from './realms.js'; // the sky turns (sky programmer)
@@ -545,7 +545,6 @@ function renderFrame(bakeAll) {
   TSLOT[0] = slot;
   setTimerBase(slot, 0);
   const enc = G.device.createCommandEncoder();
-  tsFrameOpen(enc); // whole-frame GPU bracket (perf gpuFrameMs: dynres and the bench headline)
   clipmap.update(ctx, enc, cam[0], cam[2], bakeAll);
   if (clipmap.ran[0]) perf.markRan(slot, TS_BAKE);
   if (clipmap.ran[1]) perf.markRan(slot, TS_RMAP);
@@ -569,7 +568,6 @@ function renderFrame(bakeAll) {
   perf.markRan(slot, TS_BLOOM); perf.markRan(slot, TS_FINAL);
   perf.markRan(slot, TS_CLOUDS); perf.markRan(slot, TS_TSHADE);
   if (flora.prepRan[0]) perf.markRan(slot, TS_FPREP);
-  tsFrameClose(enc);
   perf.frameEnd(enc, slot);
   CMD[0] = enc.finish();
   G.queue.submit(CMD);

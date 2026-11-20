@@ -1,6 +1,6 @@
 // fx/clipmap.js: 9 levels of 512x512 height (r32float) + gradient (rgba16float) + 2 mask arrays, baked on the GPU when a level's snapped
 // centre moves (at most one level per frame in flight, all at once on start).
-import { G, shader, bgl, bindGroup, tex, buffer, pipeline, computePipeline, FO, tsBoth, tsOpen, tsClose, TS_BAKE, TS_RMAP } from '../gpu.js';
+import { G, shader, bgl, bindGroup, tex, buffer, pipeline, computePipeline, FO, tsBoth, tsEnd, TS_BAKE, TS_RMAP } from '../gpu.js';
 import CLIP from '../wgsl/clip.wgsl';
 import TERRFN from '../wgsl/terrfn.wgsl';
 import BAKE from '../wgsl/bake.wgsl';
@@ -106,15 +106,18 @@ function bakeLevel(ctx, enc, i, shadeOnly) {
   if (!shadeOnly) {
   bakeU[0] = cx - 256 * t; bakeU[1] = cz - 256 * t; bakeU[2] = t; bakeU[3] = i;
   G.queue.writeBuffer(bakeBuf[i], 0, bakeU);
+  bakeDesc.timestampWrites = bakeTs();
   let p = enc.beginRenderPass(bakeDesc);
   p.setPipeline(pBake); p.setBindGroup(0, ctx.views[0].bg0); p.setBindGroup(1, bakeBG[i]);
   p.draw(3); p.end();
   enc.copyTextureToTexture(cpSrcA, cpDstA[i], cpSize);
   enc.copyTextureToTexture(cpSrcB, cpDstB[i], cpSize);
+  gradDesc[i].timestampWrites = bakeTs();
   p = enc.beginRenderPass(gradDesc[i]);
   p.setPipeline(pGrad); p.setBindGroup(0, ctx.views[0].bg0); p.setBindGroup(1, gradBG[i]);
   p.draw(3); p.end();
   }
+  shadeDesc[i].timestampWrites = bakeTs();
   const q = enc.beginRenderPass(shadeDesc[i]);
   q.setPipeline(pShade); q.setBindGroup(0, ctx.views[0].bg0); q.setBindGroup(1, shadeBG[i]);
   q.draw(3); q.end();
@@ -137,19 +140,15 @@ function bakeRealm(ctx, enc, camX, camZ) {
   ctx.frame[FO.mc + 11] = rmAt[0]; ctx.frame[FO.mc + 15] = rmAt[1]; // FR.mc[2].w, mc[3].w (clip.wgsl RM_ORIGIN)
 }
 
-// Returns the number of levels baked. `all`: bake every stale level now.
 // Returns the number of levels baked. `all`: bake every stale level now. ran[0]: any clip pass was encoded (full or
-// shade-only, timed as one TS_BAKE bracket), ran[1]: the realm map was rebaked (TS_RMAP); main.js marks them for perf.
+// shade-only), ran[1]: the realm map was rebaked (TS_RMAP); main.js marks them for perf.
+// Timer: all clip passes of a frame are one TS_BAKE span. The first writes the begin and end stamps, every later one
+// the end stamp again (the last write wins), so the span runs from the first bake pass to the last; no extra passes.
 export const ran = new Uint8Array(2);
+function bakeTs() { const first = !ran[0]; ran[0] = 1; return first ? tsBoth(TS_BAKE) : tsEnd(TS_BAKE); }
 export function update(ctx, enc, camX, camZ, all) {
   ran[0] = 0; ran[1] = 0;
   if (Math.abs(camX - rmAt[0]) > RM_MOVE || Math.abs(camZ - rmAt[1]) > RM_MOVE) { bakeRealm(ctx, enc, camX, camZ); ran[1] = 1; }
-  const n = bakeStale(ctx, enc, camX, camZ, all);
-  if (ran[0]) tsClose(enc, TS_BAKE);
-  return n;
-}
-function openBake(enc) { if (!ran[0]) { ran[0] = 1; tsOpen(enc, TS_BAKE); } }
-function bakeStale(ctx, enc, camX, camZ, all) {
   let best = -1, bestDrift = 0;
   for (let i = 0; i < LEVELS; i++) {
     const t = T0 * (1 << i), s = SNAP * t;
@@ -162,13 +161,13 @@ function bakeStale(ctx, enc, camX, camZ, all) {
     let n = 0;
     for (let i = 0; i < LEVELS; i++) {
       const t = T0 * (1 << i);
-      if (Math.max(Math.abs(want[i * 2] - have[i * 2]), Math.abs(want[i * 2 + 1] - have[i * 2 + 1])) / t > 0.5) { openBake(enc); bakeLevel(ctx, enc, i); n++; }
+      if (Math.max(Math.abs(want[i * 2] - have[i * 2]), Math.abs(want[i * 2 + 1] - have[i * 2 + 1])) / t > 0.5) { bakeLevel(ctx, enc, i); n++; }
     }
     return n;
   }
-  if (best >= 0) { openBake(enc); bakeLevel(ctx, enc, best); return 1; }
+  if (best >= 0) { bakeLevel(ctx, enc, best); return 1; }
   const sd = ctx.frame[FO.sky + 2];
-  for (let i = 0; i < LEVELS; i++) if (baked[i] && Math.abs(sd - sunAt[i]) > SUN_REBAKE) { openBake(enc); bakeLevel(ctx, enc, i, true); return 0; }
+  for (let i = 0; i < LEVELS; i++) if (baked[i] && Math.abs(sd - sunAt[i]) > SUN_REBAKE) { bakeLevel(ctx, enc, i, true); return 0; }
   return 0;
 }
 

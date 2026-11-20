@@ -70,10 +70,10 @@ export async function initDevice(opts) {
 // at init (undefined when the feature is missing, which WebGPU treats as absent). The objects are mutated in place
 // by setTimerBase() before each view, so no descriptor is rebuilt per frame. perf.js resolves and reads them back.
 // TS_FLORA / TS_FAUNA only run with ?split=1, which splits the opaque pass into terrain (+ sky, drone) / flora / fauna.
-// Every pass encoded between perf.frameBegin and perf.frameEnd must carry a timer (its own, or lie inside an open
-// tsOpen/tsClose bracket, or between a tsBegin and a tsEnd pass); ?bench=1 checks this and fails loudly (perf.js).
-// The whole frame is bracketed too (TS_FRAME_Q: empty compute passes at the start and the end of the frame):
-// gpuFrameMs, which dynres and the bench headline use, is that bracket, not the sum of the passes.
+// Every pass encoded between perf.frameBegin and perf.frameEnd must carry a timer (its own pair, or lie between a
+// begin-only and an end-only pass of the same slot); ?bench=1 checks this and fails loudly (perf.js pass guard).
+// gpuFrameMs (dynres, the bench headline) needs no queries of its own: it is the latest end stamp minus the earliest
+// begin stamp of the frame's passes (the first pass's begin is the frame's begin, the final pass's end its end).
 export const TS_BAKE = 0, TS_OPAQUE = 1, TS_CLOUDS = 2, TS_COMPOSITE = 3, TS_FX = 4, TS_BLOOM = 5, TS_FINAL = 6, TS_LIFE = 7,
   TS_WEATHER = 8, TS_FLORA = 9, TS_FAUNA = 10, TS_TSHADE = 11, TS_ATMO = 12, TS_RMAP = 13, TS_FPREP = 14, TS_N = 15;
 export const TS_PASSES = ['bake', 'opaque', 'clouds', 'composite', 'fx', 'bloom', 'final', 'life', 'weather', 'flora', 'fauna', 'tshade',
@@ -81,9 +81,8 @@ export const TS_PASSES = ['bake', 'opaque', 'clouds', 'composite', 'fx', 'bloom'
 // passes encoded once per frame (in the first view's timer block), not once per view
 export const TS_ONCE = (1 << TS_BAKE) | (1 << TS_WEATHER) | (1 << TS_ATMO) | (1 << TS_RMAP) | (1 << TS_FPREP); // flora's prepass: first view only
 export const TS_SLOTS = 32;                 // frames in the query ring
-export const TS_PER_FRAME = 64;             // >= passes x (begin, end) x 2 views + 2 (frame) = 62, in 32-query (256-byte) steps: resolve offsets must be 256-byte aligned
-export const TS_FRAME_Q = TS_N * 2 * 2;     // the frame bracket's (begin, end) queries within a frame block
-export const TS = { set: null, both: [], begin: [], end: [], open: [], close: [], frameOpen: null, frameClose: null };
+export const TS_PER_FRAME = 64;             // >= passes x (begin, end) x 2 views = 60, in 32-query (256-byte) steps: resolve offsets must be 256-byte aligned
+export const TS = { set: null, both: [], begin: [], end: [] };
 
 function initTimestamps() {
   TS.set = G.device.createQuerySet({ type: 'timestamp', count: TS_SLOTS * TS_PER_FRAME, label: 'timer' });
@@ -91,17 +90,8 @@ function initTimestamps() {
     TS.both[i] = { querySet: TS.set, beginningOfPassWriteIndex: i * 2, endOfPassWriteIndex: i * 2 + 1 };
     TS.begin[i] = { querySet: TS.set, beginningOfPassWriteIndex: i * 2 };
     TS.end[i] = { querySet: TS.set, endOfPassWriteIndex: i * 2 + 1 };
-    TS.open[i] = { label: 'ts open ' + TS_PASSES[i], timestampWrites: TS.begin[i] };
-    TS.close[i] = { label: 'ts close ' + TS_PASSES[i], timestampWrites: TS.end[i] };
   }
-  TS.frameOpen = { label: 'ts frame open', timestampWrites: { querySet: TS.set, beginningOfPassWriteIndex: TS_FRAME_Q } };
-  TS.frameClose = { label: 'ts frame close', timestampWrites: { querySet: TS.set, endOfPassWriteIndex: TS_FRAME_Q + 1 } };
 }
-// timer brackets around a variable number of passes: an empty compute pass that only writes the begin (end) stamp
-export function tsOpen(enc, i) { if (TS.set) enc.beginComputePass(TS.open[i]).end(); }
-export function tsClose(enc, i) { if (TS.set) enc.beginComputePass(TS.close[i]).end(); }
-export function tsFrameOpen(enc) { if (TS.set) enc.beginComputePass(TS.frameOpen).end(); }
-export function tsFrameClose(enc) { if (TS.set) enc.beginComputePass(TS.frameClose).end(); }
 export function tsBoth(i) { return TS.set ? TS.both[i] : undefined; }
 export function tsBegin(i) { return TS.set ? TS.begin[i] : undefined; }
 export function tsEnd(i) { return TS.set ? TS.end[i] : undefined; }
@@ -113,10 +103,6 @@ export function setTimerBase(slot, view) {
     const b = base + i * 2;
     TS.both[i].beginningOfPassWriteIndex = b; TS.both[i].endOfPassWriteIndex = b + 1;
     TS.begin[i].beginningOfPassWriteIndex = b; TS.end[i].endOfPassWriteIndex = b + 1;
-  }
-  if (view === 0) {
-    TS.frameOpen.timestampWrites.beginningOfPassWriteIndex = slot * TS_PER_FRAME + TS_FRAME_Q;
-    TS.frameClose.timestampWrites.endOfPassWriteIndex = slot * TS_PER_FRAME + TS_FRAME_Q + 1;
   }
 }
 
