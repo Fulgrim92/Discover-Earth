@@ -619,9 +619,11 @@ fn strataAt(s: f32) -> vec3f {
   if (dot(n, V) < 0.02) { n = normalize(n + V * (0.02 - dot(n, V))); }
 
   // ---- light ----
-  let L = sunDirFrom(S0v, FR.sun.w);
-  let horizon = sstep(-0.035, 0.06, L.y);
-  let sunC = S1v.rgb * S0v.z * horizon;
+  // key light: the sun or the moon (common.wgsl keyLight; they set and rise across a Drift)
+  let KLv = keyLight(S0v, S1v, bfx(rw, S8), FR.sun.w);
+  let L = KLv.dir;
+  let horizon = select(0.0, 1.0, max(KLv.col.r, max(KLv.col.g, KLv.col.b)) > 1e-4);
+  let sunC = KLv.col;
   let jit = ign(in.pos.xy);
   var sh = 0.0;
   let ndl = dot(n, L);

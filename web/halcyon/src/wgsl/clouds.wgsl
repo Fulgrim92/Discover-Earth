@@ -171,8 +171,9 @@ fn cloudLight(xz: vec2f) -> CL {
   let rw = realmWeights(xz);
   let s0 = bf(rw, S0); let s1 = bf(rw, S1); let s3 = bf(rw, S3);
   var o: CL;
-  o.L = sunDirFrom(s0, FR.sun.w);
-  o.sc = s1.rgb * s0.z * sstep(-0.035, 0.06, o.L.y);
+  let kl = keyLight(s0, s1, bf(rw, S8), FR.sun.w);
+  o.L = kl.dir;
+  o.sc = kl.col;
   let I = s3.w;
   o.zen = bf(rw, S2).rgb * I; o.hor = s3.rgb * I; o.sw = bf(rw, S4).rgb * I;
   let s7 = bf(rw, S7); o.night = s7.rgb * s7.w;
@@ -204,12 +205,12 @@ fn shade(p: vec3f, d: vec3f, hf: f32, od: f32, dens: f32, sea: bool) -> vec3f {
   for (var k = 0; k < 3; k++) { s += b * exp(-od * a) * phaseC(mu, c); a *= 0.42; b *= 0.6; c *= 0.55; }
   // powder: dark edges when facing away from the sun, none when looking into it
   let powder = mix(1.0, 1.0 - exp(-od * 2.2 - dens * 0.4), 0.55 * sat(0.6 - mu * 0.6));
-  // sun on cloud: a touch less saturated than the sun itself (cream-gold lit sides, not orange)
-  let sc = mix(vec3f(luma(gCL.sc)), gCL.sc, 0.72);
-  // sky ambient: cool zenith light from above (lavender-blue shadowed cores, never brown), the warm horizon and a
-  // peach-pink bounce of the low sun on the undersides
-  let top = mix(gCL.hor, gCL.zen, 0.78) * vec3f(0.96, 0.94, 1.08) * 1.3;
-  let bot = mix(gCL.hor, gCL.sw, 0.4) * 0.6 + gCL.sc * vec3f(1.0, 0.72, 0.74) * (0.04 + 0.1 * sat(1.0 - L.y * 3.0));
+  // physical light only: the key light as it arrives (sun or moon, already coloured by the air), the sky's
+  // irradiance from above (S2, derived from the atmosphere) and the horizon band, and light bounced off the ground
+  // below the base (albedo ~0.15); cloud colour comes from that light, not from a tint
+  let sc = gCL.sc;
+  let top = mix(gCL.hor, gCL.zen, 0.75) * 1.25;
+  let bot = mix(gCL.hor, gCL.zen, 0.3) * 0.55 + sc * max(L.y, 0.0) * 0.15 * 0.5;
   var amb = mix(bot, top, sat(hf)) * mix(0.6, 1.0, sat(hf)) + gCL.night * 0.5;
   var sunK = 8.0;
   if (sea) {
@@ -373,6 +374,9 @@ struct CF { @location(0) front: vec4f, @location(1) refl: vec4f, @location(2) di
     }
   }
   if (CLOUD_MARCH_ON) { o.front = marchAll(ro, d, tmax, n, nl, jit); } else { o.front = vec4f(0.0); }
+  // the veil of a Drift, in front of the clouds (it hugs the ground)
+  let vl = veilMarch(ro, d, tmax, jit);
+  o.front = vec4f(vl.rgb + o.front.rgb * (1.0 - vl.a), 1.0 - (1.0 - vl.a) * (1.0 - o.front.a));
   if (VW.cam.w == 16.0 && d.y > 0.01) { // dbg=16: layer probe at mid-height of the camera realm's main layer
     let ym = (rowv(C0).y + rowv(C0).z) * 0.5;
     let P = ro + d * ((ym - ro.y) / d.y);
@@ -384,4 +388,58 @@ struct CF { @location(0) front: vec4f, @location(1) refl: vec4f, @location(2) di
     o.front = vec4f(wxAt(P.xz).x, sstep(0.0, 1.0, wyAt(P.xz).z), 0.0, 0.85);
   }
   return o;
+}
+
+// ---- the veil (DESIGN 11.1): thin luminous mist in the middle of a Drift, carrying both realms' colours ----
+// Densest where two realms weigh the same (1 - sum w^2), hugging the ground with a faint tall tail so that from
+// outside the zone it reads as a soft glowing seam of weather between the worlds. Each realm's colour (its sunward
+// horizon tone and its night light) shows in slow drifting tongues. 10 samples, densest near the camera.
+const VEIL_ON: bool = true;      // cost ablation
+const VEIL_D: f32 = 0.0008;      // extinction per m at the heart of a Drift, at the ground
+fn realmTone(id: i32) -> vec3f {
+  let s4 = RT[u32(id) * ROW + S4].rgb;
+  let s7 = RT[u32(id) * ROW + S7];
+  let a = s4 / max(luma(s4), 1e-4);
+  let b = s7.rgb / max(luma(s7.rgb), 1e-4);
+  return mix(a, b, sat(s7.w * 4.0) * 0.6);
+}
+fn veilAt(p: vec3f, tm: f32) -> vec4f {
+  let rw = realmWeights(p.xz);
+  let z = sat(2.0 * (1.0 - dot(rw.w, rw.w)));
+  if (z < 0.02) { return vec4f(0.0); }
+  let q = p.xz * (1.0 / 380.0) + vec2f(tm * 0.011, -tm * 0.007);
+  let n = fbm(q, 3, 640u) * 0.5 + 0.5;
+  let ha = max(p.y - heightAny(p.xz), 0.0);
+  let dens = VEIL_D * z * z * (0.3 + 0.7 * n) * (exp(-ha / 160.0) + 0.12 * exp(-ha / 900.0));
+  let n2 = fbm(q * 2.3 + 11.0, 2, 641u);
+  var col = vec3f(0.0); var ws = 0.0;
+  for (var i = 0; i < 4; i++) {
+    if (rw.id[i] < 0) { continue; }
+    let w = pow(rw.w[i], 1.0 + 2.0 * sat(0.5 + n2 * select(1.0, -1.0, (i & 1) == 1)));
+    col += realmTone(rw.id[i]) * w; ws += w;
+  }
+  return vec4f(col / max(ws, 1e-4), dens);
+}
+fn veilMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
+  if (!VEIL_ON) { return vec4f(0.0); }
+  let tEnd = min(tmax, 9000.0);
+  let N = 10;
+  var T = 1.0; var acc = vec3f(0.0);
+  let tm = FR.time.x;
+  let sc = luma(sunCol());
+  let ph = hg(dot(d, FR.sun.xyz), 0.6) * 4.0 * PI;
+  // it glows a little above the light around it: sky light, key light (forward scattered) and its own shine
+  let lit = luma(mix(rowv(S3).rgb, rowv(S2).rgb, 0.5)) * 1.3 + sc * (0.05 + 0.04 * ph);
+  var t0 = 0.0;
+  for (var i = 0; i < N; i++) {
+    let u = f32(i + 1) / f32(N);
+    let t1 = tEnd * u * u;
+    let v = veilAt(ro + d * mix(t0, t1, jit), tm);
+    if (v.a > 0.0) {
+      let a = 1.0 - exp(-v.a * (t1 - t0));
+      acc += T * v.rgb * lit * a; T *= 1.0 - a;
+    }
+    t0 = t1;
+  }
+  return vec4f(acc, 1.0 - T);
 }

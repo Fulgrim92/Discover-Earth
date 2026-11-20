@@ -136,9 +136,9 @@ fn reflectRay(P: vec3f, R: vec3f, rw: RWt, pix: f32) -> vec3f {
     alb = mix(alb, vec3f(0.55, 0.25, 0.1), m4.x * 0.7);
     alb = mix(alb, vec3f(0.75, 0.85, 0.92), mb.w * m4.w);
     alb = mix(alb, bf(rq, M2).rgb, sstep(bf(rq, M2).w - 50.0, bf(rq, M2).w + 50.0, hp.y));
-    let L = sunDirFrom(bf(rq, S0), FR.sun.w);
-    let s1 = bf(rq, S1); let s0 = bf(rq, S0);
-    let sc = s1.rgb * s0.z * sstep(-0.035, 0.06, L.y);
+    let KLr = keyLight(bf(rq, S0), bf(rq, S1), bf(rq, S8), FR.sun.w);
+    let L = KLr.dir;
+    let sc = KLr.col;
     let I = rowv(S3).w;
     let amb = mix(rowv(S3).rgb, rowv(S2).rgb, 0.55) * I * rowv(S6).x + rowv(S7).rgb * rowv(S7).w;
     c = alb * (sc * max(dot(n, L), 0.0) * 0.8 + amb);

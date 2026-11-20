@@ -234,3 +234,36 @@ fn cloudShadowF(p: vec3f, L: vec3f, c0: vec4f, c1: vec4f, c2: vec4f, c3: vec4f) 
   }
   return tr;
 }
+
+// ---- sky light (sky/atmosphere programmer) ----
+// The sky-view LUT of the physical atmosphere for this frame's camera (fx/atmo.js, wgsl/atmo.wgsl): rows 0..127
+// are display radiance over the sphere (u = azimuth, v = elevation, denser near the horizon), a = mean
+// transmittance along the view; row 128 holds per-frame values (atmoInfo).
+@group(0) @binding(3) var atmoT: texture_2d<f32>;
+@group(0) @binding(4) var atmoS: sampler;
+
+// The key light is the sun or the moon, whichever is brighter where the realms blend: each body blends its own
+// elevation across the Drift, so the sun sets and the moon rises (no disc slides across the sky); the light
+// direction is their brightness-weighted mean, which only swings while both are at the horizon and dim.
+const MOON_COL: vec3f = vec3f(0.94, 0.95, 1.0);
+fn moonDirFrom(s8: vec4f, drift: f32) -> vec3f {
+  let el = radians(s8.x + drift * 0.25); let az = radians(s8.y + drift * 0.5);
+  return vec3f(sin(az) * cos(el), sin(el), -cos(az) * cos(el));
+}
+// relative air mass (Kasten-Young) for a body at height y = sin(elevation)
+fn airMass(y: f32) -> f32 {
+  let e = degrees(asin(clamp(y, -1.0, 1.0)));
+  return 1.0 / (max(y, 0.0) + 0.50572 * pow(max(e + 6.07995, 0.3), -1.6364));
+}
+struct KL { dir: vec3f, col: vec3f }
+fn keyLight(s0: vec4f, s1: vec4f, s8: vec4f, drift: f32) -> KL {
+  let sd = sunDirFrom(s0, drift);
+  let sc = s1.rgb * s0.z * sstep(-0.035, 0.06, sd.y);
+  let md = moonDirFrom(s8, drift);
+  let mc = MOON_COL * s8.z * sstep(-0.035, 0.06, md.y) * exp(-0.22 * airMass(md.y));
+  let ws = luma(sc) + 1e-5; let wm = luma(mc);
+  var o: KL;
+  o.dir = normalize(sd * ws + md * wm);
+  o.col = sc + mc;
+  return o;
+}

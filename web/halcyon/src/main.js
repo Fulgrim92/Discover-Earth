@@ -36,6 +36,7 @@ import { startOverlay, showMessage, benchPanel } from './ui.js';
 import * as flora from './fx/flora.js';
 import * as fauna from './fx/fauna.js';
 import * as particles from './fx/particles.js';
+import * as atmo from './fx/atmo.js'; // the physical sky LUT (sky programmer)
 
 export const world = { heightAt, heightBatch, CURATED };
 
@@ -241,13 +242,14 @@ async function init() {
   ctx.frameBuf = buffer(FRAME_FLOATS * 4, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'frame');
   const realmBuf = buffer(TABLE.byteLength, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, 'realms');
   G.queue.writeBuffer(realmBuf, 0, TABLE);
-  ctx.bgl0 = bgl('uur', 'g0');
+  ctx.bgl0 = bgl('uurfs', 'g0'); // + the sky-view LUT and its sampler (fx/atmo.js)
+  atmo.init(ctx);
   ctx.linear = d.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' });
   nViews = P.stereo ? 2 : 1;
   for (let i = 0; i < 2; i++) {
     const buf = buffer(VIEW_FLOATS * 4, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'view' + i);
     ctx.views.push({
-      data: new Float32Array(VIEW_FLOATS), buf, bg0: bindGroup(ctx.bgl0, [ctx.frameBuf, buf, realmBuf]),
+      data: new Float32Array(VIEW_FLOATS), buf, bg0: bindGroup(ctx.bgl0, [ctx.frameBuf, buf, realmBuf, atmo.atmo.view, atmo.atmo.sampler]),
       vx: 0, vy: 0, vw: 1, vh: 1, eye: i === 0 ? (P.stereo ? -0.032 : 0) : 0.032,
       // the view's own pose and projection (XR fills these from XRView; desktop/stereo from cam + eye offset)
       pose: new Float32Array(7), fovY: 1, proj: new Float32Array(16), useProj: 0,
@@ -370,6 +372,24 @@ function renderView(v, enc, target, first) {
   post.draw(ctx, enc, v, target, first);
 }
 
+function ss(e0, e1, x) { const t = Math.min(Math.max((x - e0) / (e1 - e0), 0), 1); return t * t * (3 - 2 * t); }
+// mirror of common.wgsl keyLight: the brightness-weighted direction of the sun and the moon (sky programmer)
+function keyLightDir(fr, row, drift) {
+  const R = Math.PI / 180, s0 = F.S0 * 4, s1 = F.S1 * 4, s8 = F.S8 * 4;
+  const se = (row[s0] + drift * 0.5) * R, sa = (row[s0 + 1] + drift) * R;
+  const me = (row[s8] + drift * 0.25) * R, ma = (row[s8 + 1] + drift * 0.5) * R;
+  const sy = Math.sin(se), my = Math.sin(me);
+  const ws = (0.2126 * row[s1] + 0.7152 * row[s1 + 1] + 0.0722 * row[s1 + 2]) * row[s0 + 2] * ss(-0.035, 0.06, sy) + 1e-5;
+  const ed = Math.asin(Math.max(-1, Math.min(1, my))) / R;
+  const am = 1 / (Math.max(my, 0) + 0.50572 * Math.pow(Math.max(ed + 6.07995, 0.3), -1.6364));
+  const wm = 0.9493 * row[s8 + 2] * ss(-0.035, 0.06, my) * Math.exp(-0.22 * am);
+  let x = Math.sin(sa) * Math.cos(se) * ws + Math.sin(ma) * Math.cos(me) * wm;
+  let y = sy * ws + my * wm;
+  let z = -Math.cos(sa) * Math.cos(se) * ws - Math.cos(ma) * Math.cos(me) * wm;
+  const l = Math.hypot(x, y, z) || 1;
+  fr[FO.sun] = x / l; fr[FO.sun + 1] = y / l; fr[FO.sun + 2] = z / l;
+}
+
 // frame-wide uniforms, the drone and the rings
 function prepareFrame() {
   const fr = ctx.frame, dt = CLK[C_DT], timeS = CLK[C_TIME];
@@ -379,6 +399,7 @@ function prepareFrame() {
   const s0 = F.S0 * 4;
   const el = ((rowTmp[s0] + drift * 0.5) * Math.PI) / 180, az = ((rowTmp[s0 + 1] + drift) * Math.PI) / 180;
   fr[FO.sun] = Math.sin(az) * Math.cos(el); fr[FO.sun + 1] = Math.sin(el); fr[FO.sun + 2] = -Math.cos(az) * Math.cos(el); fr[FO.sun + 3] = drift;
+  keyLightDir(fr, rowTmp, drift); // the key light is the sun or the moon (common.wgsl keyLight), FR.sun its direction
   fr[FO.time] = timeS; fr[FO.time + 1] = dt; fr[FO.time + 2] = frameNo; fr[FO.time + 3] = P.quality;
   const sim = R.sim;
   if (sim) {
@@ -398,6 +419,7 @@ function renderFrame(bakeAll) {
   if (clipmap.update(ctx, enc, cam[0], cam[2], bakeAll) > 0) perf.markRan(slot, TS_BAKE);
   terrain.setup(ctx, cam[0], cam[2]);
   G.queue.writeBuffer(ctx.frameBuf, 0, ctx.frame);
+  atmo.bake(enc, cam[1], ctx.frame[FO.sun + 3]);
   const target = offView || context.getCurrentTexture().createView();
   for (let i = 0; i < nViews; i++) {
     const v = ctx.views[i];
@@ -476,6 +498,7 @@ function frame(now) {
     clipmap.update(ctx, enc, cam[0], cam[2], true);
     terrain.setup(ctx, cam[0], cam[2]);
     G.queue.writeBuffer(ctx.frameBuf, 0, ctx.frame);
+    atmo.bake(enc, cam[1], ctx.frame[FO.sun + 3]);
     CMD[0] = enc.finish(); G.queue.submit(CMD); running = false;
     stagedFrame().then(shotDone);
     return;
