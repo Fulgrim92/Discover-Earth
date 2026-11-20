@@ -31,8 +31,9 @@ export function init(ctx) {
   const d = G.device;
   const q = ctx.quality;
   WN = q === 0 ? 256 : 512; WTEX = q === 0 ? 220 : 128;
-  // march budget: primary steps, light steps, max distance (m), reflection steps
-  CU[8] = q === 0 ? 64 : q === 2 ? 128 : 96; CU[9] = q === 0 ? 4 : 6; CU[10] = WN * WTEX * 0.5; CU[11] = q === 0 ? 20 : 28;
+  // march budget: dense samples per ray (shared by both layers; iterations are capped at twice that), light steps,
+  // max distance (m), reflection steps
+  CU[8] = q === 0 ? 56 : q === 2 ? 112 : 80; CU[9] = q === 0 ? 4 : 6; CU[10] = WN * WTEX * 0.5; CU[11] = q === 0 ? 20 : 28;
   // planet-wide layer bounds from the realm table
   let lo = 1e9, hi = 0, slo = 1e9, shi = 0;
   for (let r = 0; r < NREALM; r++) {
@@ -99,7 +100,9 @@ export function init(ctx) {
 }
 
 export function bind(ctx, tg) {
-  const w = Math.max(1, tg.w >> 1), h = Math.max(1, tg.h >> 1);
+  // half resolution; quarter on quality=low (the march is ~4x cheaper, the upsample hides most of it)
+  const sh = ctx.quality === 0 ? 2 : 1;
+  const w = Math.max(1, Math.ceil(tg.w / (1 << sh))), h = Math.max(1, Math.ceil(tg.h / (1 << sh)));
   const RT = U.RENDER_ATTACHMENT | U.TEXTURE_BINDING;
   clouds.view = tex(w, h, 'rgba16float', RT, { label: 'clouds' }).createView();
   clouds.reflView = tex(w, h, 'rgba16float', RT, { label: 'cloudsRefl' }).createView();
