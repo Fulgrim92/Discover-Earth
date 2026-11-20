@@ -288,7 +288,15 @@ function site(i, j, k) {
   }
   SX[k] = Math.fround((i + (hu8(i, j, 101) * (1 / 16777216) - 0.5) * 2 * JIT) * CELL);
   SZ[k] = Math.fround((j + (hu8(i, j, 102) * (1 / 16777216) - 0.5) * 2 * JIT) * CELL);
-  SI[k] = hu(i, j, 103) % NREALM;
+  SI[k] = huMod(i, j, 103, NREALM);
+}
+// hu(x, y, s) % m as a small integer (hu itself returns a uint32 that V8 boxes when it does not inline the call)
+function huMod(x, y, s, m) {
+  let h = Math.imul(x, 0x8da6b343) ^ Math.imul(y, 0xd8163841) ^ Math.imul(s, 0xcb1ab31f);
+  h ^= h >>> 16; h = Math.imul(h, 0x7feb352d);
+  h ^= h >>> 15; h = Math.imul(h, 0x846ca68b);
+  h ^= h >>> 16;
+  return ((h >>> 0) % m) | 0;
 }
 
 // Hot-path calling convention (no double crosses a function boundary, so nothing is boxed even when V8 does not

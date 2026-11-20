@@ -172,7 +172,10 @@ export function init() {
 
 // set the keyboard throttle from A[i] (0..1), used when switching to a manual-throttle mode so the drone does not drop
 const kbThr = new Float32Array(1);
-export function setKbThrottleFrom(A, i) { kbThr[0] = A[i] * 2 - 1; }
+// The value is read at the next poll(): mode switches run cold (interpreted), where any double maths boxes.
+let kbSrc = null, kbIdx = 0;
+export function setKbThrottleFrom(A, i) { kbSrc = A; kbIdx = i; }
+export function setKbThrottleLow() { kbSrc = null; kbThr[0] = -1; } // the throttle at zero (landed)
 
 export const xrFlag = new Uint8Array(1);
 export function setXR(lx, ly, rx, ry) { xr[0] = lx; xr[1] = ly; xr[2] = rx; xr[3] = ry; xrFlag[0] = 1; }
@@ -209,6 +212,7 @@ function pollPad() {
 // throttle key ratchets instead of springing back.
 export function poll(manualThrottle) {
   const dt = ARG[0];
+  if (kbSrc !== null) { kbThr[0] = kbSrc[kbIdx] * 2 - 1; kbSrc = null; }
   pollPad();
   const connected = padInfo[0];
   if (calib.on && connected) {

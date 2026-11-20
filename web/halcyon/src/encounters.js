@@ -19,7 +19,7 @@
 // Audio hook: CUE is a small preallocated record the sim's audio may read: [seq, type, x, y, z, intensity, phase,
 // seconds into it]. seq increments on every new event and phase changes; audio plays the cue when seq changes.
 import { heightBatch } from './world.js';
-import { W_IN, W_ID, W_W, realmWeightsA } from './realms.js';
+import { W_IN, W_ID, W_W, W_NEAR, realmWeightsA } from './realms.js';
 
 // ---- types (ids are fixed: shaders and other modules use them) ----
 // living world (fx/herd.js, fx/fauna.js, fx/flora.js)
@@ -80,15 +80,20 @@ for (const id of [E_ORCA, E_MURMURATION, E_FLAMINGO, E_BREACH, E_JELLY, E_GIANTS
 export function enable(id, on = 1) { ENABLED[id] = on; }
 
 export const NSLOT = 8;
-export const ENC = new Float32Array(NSLOT * 8);
-export const PH = new Float32Array(NSLOT * 4);
-export const DIR = new Float32Array(NSLOT * 2);
+// one hidden slot past the end (index NSLOT): the next event is prepared there every frame and copied into a free
+// slot when it starts, so the start path is always compiled code and nothing is boxed when an event begins
+const ENCA = new Float32Array((NSLOT + 1) * 8), PHA = new Float32Array((NSLOT + 1) * 4), DIRA = new Float32Array((NSLOT + 1) * 2);
+export const ENC = ENCA.subarray(0, NSLOT * 8);
+export const PH = PHA.subarray(0, NSLOT * 4);
+export const DIR = DIRA.subarray(0, NSLOT * 2);
 export const CUE = new Float32Array(8);
 // input record (filled by the caller each frame): t, cam x, y, z, view fwd x, z, drone velocity x, z, tan(half fov)
 export const IN = new Float64Array(9);
 // director state: [0] next common, [1] next rare, [2] events started, [3] forced type, [4] forced et, [5] disabled,
-// [6] seed, [7] forced placed, [8] last phase signature
-const ST = new Float64Array(12); // [10] start time scratch, [11] weight scratch
+// [6] seed, [7] forced placed, [8] latest active peak end, [9] free slot
+const ST = new Float64Array(16); // [10] start time scratch, [11] weight scratch, [12..15] prepared next times
+// realm-weight scratch is shared (realms.js): the director saves and restores it around its own query
+const SV_ID = new Int32Array(4), SV_W = new Float64Array(4), SV_N = new Float64Array(4), SV_IN = new Float64Array(2);
 ST[0] = -1; ST[1] = -1; ST[6] = 1;
 const CAND = new Float64Array(16), CH = new Float64Array(8), CDIR = new Float64Array(16);
 let lastSig = 0;
@@ -102,7 +107,7 @@ function ih(a, b, c) {
 
 // query: a URLSearchParams-like object or null; seed: world seed (integer)
 export function init(query, seed) {
-  ST.fill(0); ST[0] = -1; ST[1] = -1; ST[6] = (seed & 0x3fffffff) || 1; ENC.fill(0); PH.fill(0); DIR.fill(0); CUE.fill(0);
+  ST.fill(0); ST[0] = -1; ST[1] = -1; ST[6] = (seed & 0x3fffffff) || 1; ENCA.fill(0); PHA.fill(0); DIRA.fill(0); CUE.fill(0);
   lastSig = 0;
   const e = query && query.get ? query.get('enc') : null;
   if (e === 'off') ST[5] = 1;
@@ -128,11 +133,10 @@ function sitesOk(site, i) {
 function place(s, ty, sd) { // start time in ST[10]
   const t0 = ST[10];
   const o = s * 8;
-  ENC[o] = ty; ENC[o + 1] = CAND[14]; ENC[o + 2] = CH[7]; ENC[o + 3] = CAND[15];
-  ENC[o + 4] = t0; ENC[o + 5] = DUR[ty]; ENC[o + 6] = sd; ENC[o + 7] = 1;
-  PH[s * 4] = PC[ty * 3]; PH[s * 4 + 1] = PC[ty * 3 + 1]; PH[s * 4 + 2] = PC[ty * 3 + 2]; PH[s * 4 + 3] = DUR[ty];
-  DIR[s * 2] = CDIR[14]; DIR[s * 2 + 1] = CDIR[15];
-  ST[2]++;
+  ENCA[o] = ty; ENCA[o + 1] = CAND[14]; ENCA[o + 2] = CH[7]; ENCA[o + 3] = CAND[15];
+  ENCA[o + 4] = t0; ENCA[o + 5] = DUR[ty]; ENCA[o + 6] = sd; ENCA[o + 7] = 1;
+  PHA[s * 4] = PC[ty * 3]; PHA[s * 4 + 1] = PC[ty * 3 + 1]; PHA[s * 4 + 2] = PC[ty * 3 + 2]; PHA[s * 4 + 3] = DUR[ty];
+  DIRA[s * 2] = CDIR[14]; DIRA[s * 2 + 1] = CDIR[15];
 }
 
 // find a site for type ty ahead in the view: returns 1 and leaves x, z in CAND[14..15], y in CH[7], direction in
@@ -185,7 +189,13 @@ function scan() {
 
 // pick a type for the drone's realm: rare or common; returns 0 if none fits
 function pick(rare, k) {
+  SV_ID.set(W_ID); SV_W.set(W_W); SV_N.set(W_NEAR); SV_IN.set(W_IN);
   W_IN[0] = IN[1]; W_IN[1] = IN[3]; realmWeightsA();
+  const ty = pickW(rare, k);
+  W_ID.set(SV_ID); W_W.set(SV_W); W_NEAR.set(SV_N); W_IN.set(SV_IN);
+  return ty;
+}
+function pickW(rare, k) {
   let tot = 0;
   for (let ty = 1; ty < NTYPE; ty++) {
     if (!ENABLED[ty] || RARE[ty] !== rare || REALM[ty] < -1) continue;
@@ -220,7 +230,7 @@ export function update() {
     // forced (captures): slot 0, straight ahead in the view, et seconds in
     const ty = ST[3] | 0;
     site(ty, 0, 1);
-    ST[10] = t - ST[4]; place(0, ty, 1);
+    ST[10] = t - ST[4]; place(0, ty, 1); ST[2]++;
     ST[7] = 1; ST[0] = t + 40; ST[1] = t + 300;
     cueOut();
     return;
@@ -229,21 +239,36 @@ export function update() {
   const n = ST[2] | 0;
   if (ST[0] < 0) { ST[0] = t + 25 + 30 * (ih(ST[6] | 0, 1, 3) & 1023) / 1023; ST[1] = t + 240 + 180 * (ih(ST[6] | 0, 2, 3) & 1023) / 1023; }
   const s = ST[9] | 0;
-  if (s >= 0 && t >= ST[1] && !tryStart(s, 1, n)) ST[1] = t + 8;      // nothing rare fits here now: retry soon
-  else if (s >= 0 && t >= ST[0] && !tryStart(s, 0, n)) ST[0] = t + 5;
+  // The next event is prepared every frame (rare first when one is due) and committed with integer selects and
+  // typed-array copies: no branch of the start path is ever cold, so starting an event costs nothing on the heap.
+  const rare = t >= ST[1] ? 1 : 0;
+  const due = s >= 0 && (rare === 1 || t >= ST[0]) ? 1 : 0;
+  const ok = prepare(rare, n);
+  const go = due & ok, fail = due & (1 - ok);
+  const d = NSLOT + go * (s - NSLOT);                 // slot to fill, or the hidden slot onto itself
+  ENCA.copyWithin(d * 8, NSLOT * 8, NSLOT * 8 + 8);
+  PHA.copyWithin(d * 4, NSLOT * 4, NSLOT * 4 + 4);
+  DIRA.copyWithin(d * 2, NSLOT * 2, NSLOT * 2 + 2);
+  // next common: after a start [12]; a common that found no site retries in 5 s [14]; else unchanged
+  const s0 = go * 12 + fail * (1 - rare) * 14;
+  // next rare: after a rare start [13]; a rare that found no site retries in 8 s [15]; else unchanged
+  const s1 = 1 + go * rare * 12 + fail * rare * 14;
+  ST.copyWithin(0, s0, s0 + 1); ST.copyWithin(1, s1, s1 + 1);
+  ST[2] += go;
   cueOut();
 }
 
-// start a rare (1) or common (0) event in slot s; 1 if started
-function tryStart(s, rare, n) {
-  const t = IN[0];
+// prepare a rare (1) or common (0) event in the hidden slot, with the times that follow it in ST[12..15];
+// 1 if it may start now (a type fits, a site was found, and its peak follows every active peak)
+function prepare(rare, n) {
+  const t = IN[0], sd = ST[6] | 0;
   const ty = pick(rare, n * 2 + rare);
-  // never two peaks at once: the new peak must begin after every active peak ends
-  if (!ty || t + PC[ty * 3 + 1] <= ST[8] || !site(ty, n, 0)) return 0;
-  ST[10] = t; place(s, ty, ih(ST[6] | 0, n, 0x5eed) & 65535);
-  ST[0] = t + 40 + 50 * (ih(ST[6] | 0, n + 1, 0xc0) & 1023) / 1023;
-  if (rare) ST[1] = t + 300 + 180 * (ih(ST[6] | 0, n + 1, 0xa7) & 1023) / 1023;
-  return 1;
+  const sok = site(ty, n, 0);
+  ST[10] = t; place(NSLOT, ty, ih(sd, n, 0x5eed) & 65535);
+  ST[12] = t + 40 + 50 * (ih(sd, n + 1, 0xc0) & 1023) / 1023;
+  ST[13] = t + 300 + 180 * (ih(sd, n + 1, 0xa7) & 1023) / 1023;
+  ST[14] = t + 5; ST[15] = t + 8;
+  return ty > 0 && sok === 1 && t + PC[ty * 3 + 1] > ST[8] ? 1 : 0;
 }
 
 // CUE: the most recent active slot's type, place and phase; seq bumps on a new event or a new phase
