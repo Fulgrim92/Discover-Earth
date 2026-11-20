@@ -152,6 +152,17 @@ fn bird(ii: u32) -> Bird {
     B.up = normalize(vec3f(0.0, cos(bank), 0.0) + inward * sin(bank));
     B.flapP = t * 3.6 * 6.2832 + lfRand(hb, 6u) * 6.2832;
     B.flapA = 0.65 * sstep(0.35, 0.75, sin(t * 0.37 + lfRand(hb, 7u) * 6.2832));
+    // gannets: over water some birds fold and plunge-dive, sit a moment, then climb back to the wheel
+    if (!skyMode && lfRand(hb, 8u) > 0.6 && heightAny(p2) < -2.0) {
+      let fd = fract(t / 26.0 + lfRand(hb, 9u));
+      let dv = sstep(0.0, 0.06, fd);                       // the plunge (about 1.5 s)
+      let rise = sstep(0.16, 0.3, fd);                     // the climb back
+      let dy = mix(y, 0.15, dv * (1.0 - rise));
+      B.p.y = dy;
+      let steep = dv * (1.0 - sstep(0.06, 0.08, fd));
+      B.fwd = normalize(mix(B.fwd, vec3f(B.fwd.x * 0.25, -1.0, B.fwd.z * 0.25), steep));
+      B.flapA *= 1.0 - steep;
+    }
     }
   }
   // reaction to the drone (the shared head anchor; closed-form, so it is the same in both eyes and every frame)
