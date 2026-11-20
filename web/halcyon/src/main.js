@@ -51,6 +51,8 @@ import * as post from './fx/post.js';
 import * as rings from './fx/rings.js';
 import * as drone from './fx/drone.js';
 import { createSim } from './sim/index.js';
+import { aim as herdAim, AIM as HERD_AIM } from './fx/herd.js';
+import { phys as IN_PHYS, buttons as IN_BUTTONS } from './sim/input.js'; // direct bindings: no namespace getter per frame
 import { createPlayer, simState } from './script.js';
 import * as perf from './perf.js';
 import { startOverlay, showMessage, benchPanel } from './ui.js';
@@ -82,6 +84,7 @@ const P = {
   script: Q.get('script') || '', fps: num('fps', 60), free: num('free', 0) > 0, present: num('present', 1) > 0,
   stride: SCRIPT_STRIDE(), alloc: num('alloc', 0) > 0, warm: num('warm', 600), frames: num('frames', 0), audio: num('audio', 0) > 0,
   dynres: num('dynres', -1), target: num('target', 11), hdr: num('hdr', 0) > 0, sim: num('sim', -1), simt: num('simt', 0.5),
+  track: Q.has('track') ? Q.get('track').split(',').map(parseFloat) : null, // species, distance, height: aim at a herd
   orbit: Q.has('orbit') ? Q.get('orbit').split(',').map(parseFloat) : null, timer: num('timer', 1) > 0,
   grab: num('grab', 0) | 0, campose: Q.has('campose') ? Q.get('campose').split(',').map(parseFloat) : null,
 };
@@ -594,6 +597,14 @@ function cameraFromUrl() {
   cam[0] = camPos[0]; cam[1] = camPos[1]; cam[2] = camPos[2];
   cam[3] = q4[0]; cam[4] = q4[1]; cam[5] = q4[2]; cam[6] = q4[3]; cam[7] = (P.fov * Math.PI) / 180;
   if (P.campose) { for (let i = 0; i < 8; i++) cam[i] = P.campose[i]; q4[0] = cam[3]; q4[1] = cam[4]; q4[2] = cam[5]; q4[3] = cam[6]; }
+  // track=species,dist,height: frame the nearest herd of that species from dist metres along the shot's yaw
+  if (P.track && herdAim(P.track[0] | 0, CLK[C_TIME], camPos[0], camPos[2])) {
+    const d = P.track[1] || 10, hy = P.track[2] || 2, fx = Math.sin(yaw), fz = -Math.cos(yaw);
+    cam[0] = HERD_AIM[0] - fx * d; cam[2] = HERD_AIM[2] - fz * d;
+    cam[1] = Math.max(heightAt(cam[0], cam[2]) + 0.5, HERD_AIM[1] + hy);
+    quatFromYawPitchRoll(q4, yaw, Math.atan2(HERD_AIM[1] + 0.7 - cam[1], d), 0);
+    cam[3] = q4[0]; cam[4] = q4[1]; cam[5] = q4[2]; cam[6] = q4[3];
+  }
   // orbit=dist,azimuth,elevation (deg): look at the drone from around it (static shots with sim=1)
   if (P.orbit && R.sim) {
     const d = R.sim.drone, r = P.orbit[0], az = (P.orbit[1] * Math.PI) / 180, el = ((P.orbit[2] || 0) * Math.PI) / 180;
@@ -637,7 +648,7 @@ function frame(now) {
     if (STATIC) cameraFromUrl(); else cameraFromSim();
     // gamepad d-pad left: Enter VR (a gamepad press may not count as a user gesture: then the control says so)
     if (XR.state > 0 && XR.click) {
-      const b = sim._dbg.IN.buttons[14] > 0.5 ? 1 : 0;
+      const b = IN_BUTTONS[14] > 0.5 ? 1 : 0;
       if (b && !XRI[3]) XR.click();
       XRI[3] = b;
     }
@@ -758,7 +769,7 @@ function xrFrame(now, xf) {
   nViews = n;
   for (let i = 0; i < n; i++) xr.fillView(ctx.views[i], i);
   if (XVIG[0] >= 0) for (let i = 0; i < n; i++) ctx.views[i].anc[3] = XVIG[0];
-  if (sim) xrfx.update(sim, sim._dbg.IN.phys, XR.mode, XR.vignette);
+  if (sim) xrfx.update(sim, IN_PHYS, XR.mode, XR.vignette);
   renderFrame(frameNo === 0);
   if (P.alloc) allocFrame();
   if (SCRIPTED && R.player.done) R.player.reset(P.alloc);
@@ -827,6 +838,7 @@ function adapterInfo() {
 // ---------- ?alloc=1 (tools/alloc.mjs) ----------
 // warm up, force a GC, mark, run `frames` frames, force a GC, mark. The harness reads --trace-gc between marks.
 const AL = { phase: 0, f0: 0 };
+function HEAP() { const m = performance.memory; return m ? m.usedJSHeapSize | 0 : -1; }
 function allocFrame() {
   if (AL.phase === 0 && frameNo >= P.warm) {
     AL.phase = 1; AL.f0 = frameNo;
@@ -836,13 +848,20 @@ function allocFrame() {
     allocMark('end');
   }
 }
+// the end mark falls inside the sampled window: it only writes small ints into the records made at the start
+// (t starts as a double so its field never changes representation; __halcyon.alloc is attached at load, because
+// adding a property to __halcyon at the start mark changes its map and deoptimises the frame loop mid-window)
+const AL_REC = { start: { frame: 0, heap: 0, t: -0.5 }, end: { frame: 0, heap: 0, t: -0.5 } };
+if (P.alloc) H.alloc = AL_REC;
+// the end heap is read when the harness reads the record, after the window (the frame loop has stopped by then):
+// performance.memory makes a new object on every read
+if (P.alloc) Object.defineProperty(AL_REC.end, 'heap', { enumerable: true, get() { if (globalThis.gc) globalThis.gc(); return HEAP(); } });
 function allocMark(which) {
-  // runs twice per test, outside the measured steady state
+  // runs twice per test, at the edges of the measured steady state 
   if (globalThis.gc) { globalThis.gc(); globalThis.gc(); }
-  const m = performance.memory;
-  H.alloc = H.alloc || {};
-  H.alloc[which] = { frame: frameNo, heap: m ? m.usedJSHeapSize : -1, t: performance.now() };
-  console.log('HALCYON_ALLOC_' + which.toUpperCase() + ' ' + frameNo);
+  const r = which === 'start' ? AL_REC.start : AL_REC.end;
+  r.frame = frameNo;
+  if (which === 'start') { r.heap = HEAP(); r.t = performance.now(); console.log('HALCYON_ALLOC_START ' + frameNo); }
   if (H.onAlloc) H.onAlloc(which);
   // tools/alloc.mjs binds this before the page loads, so it never has to evaluate script in the page while the
   // frame loop runs (each evaluate touches the global object and deoptimises the frame loop)

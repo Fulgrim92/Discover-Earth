@@ -41,7 +41,7 @@ fn spB(s: u32) -> vec4f {
   }
 }
 
-struct Ani { fly: f32, ok: bool, p: vec3f, f: vec3f, u: vec3f, s: vec3f, sp: u32, sc: f32, gait: f32, graze: f32, alarm: f32, h: u32, walk: f32, look: vec3f }
+struct Ani { fly: f32, ok: bool, p: vec3f, f: vec3f, u: vec3f, s: vec3f, sp: u32, sc: f32, gait: f32, graze: f32, alarm: f32, h: u32, walk: f32, look: vec3f, coat: f32 }
 
 fn hgnd(p: vec2f) -> f32 { return heightAny(p); }
 
@@ -53,7 +53,7 @@ fn actor(g: u32, k: u32) -> Ani {
   let ty = u32(G2.x); let rel = FR.time.x - G1.z;
   if (rel < 0.0 || rel > G1.w) { return A; }
   let dir = normalize(G1.xy + vec2f(1e-5, 0.0)); let sd2 = vec2f(-dir.y, dir.x);
-  A.h = hu(i32(g), i32(k), 0x5A1u); A.sc = 1.0; A.look = vec3f(0.0, 1.0, 0.0);
+  A.h = hu(i32(g), i32(k), 0x5A1u); A.sc = 1.0; A.look = vec3f(0.0, 1.0, 0.0); A.coat = lfRand(A.h, 5u);
   var pos: vec2f; var y = 0.0; var f3 = vec3f(dir.x, 0.0, dir.y); var swim = true;
   if (ty == 1u) {
     // orca pod travelling up the fjord, surfacing in turn (mirrored for ripples in lifefx.js)
@@ -139,6 +139,9 @@ fn animal(ii: u32) -> Ani {
   let h = hu(i32(G2.w), i32(k), 0x4E1u); A.h = h;
   let r1 = lfRand(h, 1u); let r2 = lfRand(h, 2u); let r3 = lfRand(h, 3u); let r4 = lfRand(h, 4u);
   A.sc = G2.z * (0.85 + 0.3 * r4);
+  // coat: horses are bay, chestnut or dark brown; at most one grey per herd (its first animal, in some herds)
+  A.coat = lfRand(h, 5u) * 0.999;
+  if (sp == 1u && k == 0u && lfRand(hu(i32(G2.w), 9, 0x6E1u), 1u) < 0.3) { A.coat = 1.5; }
   // herd centre wanders slowly; the flee offset is the CPU's integrated reaction to the drone
   let ph = G2.w * 0.001;
   let hc = G0.xy + vec2f(sin(t * 0.0021 + ph), cos(t * 0.0017 + ph * 1.3)) * sb.z * 0.8 + G1.xy;
@@ -207,6 +210,7 @@ fn herdVert(vi: u32, ii: u32) -> HV {
   var o: HV; o.pos = LF_DEAD;
   let A = animal(ii);
   if (!A.ok) { return o; }
+  if (isSkinned(A.sp)) { return skinVert(vi, A); }
   let part = vi / HP_VERTS; let pv = vi % HP_VERTS;
   let sa = spA(A.sp) * A.sc; let sb = spB(A.sp) * A.sc;
   let L = sa.x; let R = sa.y; let LL = sa.z;
@@ -362,7 +366,7 @@ fn herdVert(vi: u32, ii: u32) -> HV {
   o.wp = wp;
   o.loc = vec2f(-cos(thv), ph);
   o.part = part; o.sp = A.sp;
-  o.tint = vec4f(lfRand(A.h, 5u), lfRand(A.h, 6u), select(A.alarm, wmark, wmark > 0.0), f32(A.h & 1023u));
+  o.tint = vec4f(A.coat, lfRand(A.h, 6u), select(A.alarm, wmark, wmark > 0.0), f32(A.h & 1023u));
   o.pos = VW.vp * vec4f(wp - VW.cam.xyz, 1.0);
   return o;
 }
@@ -379,13 +383,23 @@ fn coat(sp: u32, part: u32, tint: vec4f, loc: vec2f, wp: vec3f) -> vec3f {
       return w * (0.85 + 0.25 * vn(wp.xz * 9.0 + wp.y * 7.0, 961u));
     }
     case 1u: {
-      // bay, chestnut, dun (Przewalski-like); dark points: legs, mane and tail; a paler muzzle
-      var w = mix(vec3f(0.13, 0.065, 0.03), vec3f(0.26, 0.13, 0.055), sstep(0.0, 0.6, v));
-      if (v > 0.6) { w = mix(vec3f(0.3, 0.22, 0.12), vec3f(0.36, 0.28, 0.16), v2); }
-      if (part == 1u && loc.y > 3.6 && loc.y < 5.8) { w = vec3f(0.03, 0.025, 0.02); }     // mane along the top of the neck
-      if (part == 12u) { w = mix(w, vec3f(0.3, 0.26, 0.2), 0.5); }
-      if (part >= 4u && part <= 11u) { w = mix(w, vec3f(0.03, 0.025, 0.02), sstep(0.0, 0.8, loc.x)); }
-      if (part == 3u) { w = vec3f(0.03, 0.025, 0.02); }
+      // bay (black points), chestnut, dark brown; one grey in some herds. Mane and tail dark, muzzle paler, hooves
+      let dark = vec3f(0.025, 0.02, 0.017);
+      var w = vec3f(0.14, 0.068, 0.032);                                 // bay
+      var pts = dark;
+      if (v >= 0.45 && v < 0.75) { w = vec3f(0.2, 0.085, 0.035); pts = vec3f(0.13, 0.055, 0.025); }   // chestnut
+      if (v >= 0.75 && v < 1.0) { w = vec3f(0.055, 0.036, 0.024); }      // dark brown
+      if (v >= 1.0) {                                                    // grey, dappled
+        w = vec3f(0.42, 0.42, 0.4) * (0.8 + 0.35 * sstep(0.45, 0.6, vn(wp.xz * 7.0 + wp.y * 5.0, 966u)));
+        pts = vec3f(0.12, 0.12, 0.12);
+      }
+      w *= 0.9 + 0.2 * v2;
+      if (part == 15u || part == 3u) { return pts * 0.9 + 0.01; }        // mane and tail
+      if (part == 12u) { w = mix(w, vec3f(0.16, 0.12, 0.09), 0.55); }    // muzzle
+      if (part >= 4u && part <= 11u) {
+        w = mix(w, pts, sstep(-0.35, 0.3, loc.x));                       // points below the knee
+        if (loc.x > 0.78) { w = vec3f(0.05, 0.045, 0.04); }              // hoof
+      }
       return w;
     }
     case 2u: {

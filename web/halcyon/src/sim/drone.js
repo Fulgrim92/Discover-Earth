@@ -46,6 +46,7 @@ export const CAMERA = airframe(0.249, 3.0, 0.35, 0.060, 6.0e-4, 1.0e-3, 6.0e-4, 
 // 650 g 5-inch freestyle quad with action camera: T/W 5.5, 30 ms motor lag (real 5" ESC+motor ~20-30 ms).
 export const FIVE = airframe(0.65, 5.5, 0.35, 0.030, 1.4e-3, 2.4e-3, 1.4e-3, 0.078, 0.014,
   0.0130, 0.034, 0.0110, 0.03, 0.0635, 75, 4.0, 5.0, 0.05, 110, 3, 1.9, 0.015, 4.0e-5);
+const HOV_CAM = CAMERA.subarray(A_HOVER, A_HOVER + 1), HOV_FIVE = FIVE.subarray(A_HOVER, A_HOVER + 1); // hover throttle views
 
 // motor layout (Betaflight Quad-X order): m0 rear-right CW, m1 front-right CCW, m2 rear-left CCW, m3 front-left CW
 const PX = new Float64Array([-1, 1, -1, 1]); // pitch-up torque sign (front motors raise the nose)
@@ -111,16 +112,17 @@ export function setMode(mode) {
   st.mode = mode;
   st.af = mode === MODE_ACRO ? FIVE : CAMERA;
   resetControllers();
-  const u = st.af[A_HOVER];
-  for (let i = 0; i < 4; i++) { m[i] = st.landed ? 0 : u; mc[i] = m[i]; }
+  // typed-array copies, not JS doubles: mode switches run cold (interpreted), where every double load boxes
+  if (st.landed) m.fill(0);
+  else { const h = mode === MODE_ACRO ? HOV_FIVE : HOV_CAM; m.set(h, 0); m.set(h, 1); m.set(h, 2); m.set(h, 3); }
+  mc.set(m);
 }
 
 export function resetControllers() {
-  ivel[0] = ivel[1] = ivel[2] = 0; irate[0] = irate[1] = irate[2] = 0;
-  alpha[0] = alpha[1] = alpha[2] = 0;
-  vref[0] = v[0]; vref[1] = v[1]; vref[2] = v[2];
+  ivel.fill(0); irate.fill(0); alpha.fill(0);
+  vref.set(v);
   st.holdH = 0; st.holdV = 0;
-  hold[0] = p[0]; hold[1] = p[1]; hold[2] = p[2];
+  hold.set(p);
   qheadingA(q, hold, 3);
 }
 
