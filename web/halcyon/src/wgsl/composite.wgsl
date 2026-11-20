@@ -44,24 +44,49 @@ fn cloudSea(col: vec3f, ro: vec3f, d: vec3f, tScene: f32, jit: f32) -> vec3f {
 }
 
 // ---- water ----
+// slope variance of the wave octaves filtered out at this pixel: added to the sun-glint roughness, so the
+// glitter path keeps its energy and width at distance instead of shrinking to a few aliased sparkles
+var<private> WVAR: f32 = 0.0;
+
 fn waveN(p: vec2f, amp: f32, foot: f32) -> vec3f {
   // band-limited: each octave fades out once its wavelength nears the pixel footprint (no moire)
   let tm = FR.time.x;
   var g = vec2f(0.0);
   var a = 1.0; var f = 0.06;
   var dir = vec2f(0.8, 0.6);
+  var lost = 0.0;
   for (var i = 0; i < 7; i++) {
     let wl = 6.2832 / f;
     let bl = sstep(6.0 * foot, 2.0 * foot, wl);
     let ph = dot(p, dir) * f + tm * sqrt(9.8 * f);
     g += dir * cos(ph) * a * f * (1.0 - bl);
+    let sa = a * f * 0.3 * amp;
+    lost += sa * sa * 0.5 * bl;
     dir = vec2f(dir.x * -0.737 - dir.y * 0.676, dir.x * 0.676 - dir.y * 0.737);
     a *= 0.7; f *= 1.73;
   }
   let nb = sstep(0.5, 0.15, foot);
   let nd = vnoised(p * 0.9 + vec2f(tm * 0.4, tm * 0.25), 540u).yz * 0.06 * nb;
+  lost += (0.06 * amp) * (0.06 * amp) * 0.3 * (1.0 - nb);
+  WVAR = lost;
   g = (g * 0.3 + nd) * amp;
   return normalize(vec3f(-g.x, 1.0, -g.y));
+}
+
+// irregular salt polygons (same pattern as terrain.wgsl saltEdge): distance to the cell edge in cell units
+fn saltEdgeW(xz: vec2f) -> f32 {
+  let q = xz * (1.0 / 2.1);
+  let g = floor(q);
+  var d1 = 9.0; var d2 = 9.0;
+  for (var j = -1; j <= 1; j++) {
+    for (var i = -1; i <= 1; i++) {
+      let ci = i32(g.x) + i; let cj = i32(g.y) + j;
+      let pt = vec2f(f32(ci), f32(cj)) + 0.1 + 0.8 * vec2f(hf(ci, cj, 410u), hf(ci, cj, 411u));
+      let d = length(q - pt);
+      if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) { d2 = d; }
+    }
+  }
+  return (d2 - d1) * 0.5;
 }
 
 // march the height clipmaps along a reflected ray; returns hit colour or sky
@@ -139,22 +164,37 @@ struct VO { @builtin(position) pos: vec4f }
       let P = ro + d * tw;
       let rw = realmWeights(P.xz);
       let w0 = bf(rw, W0); let w1 = bf(rw, W1); let w2 = bf(rw, W2);
-      var n = waveN(P.xz, w0.w, tw * pix / max(-d.y, 0.05));
+      let foot = tw * pix / max(-d.y, 0.05);
+      var n = waveN(P.xz, w0.w, foot);
       let V = -d;
+      // Mirror Salt: raised polygon rims of salt just under the sheet, seen with a few cm of parallax;
+      // the meniscus over each rim breaks the mirror slightly
+      var saltRim = 0.0;
+      if (w2.w > 0.45 && tw < 140.0) {
+        let depth0 = 0.03;
+        let off = d.xz / max(-d.y, 0.08) * depth0 * 0.75;
+        let pr = P.xz + off;
+        let ed = saltEdgeW(pr);
+        let ew = max(0.035, foot * 0.6 / 2.1);
+        saltRim = (1.0 - sstep(ew * 0.4, ew, ed)) * (0.035 / ew) * sstep(140.0, 40.0, tw);
+        let e1 = saltEdgeW(pr + vec2f(0.05, 0.0)); let e2 = saltEdgeW(pr + vec2f(0.0, 0.05));
+        let gr = vec2f(e1 - ed, e2 - ed) * (1.0 / 0.05);
+        n = normalize(n + vec3f(gr.x, 0.0, gr.y) * saltRim * 0.05);
+      }
       let ndv = max(dot(n, V), 0.0);
       let fr = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
-      let refl = max(fr, w2.w);
+      let refl = max(fr, w2.w * (1.0 - 0.3 * saltRim));
       var R = reflect(d, n);
       R.y = abs(R.y);
       var rc = reflectRay(P, R, rw, pix);
-      // sun glitter
+      // sun glitter: base roughness widened by the filtered wave slopes (a path under the sun, sparkles close up)
       let L = FR.sun.xyz;
       let hv = normalize(L + V);
-      let rough = max(w1.w, 0.02);
-      let a2 = rough * rough * rough * rough;
+      let r0 = max(w1.w, 0.02);
+      let a2 = r0 * r0 * r0 * r0 + WVAR * 2.0;
       let nh = max(dot(n, hv), 0.0);
       let dd = nh * nh * (a2 - 1.0) + 1.0;
-      rc += sunCol() * min(a2 / (PI * dd * dd) * 0.25, 40.0) * sstep(0.0, 0.05, L.y);
+      rc += sunCol() * min(a2 / (PI * dd * dd) * 0.25, 60.0) * sstep(0.0, 0.05, L.y);
       // refraction + absorption
       // water depth from the height clipmap (r16 scene depth is too coarse for 4 cm of water)
       let depth = max(-heightAny(P.xz), 0.0);
@@ -167,8 +207,10 @@ struct VO { @builtin(position) pos: vec4f }
       let path = min(thick, 400.0);
       let tr = exp(-w0.rgb * path);
       let I = rowv(S3).w;
-      let scat = w1.rgb * (mix(rowv(S3).rgb, rowv(S2).rgb, 0.5) * I * 0.6 + sunCol() * 0.08);
+      // in-water scattering: lit by the sky dome and the sun (a lit body of water, not a black hole)
+      let scat = w1.rgb * (mix(rowv(S3).rgb, rowv(S2).rgb, 0.5) * I * 1.1 + sunCol() * max(L.y, 0.0) * 0.6 + rowv(S7).rgb * rowv(S7).w);
       var wcol = under * tr + (scat + w2.rgb * 0.6) * (1.0 - tr);
+      wcol = mix(wcol, vec3f(0.75, 0.73, 0.7) * (mix(rowv(S3).rgb, rowv(S2).rgb, 0.4) * I + sunCol() * max(L.y, 0.0) * 0.5), saltRim * 0.25);
       // foam at the shore
       let foamAmt = rowv(G3).w;
       let fz = sstep(1.2, 0.0, depth + 0.3 * vn(P.xz * 0.3 + vec2f(FR.time.x * 0.3, 0.0), 550u));
