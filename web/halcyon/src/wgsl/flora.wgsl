@@ -32,8 +32,8 @@ const LB = array<vec4f, 10>(
 );
 // vertices per instance (strips: 9 per blade, flowers 14; lathe: see latheVerts, crystals 288). The prepass raises a
 // layer's vertexCount to the largest kind it accepted.
-const LV = array<u32, 10>(54u, 45u, 27u, 14u, 14u, 27u, 672u, 288u, 27u, 1440u);
-const MUSH_SEG = 20u; const MUSH_RING = 12u; const CROWN_SEG = 14u; const CROWN_RING = 8u;
+const LV = array<u32, 10>(54u, 45u, 27u, 14u, 14u, 27u, 960u, 288u, 27u, 1440u);
+const MUSH_SEG = 20u; const MUSH_RING = 12u; const CROWN_SEG = 20u; const CROWN_RING = 8u;
 fn latheVerts(kind: u32) -> u32 {
   if (kind == K_MUSH) { return MUSH_SEG * MUSH_RING * 6u; }
   if (kind == K_CROWN) { return CROWN_SEG * CROWN_RING * 6u; }
