@@ -156,7 +156,7 @@ function freeFly(dt) {
 
 // ---------- renderer state ----------
 const ctx = { frame: new Float32Array(FRAME_FLOATS), frameBuf: null, views: [], bgl0: null, linear: null, quality: P.quality,
-  msaa: OFF & OFF_MSAA ? 1 : 4 };
+  msaa: OFF & OFF_MSAA ? 1 : 4, off: OFF };
 let splitDesc = null; // ?split=1: [terrain, flora, fauna] pass descriptors
 // VR session state (ints only): [in session, eye viewport w, h, d-pad-left last frame]
 const XRI = new Int32Array(4);
@@ -431,6 +431,7 @@ function writeView(v) {
 const TSLOT = new Int32Array(1); // this frame's GPU timer slot
 function renderView(v, enc, target, first) {
   writeView(v);
+  flora.prepare(ctx, enc, v); // flora placement prepass (compute), before the opaque pass
   let p = enc.beginRenderPass(splitDesc ? splitDesc[0] : opaqueDesc);
   if (!(OFF & OFF_DRONE)) drone.drawBody(ctx, p, v);
   if (XRI[0]) xrfx.drawControllers(p, v);
@@ -809,6 +810,7 @@ async function stagedFrame() {
   };
   viewFromCam(v);
   writeView(v);
+  await log('flora', (enc) => flora.prepare(ctx, enc, v));
   await log('opaque', (enc) => { const p = enc.beginRenderPass(opaqueDesc); drone.drawBody(ctx, p, v); terrain.draw(ctx, p, v); flora.draw(ctx, p, v); fauna.draw(ctx, p, v); p.end(); });
   await log('clouds', (enc) => clouds.draw(ctx, enc, v));
   await log('composite', (enc) => composite.draw(ctx, enc, v));

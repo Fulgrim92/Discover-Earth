@@ -64,7 +64,7 @@ fn densMain(p: vec3f, w: vec4f, y: vec4f, lod: f32, det: f32) -> f32 {
   let em = rowv(C4).w;
   if (em > 0.0 && c > 0.0) {
     let rb = sin(dot(q.xz, vec2f(0.017, 0.011)) + n.g * 6.0 + FR.time.x * 0.05);
-    c *= mix(1.0, 0.25 + 0.75 * sstep(-0.3, 0.8, rb), sat(em * 4.0));
+    c *= mix(1.0, 0.45 + 0.55 * sstep(-0.7, 0.9, rb), sat(em * 4.0));
   }
   if (c > 0.0 && det > 0.0) {
     let tm = FR.time.x;
@@ -81,7 +81,7 @@ fn densMain(p: vec3f, w: vec4f, y: vec4f, lod: f32, det: f32) -> f32 {
     c = sat(remap(c, md * y.y * 0.95 * min(det, 1.0) * cm, cm, 0.0, cm));
   }
   // cumulus are crisp (dense right behind the edge), veils stay soft
-  c = sat(c * mix(1.5, 9.0, ty * ty));
+  c = sat(c * mix(1.3, 5.0, ty * ty));
   return c * w.w;
 }
 
@@ -149,7 +149,14 @@ fn lightOD(p: vec3f, L: vec3f, sea: bool, n: i32, jit: f32) -> f32 {
   return od;
 }
 
-struct MS { scat: vec3f, T: f32, tw: f32, ww: f32 }
+// march state; the sample budget (dense samples nd, iterations it) is shared by the sea and the main layer, so a ray
+// through both costs no more than one through either (the worst case was 2x before: the p99 spikes)
+struct MS { scat: vec3f, T: f32, tw: f32, ww: f32, nd: i32, it: i32, cap: i32 }
+// cost ablation: flip to false to drop a part of the cloud cost (the front march, the mirror march)
+const CLOUD_MARCH_ON: bool = true;
+const CLOUD_REFL_ON: bool = true;
+// stop once the clouds in front are this opaque (what is left behind would add < 3%)
+const T_MIN: f32 = 0.03;
 
 fn phaseC(mu: f32, c: f32) -> f32 {
   return hg(mu, 0.62 * c) * 0.62 + hg(mu, 0.9 * c) * 0.06 + hg(mu, -0.25 * c) * 0.32;
@@ -171,18 +178,21 @@ fn cloudLight(xz: vec2f) -> CL {
   let s7 = bf(rw, S7); o.night = s7.rgb * s7.w;
   o.tint = bf(rw, C1).rgb;
   // luminous clouds glow only in their own sky (no cyan blobs in a neighbour's night)
-  o.emis = rowv(C4).rgb * rowv(C4).w;
+  o.emis = rowv(C4).rgb * min(rowv(C4).w, bf(rw, C4).w); // and only the luminous realm's own clouds
   o.amb = bf(rw, S6).x;
   o.aur = bf(rw, S5).y;
   // halfway to the camera realm's light: a neighbour's clouds keep their own sun but sit in this sky
   // (at night the neighbours' sun is mostly withheld: they stay dark shapes against this sky)
-  let k = 0.5 * sstep(-0.12, 0.08, FR.sun.y);
+  // a moonlit realm (S5.w without a giant) counts as night here
+  let moonR = sstep(0.5, 0.9, rowv(S5).w) * (1.0 - sstep(0.01, 0.2, rowv(S5).z));
+  let k = 0.3 * sstep(-0.12, 0.08, FR.sun.y) * (1.0 - moonR);
   let I0 = rowv(S3).w;
   o.L = normalize(mix(FR.sun.xyz, o.L, k));
   o.sc = mix(sunCol(), o.sc, k);
   o.zen = mix(rowv(S2).rgb * I0, o.zen, k); o.hor = mix(rowv(S3).rgb * I0, o.hor, k); o.sw = mix(rowv(S4).rgb * I0, o.sw, k);
   o.night = mix(rowv(S7).rgb * rowv(S7).w, o.night, k);
   o.amb = mix(rowv(S6).x, o.amb, k);
+  o.tint = mix(rowv(C1).rgb, o.tint, k);
   return o;
 }
 
@@ -194,11 +204,13 @@ fn shade(p: vec3f, d: vec3f, hf: f32, od: f32, dens: f32, sea: bool) -> vec3f {
   for (var k = 0; k < 3; k++) { s += b * exp(-od * a) * phaseC(mu, c); a *= 0.42; b *= 0.6; c *= 0.55; }
   // powder: dark edges when facing away from the sun, none when looking into it
   let powder = mix(1.0, 1.0 - exp(-od * 2.2 - dens * 0.4), 0.55 * sat(0.6 - mu * 0.6));
-  let sc = gCL.sc;
-  // sky ambient: blue from above at the top, warm horizon / sunward bounce at the base
-  let top = mix(gCL.hor, gCL.zen, 0.6) * 1.2;
-  let bot = mix(gCL.hor, gCL.sw, 0.45) * 0.6 + sc * max(L.y, 0.0) * 0.1;
-  var amb = mix(bot, top, sat(hf)) * mix(0.55, 1.0, sat(hf)) + gCL.night * 0.5;
+  // sun on cloud: a touch less saturated than the sun itself (cream-gold lit sides, not orange)
+  let sc = mix(vec3f(luma(gCL.sc)), gCL.sc, 0.72);
+  // sky ambient: cool zenith light from above (lavender-blue shadowed cores, never brown), the warm horizon and a
+  // peach-pink bounce of the low sun on the undersides
+  let top = mix(gCL.hor, gCL.zen, 0.78) * vec3f(0.96, 0.94, 1.08) * 1.3;
+  let bot = mix(gCL.hor, gCL.sw, 0.4) * 0.6 + gCL.sc * vec3f(1.0, 0.72, 0.74) * (0.04 + 0.1 * sat(1.0 - L.y * 3.0));
+  var amb = mix(bot, top, sat(hf)) * mix(0.6, 1.0, sat(hf)) + gCL.night * 0.5;
   var sunK = 8.0;
   if (sea) {
     // inside the cloud sea: light from above dies off quickly, the forest below tints it green
@@ -209,7 +221,7 @@ fn shade(p: vec3f, d: vec3f, hf: f32, od: f32, dens: f32, sea: bool) -> vec3f {
   }
   // aurora light on night clouds
   amb += vec3f(0.05, 0.4, 0.2) * gCL.aur * 0.08;
-  return gCL.tint * (sc * s * powder * sunK + amb * gCL.amb * 0.75) + gCL.emis;
+  return gCL.tint * (sc * s * powder * sunK + amb * gCL.amb * 0.95) + gCL.emis;
 }
 
 // Adaptive march: coarse steps through empty air (cheap coverage test), fine steps once inside cloud, back to
@@ -221,12 +233,11 @@ fn marchSeg(ro: vec3f, d: vec3f, t0: f32, t1: f32, n: i32, jit: f32, sea: bool, 
   let fmax = select(260.0, 30.0, sea);
   var t = t0 + clamp(t0 * kf, fmin, fmax) * jit * 2.0;
   var empty = 8;
-  var i = 0; var nd = 0;
   var lastDt = 0.0;
   loop {
-    // n dense (lit) samples at most, 2n iterations in all
-    if (t >= t1 || nd >= n || i >= n * 2 || (*ms).T < 0.01) { break; }
-    i++;
+    // a shared budget of dense (lit) samples, twice that in iterations; it shrinks when the ray starts inside cloud
+    if (t >= t1 || (*ms).nd >= (*ms).cap || (*ms).it >= n * 2 || (*ms).T < T_MIN) { break; }
+    (*ms).it++;
     let p = ro + d * t;
     let dtf = clamp(t * kf, fmin, fmax);
     let y = wyAt(p.xz);
@@ -254,9 +265,14 @@ fn marchSeg(ro: vec3f, d: vec3f, t0: f32, t1: f32, n: i32, jit: f32, sea: bool, 
         t -= lastDt - dtf; lastDt = dtf; empty = 0;
         continue;
       }
-      empty = 0; nd++;
-      if (!gCLok) { gCL = cloudLight(p.xz); gCLok = true; }
-      let od = lightOD(p, gCL.L, sea, nl, jit);
+      empty = 0; (*ms).nd++;
+      if (!gCLok) {
+        gCL = cloudLight(p.xz); gCLok = true;
+        // starting inside cloud: visibility is short, so a smaller budget is enough (the inside-the-sea spikes)
+        if (t < dtf * 3.0) { (*ms).cap = min((*ms).cap, n * 3 / 5); }
+      }
+      // deep samples matter little: fewer light steps once the pixel is half opaque
+      let od = lightOD(p, gCL.L, sea, select(nl, max(nl / 2, 2), (*ms).T < 0.5), jit);
       let Ls = shade(p, d, hf, od, dens / select(EXT, SEA_EXT, sea), sea);
       let ddt = min(dt, t1 - t);
       let a = 1.0 - exp(-dens * ddt);
@@ -287,7 +303,7 @@ fn slab(ro: vec3f, d: vec3f, y0: f32, y1: f32, tmax: f32) -> vec2f {
 fn marchAll(ro: vec3f, d: vec3f, tmax: f32, n: i32, nl: i32, jit: f32) -> vec4f {
   var ms: MS;
   gCLok = false;
-  ms.scat = vec3f(0.0); ms.T = 1.0; ms.tw = 0.0; ms.ww = 0.0;
+  ms.scat = vec3f(0.0); ms.T = 1.0; ms.tw = 0.0; ms.ww = 0.0; ms.nd = 0; ms.it = 0; ms.cap = n;
   let maxD = min(tmax, CU.q.z);
   let sS = slab(ro, d, CU.slab.z, CU.slab.w, min(maxD, 9000.0));
   let sM = slab(ro, d, CU.slab.x, CU.slab.y, maxD);
@@ -299,11 +315,15 @@ fn marchAll(ro: vec3f, d: vec3f, tmax: f32, n: i32, nl: i32, jit: f32) -> vec4f 
     if (hasM) { marchSeg(ro, d, sM.x, sM.y, n, jit, false, nl, &ms); }
     if (hasS) { marchSeg(ro, d, sS.x, sS.y, n, jit, true, nl, &ms); }
   }
-  let op = 1.0 - ms.T;
+  // what the early exit left behind: count it as fully absorbed (no visible step at the stop)
+  let op = select(1.0 - ms.T, 1.0, ms.T < T_MIN);
   if (op < 1e-4) { return vec4f(0.0); }
   // aerial perspective at the opacity-weighted depth of the clouds
   let tm = ms.tw / max(ms.ww, 1e-6);
-  let c = applyFog(ms.scat / op, ro, d, tm);
+  var c = applyFog(ms.scat / op, ro, d, tm);
+  // far clouds (often a neighbour realm's weather) melt into the sky colour behind them: no hard cut-outs or
+  // foreign colours on the horizon; they still hide the stars and aurora behind them
+  c = mix(c, skyBase(d), 0.75 * sstep(6000.0, 28000.0, tm));
   return vec4f(c * op, op);
 }
 
@@ -319,17 +339,17 @@ struct CF { @location(0) front: vec4f, @location(1) refl: vec4f, @location(2) di
 @fragment fn fsC(in: CVO) -> CF {
   let hp = vec2i(in.pos.xy);
   let full = vec2i(VW.size.xy);
-  // nearest of the kd x kd full-res block (kd = 2, or 3 in VR: ctx.cloudDiv): the march stops at the closest
-  // surface, the upsample sorts out edges (corners of the block are enough)
-  let kd = max(i32(round(VW.size.x * CU.misc.z)), 1);
-  let b = hp * kd;
-  let e = kd - 1;
+  // cloud resolution: half (2), quarter (4, quality=low) or a third (3, VR) of the view
+  let S = max(i32(round(VW.size.x * CU.misc.z)), 1);
+  // nearest of the corners of the SxS full-res block: the march stops at the closest surface, the upsample sorts
+  // out edges
+  let b = hp * S; let e = S - 1;
   let d00 = textureLoad(cDistT, min(b, full - 1), 0).x;
   let d10 = textureLoad(cDistT, min(b + vec2i(e, 0), full - 1), 0).x;
   let d01 = textureLoad(cDistT, min(b + vec2i(0, e), full - 1), 0).x;
   let d11 = textureLoad(cDistT, min(b + vec2i(e, e), full - 1), 0).x;
   let dist = min(min(d00, d10), min(d01, d11));
-  let pp = in.pos.xy * f32(kd);
+  let pp = in.pos.xy * f32(S);
   let d = viewRay(pp);
   let ro = VW.cam.xyz;
   var jit = ign(in.pos.xy);
@@ -347,10 +367,13 @@ struct CF { @location(0) front: vec4f, @location(1) refl: vec4f, @location(2) di
       tmax = tw;
       let P = ro + d * tw;
       let R = vec3f(d.x, -d.y, d.z);
-      o.refl = marchAll(P, R, 1e9, i32(CU.q.w), max(nl - 2, 2), jit);
+      // skip the mirror march where the water reflects little (Fresnel at this angle and the realm's mirror floor,
+      // as composite.wgsl weighs it): most water seen from above in all realms but Mirror Salt and Aurora Ice
+      let wr = max(0.02 + 0.98 * pow(1.0 - min(-d.y, 1.0), 5.0), rowv(W2).w);
+      if (CLOUD_REFL_ON && wr > 0.12) { o.refl = marchAll(P, R, 1e9, i32(CU.q.w), max(nl - 2, 2), jit); }
     }
   }
-  o.front = marchAll(ro, d, tmax, n, nl, jit);
+  if (CLOUD_MARCH_ON) { o.front = marchAll(ro, d, tmax, n, nl, jit); } else { o.front = vec4f(0.0); }
   if (VW.cam.w == 16.0 && d.y > 0.01) { // dbg=16: layer probe at mid-height of the camera realm's main layer
     let ym = (rowv(C0).y + rowv(C0).z) * 0.5;
     let P = ro + d * ((ym - ro.y) / d.y);

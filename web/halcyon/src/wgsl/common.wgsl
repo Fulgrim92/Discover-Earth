@@ -232,8 +232,10 @@ fn cloudShadow(p: vec3f, L: vec3f, rw: RWt) -> f32 {
   return cloudShadowF(p, L, bf(rw, C0), bf(rw, C1), bf(rw, C2), bf(rw, C3));
 }
 // the same with the cloud fields given (life.wgsl passes the camera row: flora, fauna, particles, drone)
+// cost ablation: false drops cloud shadows everywhere (terrain, water glitter, life)
+const CLOUD_SHADOW_ON: bool = true;
 fn cloudShadowF(p: vec3f, L: vec3f, c0: vec4f, c1: vec4f, c2: vec4f, c3: vec4f) -> f32 {
-  if (L.y < 0.005 || isOff(OFF_CLOUDSHADOW)) { return 1.0; }
+  if (!CLOUD_SHADOW_ON || L.y < 0.005 || isOff(OFF_CLOUDSHADOW)) { return 1.0; }
   var tr = 1.0;
   let ly = max(L.y, 0.1);
   if (c0.x > 0.005) {

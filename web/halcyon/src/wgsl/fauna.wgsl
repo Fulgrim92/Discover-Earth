@@ -110,14 +110,19 @@ fn bird(ii: u32) -> Bird {
     // seabirds wheeling over a steep coastal slope
     let s0 = clipS(clipLevel(cen, 0u, 8.0), cen);
     let st = length(s0.yz);
-    if (s0.x < -60.0 || s0.x > 220.0 || st < 0.2) { return B; }
-    let r = 18.0 + 50.0 * lfRand(hb, 1u);
+    let v4 = rowv(V4);
+    let skyMode = v4.x > 0.5 || v4.y > 0.5; // Stone: over the cloud sea; Ice: snow petrels over the ice
+    if (!skyMode && (s0.x < -60.0 || s0.x > 220.0 || st < 0.2)) { return B; }
+    let r = select(18.0, 40.0, skyMode) + select(50.0, 90.0, skyMode) * lfRand(hb, 1u);
+    if (v4.y > 0.5) { B.size = 2.0; } // petrels: read from a drone at 30-100 m
     let cw = select(-1.0, 1.0, lfRand(hc, 7u) > 0.5);
     let v = 8.0 + 3.0 * lfRand(hb, 2u);
     let a = t * v / r * cw + lfRand(hb, 3u) * 6.2832;
     let c2 = cen + vec2f(w1.x, w1.y) * 25.0;
     let p2 = c2 + vec2f(cos(a), sin(a)) * r;
     var y = max(s0.x, 0.0) + 30.0 + 70.0 * lfRand(hb, 4u) + 6.0 * sin(t * 0.3 + lfRand(hb, 5u) * 6.0);
+    if (v4.x > 0.5) { y = rowv(C2).y + 12.0 + 55.0 * lfRand(hb, 4u) + 4.0 * sin(t * 0.3 + lfRand(hb, 5u) * 6.0); }
+    if (v4.y > 0.5) { y = max(s0.x, 0.0) + 28.0 + 60.0 * lfRand(hb, 4u) + 5.0 * sin(t * 0.3 + lfRand(hb, 5u) * 6.0); }
     y = max(y, heightAny(p2) + 10.0);
     B.p = vec3f(p2.x, y, p2.y);
     let tg = vec2f(-sin(a), cos(a)) * cw;
@@ -201,7 +206,8 @@ fn birdVertex(vi: u32, B: Bird, mirror: bool) -> BV {
   var n = normalize(fwd * ln.x + up * ln.y + side * ln.z);
   if (mirror) { wp.y = -wp.y; n.y = -n.y; }
   o.wp = wp; o.n = n; o.loc = loc; o.part = part; o.kind = B.kind;
-  o.sh = lfShadow(B.p + vec3f(0.0, 0.5, 0.0), length(B.p - VW.anc.xyz), 0.5, 8);
+  if (B.kind == 1u && rowv(V4).y > 0.5) { o.kind = 3u; } // snow petrel: gull shape, own colour and light
+  o.sh = select(0.0, lfCloudShadow(B.p), FR.sun.y > -0.03); // birds fly above the terrain's shadows: cloud shadow only, no march per vertex
   o.pos = VW.vp * vec4f(wp - cam, 1.0);
   return o;
 }
@@ -229,6 +235,7 @@ fn birdAlbedo(in: BV) -> vec3f {
     if (in.part == 1u) { return mix(vec3f(0.42, 0.45, 0.5), vec3f(0.015), sstep(0.8, 0.9, in.loc.x)); }
     return mix(vec3f(0.85, 0.85, 0.83), vec3f(0.85, 0.6, 0.1), sstep(0.25, 0.27, in.loc.x));
   }
+  if (k == 3u) { return mix(vec3f(0.93, 0.95, 0.97), vec3f(0.02), sstep(0.3, 0.33, in.loc.x) * f32(in.part == 0u)); }
   if (in.part == 1u) { return mix(vec3f(0.16, 0.14, 0.12), vec3f(0.03, 0.03, 0.03), sstep(0.5, 0.7, in.loc.x)); }
   var c = mix(vec3f(0.2, 0.17, 0.14), vec3f(0.45, 0.42, 0.38), sstep(0.2, -0.6, in.loc.y));
   c = mix(c, vec3f(0.02), sstep(0.3, 0.34, in.loc.x));
@@ -251,6 +258,12 @@ fn birdShade(in: BV) -> vec3f {
   var col = alb * (sc * in.sh * (wrap + thru) + lfAmb(n.y, alb));
   let hv = normalize(L + V);
   col += sc * in.sh * pow(max(dot(n, hv), 0.0), 30.0) * 0.04;
+  if (in.kind == 3u) {
+    // snow petrels catch the aurora: its colour from above and from the rim, and a faint glow of their own
+    let m6 = rowv(M6);
+    let fres = pow(1.0 - abs(dot(n, V)), 2.0);
+    col += alb * m6.rgb * m6.w * (0.6 * max(n.y, 0.0) + 1.8 * fres + 0.3);
+  }
   return col;
 }
 
@@ -321,7 +334,7 @@ fn jelly(ii: u32) -> Jelly {
   let T = 3.5 + 2.5 * lfRand(hc, 5u);
   let f = fract(t / T + lfRand(hc, 6u));
   J.c = sstep(0.0, 0.22, f) * sstep(1.0, 0.3, f);
-  let y = max(g, 0.0) + 45.0 + 160.0 * pow(lfRand(hc, 7u), 1.5) + 7.0 * sin(t * 0.05 + ph) + J.c * 1.5;
+  let y = max(g, 0.0) + 12.0 + 190.0 * pow(lfRand(hc, 7u), 2.2) + 7.0 * sin(t * 0.05 + ph) + J.c * 1.5;
   J.p = vec3f(p2.x, y, p2.y);
   J.R = 8.0 + 12.0 * lfRand(hc, 8u);
   J.h = hc;

@@ -7,6 +7,7 @@ import { bindGroup, pipeline, shader, FO, tsBoth, TS_LIFE } from '../gpu.js';
 import { F } from '../realms.js';
 import { clip } from './clipmap.js';
 import * as fauna from './fauna.js';
+import * as flora from './flora.js';
 import CLIP from '../wgsl/clip.wgsl';
 import SKY from '../wgsl/sky.wgsl';
 import LIFE from '../wgsl/life.wgsl';
@@ -29,13 +30,18 @@ export function bind(ctx, tg) {
 }
 
 // returns 1 when the pass ran (for the GPU timer)
+// ablation (integration's off= bits, read from ctx.off): particles (motes only; pools and jellies follow flora/fauna)
+const OFF_PARTICLES = 4;
+
 export function draw(ctx, enc, view) {
   const fr = ctx.frame, v3 = FO.row + F.V3 * 4;
-  const wp = fr[v3] + fr[v3 + 1] + fr[v3 + 2] + fr[v3 + 3] + fr[FO.row + F.V1 * 4 + 1];
+  const wp = (ctx.off | 0) & OFF_PARTICLES ? 0 : fr[v3] + fr[v3 + 1] + fr[v3 + 2] + fr[v3 + 3] + fr[FO.row + F.V1 * 4 + 1];
   const ft = fauna.anyTransparent(ctx);
-  if (wp < 0.002 && !ft) return 0;
+  const fp = flora.anyPools(ctx);
+  if (wp < 0.002 && !ft && !fp) return 0;
   const p = enc.beginRenderPass(desc);
   p.setBindGroup(0, view.bg0); p.setBindGroup(1, clip.bg); p.setBindGroup(2, bgT);
+  if (fp) flora.drawPools(ctx, p);
   if (ft) fauna.drawTransparent(ctx, p, view);
   if (wp >= 0.002) { p.setPipeline(pPart); p.draw(4, nPart); }
   p.end();

@@ -49,6 +49,7 @@ const PLATFORM = {
   'fx/composite.js:draw': 'GPURenderPassEncoder (composite)',
   'fx/post.js:draw': 'GPURenderPassEncoder x12 (bloom chain, final)',
   'fx/rings.js:upload': 'queue.writeBuffer() x2 (effect uniforms, ring instances)',
+  'fx/flora.js:prepare': 'GPUComputePassEncoder (flora placement prepass, once per frame) + queue.writeBuffer() (layer mask)',
   'fx/particles.js:draw': 'GPURenderPassEncoder (motes + transparent fauna), when it runs',
   'fx/rings.js:pass': 'GPURenderPassEncoder (effects pass)',
   'fx/clipmap.js:bakeLevel': 'GPURenderPassEncoder x2 when a clip level re-bakes',

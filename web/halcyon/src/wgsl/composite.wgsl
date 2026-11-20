@@ -15,8 +15,8 @@ struct CUp { front: vec4f, refl: vec4f }
 // 3x3 half-res neighbourhood: a small Gaussian (it also averages out the march jitter) times a depth weight
 fn cloudUp(pix: vec2f, dist: f32) -> CUp {
   let hs = vec2i(textureDimensions(cloudT));
-  let kd = max(round(VW.size.x / f32(hs.x)), 1.0); // cloud pass divisor: 2, 3 in VR
-  let ic = vec2i(floor(pix / kd));
+  let S = max(round(VW.size.x / f32(hs.x)), 1.0); // 2 (half res), 4 (quarter, quality=low) or 3 (VR)
+  let ic = vec2i(floor(pix / S));
   var o: CUp;
   o.front = vec4f(0.0); o.refl = vec4f(0.0);
   var ws = 0.0; var best = 1e9;
@@ -24,7 +24,7 @@ fn cloudUp(pix: vec2f, dist: f32) -> CUp {
   for (var k = 0; k < 9; k++) {
     let off = vec2i(k % 3 - 1, k / 3 - 1);
     let q = clamp(ic + off, vec2i(0), hs - 1);
-    let dp = ((vec2f(q) + 0.5) * kd - pix) / kd;
+    let dp = ((vec2f(q) + 0.5) * S - pix) / S;
     let wb = exp(-dot(dp, dp) * 1.1);
     let dq = textureLoad(cloudD, q, 0).x;
     let rel = abs(dq - dist) / max(min(dq, dist), 1.0);

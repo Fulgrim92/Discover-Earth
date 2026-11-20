@@ -32,7 +32,11 @@ export function init(ctx) {
 }
 
 // opaque pass: birds
+// ablation (integration's off= bits, read from ctx.off): fauna
+const OFF_FAUNA = 2;
+
 export function draw(ctx, pass, view) {
+  if ((ctx.off | 0) & OFF_FAUNA) return;
   const fr = ctx.frame, v2 = FO.row + F.V2 * 4;
   let bound = 0;
   for (let g = 0; g < 3; g++) {
@@ -50,6 +54,7 @@ export function drawTransparent(ctx, pass, view) {
 }
 
 export function anyTransparent(ctx) {
+  if ((ctx.off | 0) & OFF_FAUNA) return false;
   const fr = ctx.frame, v2 = FO.row + F.V2 * 4;
   return fr[v2] > 0.002 || fr[v2 + 3] > 0.002;
 }

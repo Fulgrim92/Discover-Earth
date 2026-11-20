@@ -31,8 +31,9 @@ export function init(ctx) {
   const d = G.device;
   const q = ctx.quality;
   WN = q === 0 ? 256 : 512; WTEX = q === 0 ? 220 : 128;
-  // march budget: primary steps, light steps, max distance (m), reflection steps
-  CU[8] = q === 0 ? 64 : q === 2 ? 128 : 96; CU[9] = q === 0 ? 4 : 6; CU[10] = WN * WTEX * 0.5; CU[11] = q === 0 ? 20 : 28;
+  // march budget: dense samples per ray (shared by both layers; iterations are capped at twice that), light steps,
+  // max distance (m), reflection steps
+  CU[8] = q === 0 ? 56 : q === 2 ? 112 : 80; CU[9] = q === 0 ? 4 : 6; CU[10] = WN * WTEX * 0.5; CU[11] = q === 0 ? 20 : 28;
   // planet-wide layer bounds from the realm table
   let lo = 1e9, hi = 0, slo = 1e9, shi = 0;
   for (let r = 0; r < NREALM; r++) {
@@ -99,8 +100,10 @@ export function init(ctx) {
 }
 
 export function bind(ctx, tg) {
-  const k = ctx.cloudDiv || 2; // 2: half resolution; 3 in VR (main.js), where every eye is large and the frame short
-  const w = Math.max(1, Math.floor(tg.w / k)), h = Math.max(1, Math.floor(tg.h / k));
+  // half resolution; quarter on quality=low (the march is ~4x cheaper, the upsample hides most of it); a third in VR
+  // (ctx.cloudDiv from main.js: every eye is large and the frame short)
+  const k = ctx.cloudDiv || (ctx.quality === 0 ? 4 : 2);
+  const w = Math.max(1, Math.ceil(tg.w / k)), h = Math.max(1, Math.ceil(tg.h / k));
   const RT = U.RENDER_ATTACHMENT | U.TEXTURE_BINDING;
   clouds.view = tex(w, h, 'rgba16float', RT, { label: 'clouds' }).createView();
   clouds.reflView = tex(w, h, 'rgba16float', RT, { label: 'cloudsRefl' }).createView();
