@@ -30,6 +30,14 @@ const OFF_WATER: u32 = 512u;      // water shading in the composite (composite.w
 const OFF_RINGS: u32 = 1024u;     // rings and their sparks/guide (JS)
 const OFF_DRONE: u32 = 2048u;     // drone body, props, lights, shadow (JS)
 const OFF_MSAA: u32 = 4096u;      // opaque pass without MSAA (JS, at init)
+// terrain diagnostics (not in off=all): each isolates one structural cost of the terrain pass
+const OFF_TMAT: u32 = 8192u;      // constant albedo: no material, strata, realm-branch, coast or weather code
+const OFF_TREALM: u32 = 16384u;   // the camera's realm for every pixel: no per-pixel realmWeights / driftW / row blending
+const OFF_TFLAT: u32 = 32768u;    // terrain fs returns a flat colour at once: raster + vertex cost only
+const OFF_TGEO: u32 = 65536u;     // draw only the five finest clip levels (JS)
+const OFF_TVERT: u32 = 131072u;   // cheapest vertex path: no height fetch or morph (flat grid at y = 0)
+const OFF_SKY: u32 = 262144u;     // flat sky colour in the opaque pass
+const OFF_TGRID: u32 = 524288u;   // half-density terrain grid (112 quads per level side, 2x vertex spacing; JS, at init)
 const OFF_VEIL: u32 = 1048576u;     // the Drift veil in the cloud pass (clouds.wgsl veilMarch)
 const OFF_RAIN: u32 = 4194304u;    // rain shafts, lightning and the rain around the camera (clouds, composite)
 const OFF_ATMO: u32 = 2097152u;    // the per-frame atmosphere LUT bake: baked once, then frozen (fx/atmo.js)
@@ -166,14 +174,23 @@ fn realmWeights(p0: vec2f) -> RWt {
 // light). Inside a transition zone the lookup point is displaced by a slow, time-animated flow (two octaves of
 // drifting noise, 20-40 s periods) and the weights are sharpened (w^4), so one realm's surface reaches into the
 // other in tongues and eddies that move like ink in water. One extra realmWeights, only in zone pixels.
-fn driftW(p: vec2f, rw: RWt) -> RWt {
-  if (rw.id[1] < 0) { return rw; }
+fn driftOff(p: vec2f) -> vec2f {
   let t = FR.time.x;
   let q1 = p * (1.0 / 950.0) + vec2f(t * (1.0 / 31.0), t * (1.0 / 47.0));
   let q2 = p * (1.0 / 310.0) - vec2f(t * (1.0 / 23.0), -t * (1.0 / 37.0));
   var d = 420.0 * vec2f(vn(q1, 911u), vn(q1 + vec2f(5.2, 1.7), 912u));
   d += 150.0 * vec2f(vn(q2 + d * (1.0 / 900.0), 913u), vn(q2 + vec2f(2.8, 6.1) + d * (1.0 / 900.0), 914u));
-  var r = realmWeights(p + d);
+  return d;
+}
+fn driftW(p: vec2f, rw: RWt) -> RWt {
+  if (rw.id[1] < 0) { return rw; }
+  let d = driftOff(p);
+  return driftSharpen(p, d, realmWeights(p + d));
+}
+// (clip.wgsl driftWM: the same from the baked realm map)
+fn driftSharpen(p: vec2f, d: vec2f, r0: RWt) -> RWt {
+  var r = r0;
+  let t = FR.time.x;
   // per-realm patch field (~90 m, drifting): near the middle each realm holds patches rather than both averaging
   let q3 = p * (1.0 / 90.0) + d * (1.0 / 300.0) + vec2f(t * (1.0 / 53.0), -t * (1.0 / 71.0));
   var sum = 0.0;

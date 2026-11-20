@@ -9,8 +9,8 @@
 const HCO = array<vec2u, 6>(vec2u(0u, 0u), vec2u(1u, 0u), vec2u(0u, 1u), vec2u(1u, 0u), vec2u(1u, 1u), vec2u(0u, 1u));
 const HP_SEG = 8u; const HP_RING = 4u;
 const HP_VERTS = 192u;           // 8 x 4 quads x 6
-const H_PARTS = 13u;             // body, neck, head, tail, 4 legs x 2 segments, snout/ear
-const H_VERTS = 2496u;           // H_PARTS x HP_VERTS
+const H_PARTS = 15u;             // body, neck, head, tail, 4 legs x 2 segments, snout, 2 ears
+const H_VERTS = 2880u;           // H_PARTS x HP_VERTS
 
 // species: x body length, y body radius, z leg length, w neck length
 fn spA(s: u32) -> vec4f {
@@ -193,6 +193,7 @@ struct HV {
   @location(3) @interpolate(flat) part: u32,
   @location(4) @interpolate(flat) sp: u32,
   @location(5) @interpolate(flat) tint: vec4f, // per-animal coat variation, glow
+  @location(6) ax: vec3f,                      // part axis (hair and feather direction)
 }
 
 // two-bone leg: hip, foot, bone lengths l (each), knee bends along kd
@@ -202,7 +203,7 @@ fn knee(hip: vec3f, foot: vec3f, l: f32, kd: vec3f) -> vec3f {
   return m + kd * sqrt(max(l * l - hd * hd, 0.0));
 }
 
-@vertex fn vsHerd(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> HV {
+fn herdVert(vi: u32, ii: u32) -> HV {
   var o: HV; o.pos = LF_DEAD;
   let A = animal(ii);
   if (!A.ok) { return o; }
@@ -216,10 +217,12 @@ fn knee(hip: vec3f, foot: vec3f, l: f32, kd: vec3f) -> vec3f {
   if (sw) { bodyY = 0.0; }
   let breathe = 1.0 + 0.015 * sin(t * 1.7 + f32(A.h & 255u));
   let bob = 0.04 * LL * A.walk * abs(sin(A.gait / max(LL * 1.6, 0.1) * 6.2832));
-  let C = A.p + U * (bodyY + bob);
+  let gph = A.gait / max(LL * 1.6, 0.1) * 6.2832;
+  let C = A.p + U * (bodyY + bob) + S * (0.025 * LL * A.walk * sin(gph * 0.5));   // weight shifts side to side
   var c = C; var ax = F; var hl = L * 0.5; var rr = R * breathe;
   var flat0 = 1.0; // squash of the second cross-section axis (seal lies flat; fins and wings are thin)
   var bref = vec3f(0.0, 1.0, 0.0); var useRef = false; var wmark = 0.0;
+  var flat1 = 1.0; var tap = 0.0; // width squash (first cross-section axis); taper from start (+) to end
   let biped = A.sp == 2u;
   // neck and head
   let shoulder = C + F * L * select(0.38, 0.1, biped) + U * R * 0.4;
@@ -229,7 +232,8 @@ fn knee(hip: vec3f, foot: vec3f, l: f32, kd: vec3f) -> vec3f {
   if (biped) { nd = normalize(mix(F * 0.35 + U * mix(0.9, -1.3, A.graze), F + U * 0.08, A.fly)); }
   if (A.sp == 4u) { nd = normalize(F + U * (0.3 + 0.4 * sstep(0.6, 1.0, sin(t * 0.13 + f32(A.h & 63u))))); }
   let neckEnd = shoulder + nd * sa.w;
-  let hdir = normalize(mix(nd, lk, 0.5) + U * select(-0.5, -0.9, biped) + F * 0.3);
+  let nod = A.walk * select(0.08, 0.2, A.sp == 1u) * sin(gph + 1.2);                // the head nods with each step
+  let hdir = normalize(mix(nd, lk, 0.5) + U * (select(-0.5, -0.9, biped) + nod) + F * 0.3);
   if (sw) {
     // orca / whale: body, head, dorsal fin, flukes, two pectorals
     let st = FR.time.x;
@@ -254,6 +258,7 @@ fn knee(hip: vec3f, foot: vec3f, l: f32, kd: vec3f) -> vec3f {
   } else if (part == 1u) {
     c = 0.5 * (shoulder + neckEnd); ax = nd; hl = sa.w * 0.55; rr = R * select(0.42, 0.18, biped);
     if (A.sp == 0u) { rr = R * 0.55; }
+    if (A.sp == 1u) { rr = R * 0.6; flat1 = 0.6; }                     // a horse's neck: deep and flat-sided
   } else if (part == 2u) {
     c = neckEnd + hdir * sb.x * 0.45; ax = hdir; hl = sb.x * 0.5; rr = sb.y;
   } else if (part == 3u) {
@@ -265,6 +270,19 @@ fn knee(hip: vec3f, foot: vec3f, l: f32, kd: vec3f) -> vec3f {
   } else if (part == 12u) {
     // ears / snout / bill: a small piece at the head tip
     c = neckEnd + hdir * sb.x * 0.95; ax = normalize(hdir + U * select(0.0, -0.8, biped)); hl = sb.x * 0.22; rr = sb.y * 0.55;
+  } else if (part >= 13u) {
+    // ears: sheep hold theirs out sideways, horses and foxes upright (the fox's big and pointed)
+    if (!(A.sp == 0u || A.sp == 1u || A.sp == 3u || A.sp == 5u || A.sp == 6u)) { return o; }
+    let sg = select(-1.0, 1.0, part == 13u);
+    let hs = normalize(cross(hdir, U) + vec3f(1e-4, 0.0, 0.0));
+    let hu2 = normalize(cross(hs, hdir));
+    var ed = normalize(hu2 * 0.95 + hs * sg * 0.25 - hdir * 0.25);
+    var el = 0.13 * A.sc; var er = 0.3;
+    if (A.sp == 0u) { ed = normalize(hs * sg * 0.9 - hu2 * 0.15 - hdir * 0.1); el = 0.1 * A.sc; er = 0.38; }
+    if (A.sp == 3u) { ed = normalize(hu2 + hs * sg * 0.4); el = 0.075 * A.sc; er = 0.42; }
+    if (A.sp >= 5u) { ed = normalize(hu2 * 0.4 + hs * sg - hdir * 0.4); el = sb.x * 0.6; er = 0.25; }
+    let base = neckEnd + hdir * sb.x * 0.2 + hu2 * sb.y * 0.75 + hs * sg * sb.y * 0.45;
+    c = base + ed * el * 0.5; ax = ed; hl = el * 0.5; rr = el * er; bref = hdir; useRef = true; flat0 = 0.35;
   } else {
     // legs: parts 4..11 = 4 legs x (upper, lower)
     let li = (part - 4u) / 2u; let seg = (part - 4u) % 2u;
@@ -317,12 +335,30 @@ fn knee(hip: vec3f, foot: vec3f, l: f32, kd: vec3f) -> vec3f {
   let rf = select(select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(ax.y) > 0.9), bref, useRef);
   let b1 = normalize(cross(ax, rf));
   let b2 = cross(ax, b1);
-  let ring = (b1 * cos(ph) + b2 * sin(ph) * flat0) * sin(thv);
-  // body: a slightly egg-shaped barrel, fuller at the chest
-  var rk = rr;
-  if (part == 0u) { rk *= 1.0 + 0.12 * cos(thv); }
+  // shape: land bodies are deeper than wide; necks, legs, tails and muzzles taper toward their ends
+  if (!sw && A.sp != 4u) {
+    if (part == 0u) { flat1 = select(0.8, 0.9, biped); }
+    else if (part == 1u) { tap = 0.22; flat1 = min(flat1, 0.75); }
+    else if (part == 2u) { tap = 0.28; flat1 = 0.8; }
+    else if (part == 3u) { tap = 0.45; }
+    else if (part >= 4u && part <= 11u && wmark == 0.0) { tap = 0.12; hl += rr * 0.6; }   // segments overlap at the knee
+  }
+  // superellipsoid along the axis: limbs, necks and tails are cylinders with rounded ends (not strings of beads),
+  // bodies full barrels (not balloons); heads, ears, fins and wings stay rounder
+  var se = 1.0;
+  if (!sw && wmark == 0.0) {
+    if (part == 0u) { se = 0.55; }
+    else if (part == 1u || part == 3u || (part >= 4u && part <= 11u)) { se = 0.3; }
+    else if (part == 2u) { se = 0.75; }
+  }
+  let sth = pow(max(sin(thv), 0.0), se);
+  let ring = (b1 * cos(ph) * flat1 + b2 * sin(ph) * flat0) * sth;
+  var rk = rr * (1.0 + tap * cos(thv));
+  if (part == 0u) { rk *= 1.0 + 0.06 * cos(thv); }
   let wp = c + ax * (-cos(thv)) * hl + ring * rk;
-  o.n = normalize(ax * (-cos(thv)) / max(hl, 1e-3) + ring / max(rk, 1e-3));
+  let nring = (b1 * cos(ph) / flat1 + b2 * sin(ph) / max(flat0, 0.05)) * sth; // ellipse normal
+  o.n = normalize(ax * (-cos(thv)) * pow(abs(cos(thv)), 1.0 / se - 1.0) * select(1.0, 0.0, abs(cos(thv)) < 1e-4) / max(hl, 1e-3) * se + nring / max(rk, 1e-3));
+  o.ax = ax;
   o.wp = wp;
   o.loc = vec2f(-cos(thv), ph);
   o.part = part; o.sp = A.sp;
@@ -343,7 +379,11 @@ fn coat(sp: u32, part: u32, tint: vec4f, loc: vec2f, wp: vec3f) -> vec3f {
       return w * (0.85 + 0.25 * vn(wp.xz * 9.0 + wp.y * 7.0, 961u));
     }
     case 1u: {
-      var w = mix(vec3f(0.22, 0.12, 0.06), vec3f(0.42, 0.32, 0.18), v);   // bay to dun
+      // bay, chestnut, dun (Przewalski-like); dark points: legs, mane and tail; a paler muzzle
+      var w = mix(vec3f(0.13, 0.065, 0.03), vec3f(0.26, 0.13, 0.055), sstep(0.0, 0.6, v));
+      if (v > 0.6) { w = mix(vec3f(0.3, 0.22, 0.12), vec3f(0.36, 0.28, 0.16), v2); }
+      if (part == 1u && loc.y > 3.6 && loc.y < 5.8) { w = vec3f(0.03, 0.025, 0.02); }     // mane along the top of the neck
+      if (part == 12u) { w = mix(w, vec3f(0.3, 0.26, 0.2), 0.5); }
       if (part >= 4u && part <= 11u) { w = mix(w, vec3f(0.03, 0.025, 0.02), sstep(0.0, 0.8, loc.x)); }
       if (part == 3u) { w = vec3f(0.03, 0.025, 0.02); }
       return w;
@@ -360,8 +400,10 @@ fn coat(sp: u32, part: u32, tint: vec4f, loc: vec2f, wp: vec3f) -> vec3f {
     }
     case 3u: { return mix(vec3f(0.78, 0.8, 0.82), vec3f(0.62, 0.6, 0.56), v * 0.5); }
     case 4u: {
-      let m = sstep(0.1, 0.5, vn(wp.xz * 6.0 + wp.y * 4.0, 962u));
-      return mix(vec3f(0.16, 0.16, 0.15), vec3f(0.3, 0.29, 0.27), m) * mix(1.0, 1.4, sstep(-0.2, -0.6, loc.y));
+      // harbour seal: grey-brown with small dark spots (not bands), paler belly
+      let base = mix(vec3f(0.2, 0.19, 0.17), vec3f(0.28, 0.27, 0.24), vn(wp.xz * 1.5 + wp.y, 962u));
+      let spots = sstep(0.62, 0.7, vn(wp.xz * 13.0 + wp.y * 11.0, 965u));
+      return base * (1.0 - 0.5 * spots) * mix(1.0, 1.4, sstep(-0.2, -0.6, loc.y));
     }
     case 7u: {
       // orca: black back, white belly running forward, white eye patch, grey saddle behind the fin
@@ -388,23 +430,56 @@ fn coat(sp: u32, part: u32, tint: vec4f, loc: vec2f, wp: vec3f) -> vec3f {
 
 struct HOut { @location(0) c: vec4f, @location(1) d: vec4f }
 
-@fragment fn fsHerd(in: HV) -> HOut {
+// coat lighting: fur and feathers are not balloons. Per species: clumped normals (wool curls, fox ruff, feather
+// rows), a soft wrapped terminator, a Kajiya-Kay sheen along the hair direction (the part axis), a fuzzy rim that
+// catches the sky and a low sun from behind, and occlusion under the belly and between the legs.
+fn herdShade(in: HV) -> vec3f {
   let cam = VW.cam.xyz;
   let toC = cam - in.wp; let dist = length(toC); let V = toC / dist;
   var n = normalize(in.n);
   let L = FR.sun.xyz; let sc = sunCol();
   let alb = coat(in.sp, in.part, in.tint, in.loc, in.wp);
+  let isLeg = in.part >= 4u && in.part <= 11u && in.tint.z < 2.0;
+  // per species: wrap, sheen exponent and strength, fuzz, clump bump strength and scale
+  var wrapK = 0.2; var shp = 30.0; var shs = 0.05; var fuzz = 0.1; var bmp = 0.0; var bsc = 6.0;
+  switch in.sp {
+    case 0u: { wrapK = 0.55; shp = 6.0; shs = 0.035; fuzz = 0.4; bmp = 0.45; bsc = 14.0; }   // wool
+    case 1u: { wrapK = 0.18; shp = 70.0; shs = 0.2; fuzz = 0.05; bmp = 0.05; bsc = 3.0; }    // short glossy coat
+    case 2u: { wrapK = 0.3; shp = 24.0; shs = 0.07; fuzz = 0.15; bmp = 0.15; bsc = 9.0; }    // feathers
+    case 3u: { wrapK = 0.5; shp = 14.0; shs = 0.07; fuzz = 0.35; bmp = 0.3; bsc = 8.0; }     // thick winter fur
+    case 4u: { wrapK = 0.15; shp = 60.0; shs = 0.25; fuzz = 0.04; }                          // wet seal
+    default: {}
+  }
+  let T0 = normalize(in.ax - n * dot(in.ax, n) + vec3f(1e-4, 0.0, 0.0));
+  if (bmp > 0.0 && dist < 120.0) {
+    // clumps: noise across and along the hair, faded with distance (no shimmer far off)
+    let q = vec2f(in.loc.y * bsc * 0.5, in.loc.x * bsc) + in.tint.w;
+    let e = 0.05;
+    let n0 = vn(q, 971u); let nx = vn(q + vec2f(e, 0.0), 971u); let ny = vn(q + vec2f(0.0, e), 971u);
+    let B = normalize(cross(n, T0));
+    let k = bmp * (1.0 - sstep(40.0, 120.0, dist));
+    n = normalize(n - (B * (nx - n0) + T0 * (ny - n0)) / e * k * 0.15);
+  }
   let ndl = dot(n, L);
-  let sh = select(0.0, lfCloudShadow(in.wp), L.y > -0.03);
-  // wool and fur scatter: wrapped diffuse; short-haired horse and wet seal: a little gloss
-  let wrapK = select(0.15, 0.4, in.sp == 0u || in.sp == 3u);
-  var col = alb * (sc * sh * max((ndl + wrapK) / (1.0 + wrapK), 0.0) + lfAmb(n.y, alb));
-  let hv = normalize(L + V);
-  let gl = select(0.0, select(0.08, 0.25, in.sp == 4u), in.sp == 1u || in.sp == 4u);
-  col += sc * sh * pow(max(dot(n, hv), 0.0), 50.0) * gl;
+  var sh = lfShadow(in.wp + n * 0.15, dist, 0.5, 8);              // terrain and cloud shadow: animals stand in the shade too
+  if (isLeg) { sh *= mix(1.0, 0.45, sstep(0.25, 0.8, L.y)); }       // the body shades its own legs under a high sun
+  // occlusion: belly and the insides of the legs, darker toward the hips
+  var ao = 1.0;
+  if (in.part == 0u) { ao = mix(0.5, 1.0, sstep(-0.9, 0.25, n.y)); }
+  if (isLeg) { ao = select(0.85, mix(0.45, 0.95, sstep(-1.0, 0.0, in.loc.x)), ((in.part - 4u) & 1u) == 0u); }
+  var col = alb * (sc * sh * max((ndl + wrapK) / (1.0 + wrapK), 0.0) + lfAmb(n.y, alb) * ao);
+  // sheen along the hair (Kajiya-Kay), tinted by the coat
+  let H = normalize(L + V);
+  let th = dot(T0, H);
+  let kk = pow(sqrt(max(1.0 - th * th, 0.0)), shp);
+  col += sc * sh * kk * shs * 0.25 * (alb * 2.0 + 0.04) * max(ndl, 0.0); // tinted by the coat, only on the lit side
+  // fuzzy rim: the sky in the hair at grazing angles, and the low sun shining through it from behind
+  let rim = pow(1.0 - abs(dot(n, V)), 3.0);
+  let back = pow(max(dot(-V, L), 0.0), 3.0);
+  col += rim * fuzz * (lfAmb(max(n.y, 0.2), alb + 0.15) * ao + sc * sh * back * (alb + 0.1) * 2.0);
   if (in.sp >= 7u) {
     // wet skin: tight highlight and sky reflection at grazing angles; darker below the waterline
-    col += sc * sh * pow(max(dot(n, hv), 0.0), 120.0) * 0.9;
+    col += sc * sh * pow(max(dot(n, H), 0.0), 120.0) * 0.9;
     let fr = 0.04 + 0.5 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
     col += lfAmb(max(n.y, 0.0), vec3f(1.0)) * fr * 0.6 * sstep(-0.3, 0.1, in.wp.y);
     col *= mix(0.35, 1.0, sstep(-1.2, 0.1, in.wp.y));
@@ -416,9 +491,13 @@ struct HOut { @location(0) c: vec4f, @location(1) d: vec4f }
     let fres = pow(1.0 - abs(dot(n, V)), 2.0);
     col += gc * (0.04 + 0.5 * pat * select(0.2, 1.0, in.part == 0u) + 0.25 * fres);
   }
+  return col;
+}
+
+@fragment fn fsHerd(in: HV) -> HOut {
   var o: HOut;
-  o.c = vec4f(col, 1.0);
-  o.d = vec4f(dist, 0.0, 0.0, 1.0);
+  o.c = vec4f(herdShade(in), 1.0);
+  o.d = vec4f(length(VW.cam.xyz - in.wp), 0.0, 0.0, 1.0);
   return o;
 }
 
@@ -456,6 +535,9 @@ fn murmP(i: u32, t: f32, D: vec3f, M: vec4f) -> vec3f {
   return p;
 }
 struct MV { @builtin(position) pos: vec4f, @location(0) wp: vec3f, @location(1) sh: f32 }
+@vertex fn vsHerd(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> HV { return herdVert(vi, ii); }
+
+
 @vertex fn vsMurm(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> MV {
   var o: MV; o.pos = LF_DEAD;
   let M = HG[193];

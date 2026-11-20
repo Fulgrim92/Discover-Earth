@@ -10,7 +10,7 @@ export function fail(msg) {
   console.error('[halcyon] ' + m);
 }
 
-export const G = { device: null, queue: null, adapter: null, f32filter: false, timestamp: false, clipFormat: 'rgba32float', canvasFormat: 'bgra8unorm', p3: false, hdr: false, lost: null, xrCompatible: false };
+export const G = { device: null, queue: null, adapter: null, f32filter: false, timestamp: false, clipFormat: '', paths: null, canvasFormat: 'bgra8unorm', p3: false, hdr: false, lost: null, xrCompatible: false };
 
 // Errors that mean "this machine cannot run HALCYON" (shown as a friendly message, not a stack trace)
 export class Unsupported extends Error {}
@@ -29,7 +29,10 @@ export async function initDevice(opts) {
   }
   if (!adapter) throw new Unsupported('noadapter');
   const req = [];
-  if (adapter.features.has('float32-filterable')) { req.push('float32-filterable'); G.f32filter = true; }
+  // f32=0 (opts.noF32) pretends the adapter lacks float32-filterable (the RX 6650 XT / D3D12 path) so the harness
+  // runs what the target machine runs.
+  // (not requested: nothing needs it any more; G.f32filter only records that it exists, for the report)
+  if (adapter.features.has('float32-filterable') && !(opts && opts.noF32)) G.f32filter = true;
   if (adapter.features.has('timestamp-query') && !(opts && opts.noTimer)) { req.push('timestamp-query'); G.timestamp = true; }
   const device = await adapter.requestDevice({ requiredFeatures: req });
   device.addEventListener('uncapturederror', (e) => fail('GPU: ' + e.error.message));
@@ -40,8 +43,25 @@ export async function initDevice(opts) {
   });
   G.device = device; G.queue = device.queue; G.adapter = adapter;
   PIPES.async = !(opts && opts.syncPipelines);
-  G.clipFormat = G.f32filter ? 'rgba32float' : 'rgba16float';
+  // Nothing renders differently without float32-filterable: the clipmap keeps heights in r32float and gathers them
+  // (fx/clipmap.js). clipFormat only names the formats for the log and the bench report.
+  G.clipFormat = 'r32float+rgba16float';
   if (G.timestamp) initTimestamps();
+  // the paths taken on this adapter, for __halcyon.gpu, the bench report and the console
+  const lim = device.limits;
+  const info = adapter.info || {};
+  G.paths = {
+    adapter: [info.vendor, info.architecture, info.device, info.description].filter(Boolean).join(' / ') || 'unknown',
+    available: ['float32-filterable', 'timestamp-query', 'float32-blendable', 'shader-f16', 'rg11b10ufloat-renderable']
+      .filter((f) => adapter.features.has(f)),
+    requested: req, forcedNoF32: !!(opts && opts.noF32), f32filter: G.f32filter,
+    clip: G.clipFormat + ' (the same with and without float32-filterable)',
+    timer: G.timestamp ? 'timestamp-query' : 'none',
+    limits: { maxTextureDimension2D: lim.maxTextureDimension2D, maxColorAttachmentBytesPerSample: lim.maxColorAttachmentBytesPerSample,
+      maxSampledTexturesPerShaderStage: lim.maxSampledTexturesPerShaderStage, maxStorageBuffersPerShaderStage: lim.maxStorageBuffersPerShaderStage,
+      maxInterStageShaderVariables: lim.maxInterStageShaderVariables, maxComputeInvocationsPerWorkgroup: lim.maxComputeInvocationsPerWorkgroup },
+  };
+  console.info('halcyon gpu: ' + JSON.stringify(G.paths));
   return device;
 }
 
@@ -51,8 +71,8 @@ export async function initDevice(opts) {
 // by setTimerBase() before each view, so no descriptor is rebuilt per frame. perf.js resolves and reads them back.
 // TS_FLORA / TS_FAUNA only run with ?split=1, which splits the opaque pass into terrain (+ sky, drone) / flora / fauna.
 export const TS_BAKE = 0, TS_OPAQUE = 1, TS_CLOUDS = 2, TS_COMPOSITE = 3, TS_FX = 4, TS_BLOOM = 5, TS_FINAL = 6, TS_LIFE = 7,
-  TS_WEATHER = 8, TS_FLORA = 9, TS_FAUNA = 10, TS_N = 11;
-export const TS_PASSES = ['bake', 'opaque', 'clouds', 'composite', 'fx', 'bloom', 'final', 'life', 'weather', 'flora', 'fauna'];
+  TS_WEATHER = 8, TS_FLORA = 9, TS_FAUNA = 10, TS_TSHADE = 11, TS_N = 12;
+export const TS_PASSES = ['bake', 'opaque', 'clouds', 'composite', 'fx', 'bloom', 'final', 'life', 'weather', 'flora', 'fauna', 'tshade'];
 // passes encoded once per frame (in the first view's timer block), not once per view
 export const TS_ONCE = (1 << TS_BAKE) | (1 << TS_WEATHER);
 export const TS_SLOTS = 32;                 // frames in the query ring
@@ -103,8 +123,8 @@ export function shader(code, label) {
   return m;
 }
 
-// bind group layout from a compact list: 'u' uniform, 'r' read-only storage, 'f' float texture 2d, 'a' float 2d-array,
-// 'n' unfilterable-float 2d, 'd' depth 2d, 'F' float 3d, 's' filtering sampler, 'S' non-filtering sampler
+// bind group layout from a compact list: 'u' uniform, 'r' read-only storage, 'b' read-write storage (compute), 'f' float texture 2d, 'a' float 2d-array,
+// 'n' unfilterable-float 2d, 'N' unfilterable-float 2d-array, 'd' depth 2d, 'F' float 3d, 's' filtering sampler, 'S' non-filtering sampler
 export function bgl(spec, label) {
   const entries = [];
   for (let i = 0; i < spec.length; i++) {
@@ -112,14 +132,16 @@ export function bgl(spec, label) {
     const e = { binding: i, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT | GPUShaderStage.COMPUTE };
     if (c === 'u') e.buffer = { type: 'uniform' };
     else if (c === 'r') e.buffer = { type: 'read-only-storage' };
+    else if (c === 'b') e.buffer = { type: 'storage' };
     else if (c === 'f') e.texture = { sampleType: 'float', viewDimension: '2d' };
     else if (c === 'a') e.texture = { sampleType: 'float', viewDimension: '2d-array' };
     else if (c === 'n') e.texture = { sampleType: 'unfilterable-float', viewDimension: '2d' };
+    else if (c === 'N') e.texture = { sampleType: 'unfilterable-float', viewDimension: '2d-array' };
     else if (c === 'F') e.texture = { sampleType: 'float', viewDimension: '3d' };
     else if (c === 's') e.sampler = { type: 'filtering' };
     else if (c === 'S') e.sampler = { type: 'non-filtering' };
     else if (c === 'w') e.storageTexture = { access: 'write-only', format: 'rgba8unorm', viewDimension: '3d' };
-    if (c === 'w') e.visibility = GPUShaderStage.COMPUTE;
+    if (c === 'w' || c === 'b') e.visibility = GPUShaderStage.COMPUTE;
     entries.push(e);
   }
   return G.device.createBindGroupLayout({ entries, label });

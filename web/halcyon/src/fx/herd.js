@@ -18,10 +18,11 @@ import SKY from '../wgsl/sky.wgsl';
 import LIFE from '../wgsl/life.wgsl';
 import FLORA from '../wgsl/flora.wgsl';
 import HERD from '../wgsl/herd.wgsl';
+import HERDM from '../wgsl/herdm.wgsl';
 import { ENC, DIR } from './lifefx.js';
 
 const CELL = 320, NS = 7, NH = NS * NS, NGI = 4, NG = NH + NGI, GCELL = 4000;
-const H_VERTS = 2496, NE = 8, E_BASE = 848, MURM_N = 16000;
+const H_VERTS = 2880, NE = 8, E_BASE = 848, MURM_N = 16000;
 // encounter type -> actor species count (herd.wgsl actor(): 1 orca pod, 3 flamingo take-off, 4 whale breach, 6 giants)
 const E_N = new Uint8Array(40); E_N[1] = 6; E_N[3] = 48; E_N[4] = 1; E_N[6] = 5;
 const ecount = new Uint8Array(NE);
@@ -36,21 +37,36 @@ const st = new Float32Array(NG * 6), ost = new Float32Array(NG * 6);  // fleeX, 
 const home = new Float32Array(NG * 4);                                 // x, z, species (-1 none), count
 const CAND = new Float64Array(NH * 4 * 2 * 3), CH = new Float64Array(NH * 4 * 3);
 const CAMS = new Float64Array(2);
+const GIV = new Uint8Array(4); // giant cell i has been filled
 const S = new Float64Array(4); // [0] last time, [1] cell x, [2] cell z, [3] giant cell key
 S[0] = -1; S[1] = 1e9; S[2] = 1e9;
-let pipe, pMurm, bg, ubuf;
+let pipe, pNear, pMirror, pMurm, bg, ubuf;
+const H_NEAR = 8640, LOD_NEAR = 100; // near herds (< 100 m): 12 x 8 quads per part instead of 8 x 4
 const DBG = typeof location !== 'undefined' && /[?&]fstat=1/.test(location.search); // debug: log herd homes
 
 export function init(ctx) {
   ubuf = buffer(TAB.byteLength, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'herd table');
   const lay = bgl('u', 'herd');
   bg = bindGroup(lay, [ubuf], 'herd');
-  const mod = shader(CLIP + SKY + LIFE + FLORA + HERD, 'herd');
-  pipe = pipeline({ label: 'herd', module: mod, vs: 'vsHerd', fs: 'fsHerd', layouts: [ctx.bgl0, clip.bgl, lay],
-    targets: [{ format: 'rgba16float' }, { format: 'r16float' }], samples: ctx.msaa,
-    depth: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' }, });
+  // module variants: far (8 x 4 quads per part), near (12 x 8), and the mirror pass (sceneDist at group 2, HG at 3)
+  const base = HERD;
+  // (whitespace-tolerant: the build minifies WGSL)
+  const near = base.replace(/const\s*HP_SEG\s*=\s*8u;/, 'const HP_SEG=12u;').replace(/const\s*HP_RING\s*=\s*4u;/, 'const HP_RING=8u;')
+    .replace(/const\s*HP_VERTS\s*=\s*192u;/, 'const HP_VERTS=576u;').replace(/const\s*H_VERTS\s*=\s*2880u;/, 'const H_VERTS=8640u;');
+  if (near === base) throw new Error('herd: near LOD constants not found');
+  const mirror = '@group(2) @binding(0) var sceneDist: texture_2d<f32>;\n' + HERD.replace(/@group\(2\)\s*@binding\(0\)\s*var<uniform>\s*HG/, '@group(3) @binding(0) var<uniform> HG') + HERDM;
+  const mod = shader(CLIP + SKY + LIFE + FLORA + base, 'herd');
+  const modN = shader(CLIP + SKY + LIFE + FLORA + near, 'herd near');
+  const modM = shader(CLIP + SKY + LIFE + FLORA + mirror, 'herd mirror');
+  const opaque = { targets: [{ format: 'rgba16float' }, { format: 'rg16float' }], samples: ctx.msaa,
+    depth: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' } };
+  pipe = pipeline({ label: 'herd', module: mod, vs: 'vsHerd', fs: 'fsHerd', layouts: [ctx.bgl0, clip.bgl, lay], ...opaque });
+  pNear = pipeline({ label: 'herd near', module: modN, vs: 'vsHerd', fs: 'fsHerd', layouts: [ctx.bgl0, clip.bgl, lay], ...opaque });
+  const over = { color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' }, alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' } };
+  pMirror = pipeline({ label: 'herd mirror', module: modM, vs: 'vsHerdMirror', fs: 'fsHerdMirror',
+    layouts: [ctx.bgl0, clip.bgl, bgl('f', 'herdT'), lay], targets: [{ format: 'rgba16float', blend: over }] });
   pMurm = pipeline({ label: 'murmuration', module: mod, vs: 'vsMurm', fs: 'fsMurm', layouts: [ctx.bgl0, clip.bgl, lay],
-    targets: [{ format: 'rgba16float' }, { format: 'r16float' }], samples: ctx.msaa, cull: 'none',
+    targets: [{ format: 'rgba16float' }, { format: 'rg16float' }], samples: ctx.msaa, cull: 'none',
     depth: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' }, });
 }
 
@@ -121,6 +137,8 @@ function giants() {
   const gx = Math.floor(camx / GCELL), gz = Math.floor(camz / GCELL);
   for (let i = 0; i < NGI; i++) {
     const g = NH + i, ix = gx + (i & 1) - (camx - gx * GCELL < GCELL / 2 ? 1 : 0), iz = gz + (i >> 1) - (camz - gz * GCELL < GCELL / 2 ? 1 : 0);
+    if (key[g * 2] === ix && key[g * 2 + 1] === iz && GIV[i]) continue; // same cell: keep (realm lookup only on change)
+    GIV[i] = 1;
     const h = ih(ix, iz, 7901);
     const x = (ix + 0.3 + 0.4 * (rq(h, 1) / 65536)) * GCELL, z = (iz + 0.3 + 0.4 * (rq(h, 2) / 65536)) * GCELL;
     key[g * 2] = ix; key[g * 2 + 1] = iz;
@@ -194,19 +212,39 @@ export function update(ctx, view) {
 }
 
 export function draw(ctx, pass, view) {
-  let bound = 0;
-  for (let g = 0; g < NG; g++) {
-    if (home[g * 4 + 2] < 0 || home[g * 4 + 3] < 1) continue;
-    if (!bound) { pass.setPipeline(pipe); pass.setBindGroup(0, view.bg0); pass.setBindGroup(1, clip.bg); pass.setBindGroup(2, bg); bound = 1; }
-    pass.draw(H_VERTS, home[g * 4 + 3], 0, g * 16);
-  }
-  for (let s = 0; s < NE; s++) {
-    if (!ecount[s]) continue;
-    if (!bound) { pass.setPipeline(pipe); pass.setBindGroup(0, view.bg0); pass.setBindGroup(1, clip.bg); pass.setBindGroup(2, bg); bound = 1; }
-    pass.draw(H_VERTS, ecount[s], 0, E_BASE + s * 64);
+  const d = view.data, cx = d[32], cz = d[34];
+  pass.setBindGroup(0, view.bg0); pass.setBindGroup(1, clip.bg); pass.setBindGroup(2, bg);
+  for (let lod = 0; lod < 2; lod++) {
+    let bound = 0;
+    for (let g = 0; g < NG; g++) {
+      if (home[g * 4 + 2] < 0 || home[g * 4 + 3] < 1) continue;
+      const gx = home[g * 4] + st[g * 6] - cx, gz = home[g * 4 + 1] + st[g * 6 + 1] - cz; // near groups: finer mesh
+      if ((gx * gx + gz * gz < LOD_NEAR * LOD_NEAR) !== (lod === 1)) continue;
+      if (!bound) { pass.setPipeline(lod ? pNear : pipe); bound = 1; }
+      pass.draw(lod ? H_NEAR : H_VERTS, home[g * 4 + 3], 0, g * 16);
+    }
+    for (let s = 0; s < NE; s++) {
+      if (!ecount[s]) continue;
+      const ex = ENC[s * 8 + 1] - cx, ez = ENC[s * 8 + 3] - cz;
+      if ((ex * ex + ez * ez < LOD_NEAR * LOD_NEAR * 4) !== (lod === 1)) continue;   // actors spread wider: 200 m
+      if (!bound) { pass.setPipeline(lod ? pNear : pipe); bound = 1; }
+      pass.draw(lod ? H_NEAR : H_VERTS, ecount[s], 0, E_BASE + s * 64);
+    }
   }
   if (murmOn) {
-    pass.setPipeline(pMurm); pass.setBindGroup(0, view.bg0); pass.setBindGroup(1, clip.bg); pass.setBindGroup(2, bg);
+    pass.setPipeline(pMurm);
     pass.draw(6, MURM_N, 0, 0);
   }
+}
+
+// flamingos doubled in the Mirror Salt water (blended pass; groups 0-2 already bound by the caller)
+export function anyMirror() {
+  for (let g = 0; g < NG; g++) if (home[g * 4 + 2] === 2 && home[g * 4 + 3] > 0) return true;
+  for (let s = 0; s < NE; s++) if (ecount[s] && ENC[s * 8] === 3) return true;
+  return false;
+}
+export function drawMirror(ctx, pass) {
+  pass.setPipeline(pMirror); pass.setBindGroup(3, bg);
+  for (let g = 0; g < NG; g++) if (home[g * 4 + 2] === 2 && home[g * 4 + 3] > 0) pass.draw(H_VERTS, home[g * 4 + 3], 0, g * 16);
+  for (let s = 0; s < NE; s++) if (ecount[s] && ENC[s * 8] === 3) pass.draw(H_VERTS, ecount[s], 0, E_BASE + s * 64);
 }

@@ -8,30 +8,33 @@
 import { shader, bgl, pipeline, FO } from '../gpu.js';
 import { F } from '../realms.js';
 import { clip } from './clipmap.js';
-import { LMAX } from './flora.js';
+import { LMAX, BIRDON } from './flora.js';
+import * as herd from './herd.js';
 import CLIP from '../wgsl/clip.wgsl';
 import SKY from '../wgsl/sky.wgsl';
 import LIFE from '../wgsl/life.wgsl';
 import FAUNA from '../wgsl/fauna.wgsl';
 import LFXW from '../wgsl/lifefx.wgsl';
-import { lifeFx, init as lifeInit } from './lifefx.js';
+import { lifeFx, init as lifeInit, ENC } from './lifefx.js';
 
 const BIRD_VERTS = 384, JELLY_VERTS = 1488;
 const BIRDS = new Uint16Array([216, 108, 117]);
-let pBird, pMirror, pJelly;
+let pSpray, pBird, pMirror, pJelly;
 export const faunaT = { bgl: null };
 
 export function init(ctx) {
   lifeInit(); // encounter slots (jelly gathering) at group 3 of the jelly pipeline
   const mod = shader(CLIP + SKY + LIFE + '@group(3) @binding(0) var<uniform> LFX: LifeFx;\n' + LFXW + FAUNA, 'fauna');
   faunaT.bgl = bgl('f', 'lifeT');
-  const targets = [{ format: 'rgba16float' }, { format: 'r16float' }];
+  const targets = [{ format: 'rgba16float' }, { format: 'rg16float' }];
   pBird = pipeline({ label: 'birds', module: mod, vs: 'vsBird', fs: 'fsBird', layouts: [ctx.bgl0, clip.bgl], targets, samples: ctx.msaa,
     depth: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' } });
   const lay = [ctx.bgl0, clip.bgl, faunaT.bgl];
   const over = { color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' }, alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' } };
   const pre = { color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' }, alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' } };
   pMirror = pipeline({ label: 'bird mirror', module: mod, vs: 'vsBirdMirror', fs: 'fsBirdMirror', layouts: lay, targets: [{ format: 'rgba16float', blend: over }] });
+  pSpray = pipeline({ label: 'spray', module: mod, vs: 'vsSpray', fs: 'fsSpray', layouts: [ctx.bgl0, clip.bgl, faunaT.bgl, lifeFx.bgl],
+    targets: [{ format: 'rgba16float', blend: pre }], topology: 'triangle-strip' });
   pJelly = pipeline({ label: 'jellies', module: mod, vs: 'vsJelly', fs: 'fsJelly', layouts: [ctx.bgl0, clip.bgl, faunaT.bgl, lifeFx.bgl], targets: [{ format: 'rgba16float', blend: pre }] });
 }
 
@@ -43,10 +46,9 @@ export function draw(ctx, pass, view) {
   if ((ctx.off | 0) & OFF_FAUNA) return;
   // groups are enabled by every realm in reach (flora.prepare computes LMAX each frame); each flock thins by the
   // weights at its home
-  const v2 = F.V2 * 4;
   let bound = 0;
   for (let g = 0; g < 3; g++) {
-    if (LMAX[v2 + g] < 0.002) continue;
+    if (!BIRDON[g]) continue;
     if (!bound) { pass.setPipeline(pBird); pass.setBindGroup(0, view.bg0); pass.setBindGroup(1, clip.bg); bound = 1; }
     pass.draw(BIRD_VERTS, BIRDS[g], 0, g << 16);
   }
@@ -56,11 +58,21 @@ export function draw(ctx, pass, view) {
 export function drawTransparent(ctx, pass, view) {
   const fr = ctx.frame, v2 = F.V2 * 4;
   if (LMAX[v2] > 0.002 && fr[FO.row + F.M4 * 4 + 1] > 0.2) { pass.setPipeline(pMirror); pass.draw(BIRD_VERTS, BIRDS[0], 0, 0); }
+  if (fr[FO.row + F.M4 * 4 + 1] > 0.2 && herd.anyMirror()) herd.drawMirror(ctx, pass); // herd flamingos in the mirror
+  if (sprayOn(v2)) { pass.setPipeline(pSpray); pass.setBindGroup(3, lifeFx.bg); pass.draw(4, SPRAY_N); }
   if (LMAX[v2 + 3] > 0.002) { pass.setPipeline(pJelly); pass.setBindGroup(3, lifeFx.bg); pass.draw(JELLY_VERTS, 25, 0, 3 << 16); }
+}
+
+// spray (blows, splashes): when seabirds are in reach or an orca, flamingo or breach encounter slot is filled
+const SPRAY_N = 133 * 16;
+function sprayOn(v2) {
+  if (LMAX[v2 + 1] > 0.002) return true;
+  for (let s = 0; s < 8; s++) { const ty = ENC[s * 8]; if (ty === 1 || ty === 3 || ty === 4) return true; }
+  return false;
 }
 
 export function anyTransparent(ctx) {
   if ((ctx.off | 0) & OFF_FAUNA) return false;
   const v2 = F.V2 * 4;
-  return LMAX[v2] > 0.002 || LMAX[v2 + 3] > 0.002;
+  return LMAX[v2] > 0.002 || LMAX[v2 + 3] > 0.002 || sprayOn(v2) || (ctx.frame[FO.row + F.M4 * 4 + 1] > 0.2 && herd.anyMirror());
 }
