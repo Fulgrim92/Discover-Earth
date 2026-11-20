@@ -19,7 +19,7 @@
 import { G, H, fail, initDevice, Unsupported, bgl, bindGroup, tex, buffer, FRAME_FLOATS, VIEW_FLOATS, FO, VO,
   setTimerBase, tsBoth, TS_BAKE, TS_OPAQUE, TS_CLOUDS, TS_COMPOSITE, TS_FX, TS_BLOOM, TS_FINAL, TS_LIFE, TS_WEATHER } from './gpu.js';
 import { TABLE, ROWF, F, realmCentre, CURATED, REALM_NAMES } from './realms.js';
-import { heightAt, heightBatch, blendAtA, W_IN, W_NEAR } from './world.js';
+import { heightAt, heightBatch, blendAtA, W_IN, W_NEAR, setFootprint } from './world.js';
 import { CLK, C_DT, C_TIME, C_FRAME_MS, C_PREV } from './clock.js';
 import { quatFromYawPitchRoll, quatRotate, mat4ViewRot, mat4PerspRevZ, mat4Mul, mat4Invert } from './math.js';
 import * as clipmap from './fx/clipmap.js';
@@ -585,6 +585,7 @@ async function heightCheck() {
   const levels = [0, 2, 4, 6, 8];
   for (const L of levels) {
     const r = await clipmap.readLevel(ctx, L);
+    setFootprint(r.t); // coarse levels are band-limited (terrfn.wgsl footprint())
     const per = L === 8 ? 52 : 51;
     for (let k = 0; k < per; k++) {
       const h1 = Math.imul(k + 1, 0x9e3779b1) ^ Math.imul(L + 7, 0x85ebca6b);
@@ -597,6 +598,7 @@ async function heightCheck() {
       if (e > maxErr) { maxErr = e; worst = { level: L, x, z, gpu: g, cpu: c }; }
     }
   }
+  setFootprint(0);
   H.heightcheck = { n, maxErr, meanErr: sum / n, worst, pass: maxErr < 0.15 };
   if (maxErr >= 0.15) fail('heightcheck failed: max error ' + maxErr.toFixed(3) + ' m at ' + JSON.stringify(worst));
 }

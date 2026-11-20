@@ -31,8 +31,11 @@ struct VOut {
   if (li + 1u >= nLevels()) { m = 0.0; }
   let odd = vec2f(f32(ix & 1), f32(iz & 1));
   let p = gp - odd * s * m;
-  var h = clipH(li, p);
-  if (m > 0.0) { h = mix(h, clipH(li + 1u, p), m); }
+  // never sample a level whose baked square does not hold this vertex (stale or not baked yet after a jump):
+  // FR.lv only moves when the level is rebaked, so clipLevel falls back to the coarser level until it is ready
+  let lh = clipLevel(p, li, 1.0);
+  var h = clipH(lh, p);
+  if (m > 0.0 && lh == li) { h = mix(h, clipH(clipLevel(p, li + 1u, 1.0), p), m); }
   if (skirt) { h -= s * 1.5 + 2.0; }
   var o: VOut;
   o.wp = vec3f(p.x, h, p.y);
@@ -202,6 +205,32 @@ fn strataAt(s: f32) -> vec3f {
   return c * (0.9 + 0.2 * hf(ki, 20 + bed, 315u));
 }
 
+// Ablation bits until integration's `off=` mask lands (then replace TOFF with that uniform; see each `toff(` use):
+//   1 micro detail (rock/ground/pebble normals and tones)   2 sun + cloud shadow   4 realm material branches
+//   8 baked shade (falls back to flat shadow 1 / ao 1)
+const TOFF: u32 = 0u;
+
+// Everything read from a level other than l0 is cross-faded by the same edge weight e as the l0 data, so no
+// material or shading input switches at a level boundary (no hard seams where blurry meets sharp ground).
+// concavity (per texel) at the first level >= lmin covering p
+fn concL(lmin: u32, l0: u32, e: f32, p: vec2f) -> f32 {
+  let a = clipLevel(p, max(l0, lmin), 4.0);
+  var c = clipS(a, p).w / FR.lv[a].z;
+  if (e > 0.0 && l0 + 1u >= lmin && l0 + 1u < nLevels()) {
+    let b = clipLevel(p, l0 + 1u, 4.0);
+    c = mix(c, clipS(b, p).w / FR.lv[b].z, e);
+  }
+  return c;
+}
+// baked shade `off` levels above l0
+fn shadeL(off: u32, l0: u32, e: f32, p: vec2f) -> vec4f {
+  let n = nLevels() - 1u;
+  var s = clipSH(clipLevel(p, min(l0 + off, n), 4.0), p);
+  if (e > 0.0 && l0 + off < n) { s = mix(s, clipSH(clipLevel(p, l0 + off + 1u, 4.0), p), e); }
+  return s;
+}
+fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
+
 @fragment fn fs(in: VOut) -> FOut {
   let p = in.wp;
   let cam = VW.cam.xyz;
@@ -218,18 +247,21 @@ fn strataAt(s: f32) -> vec3f {
   var cd = clipS(l0, p.xz);
   var mA = clipMA(l0, p.xz);
   var mB = clipMB(l0, p.xz);
+  var sd0 = clipSH(l0, p.xz); // baked shade: sun shadow, sky visibility, nL, nM
   if (e > 0.0 && l0 + 1u < nLevels()) {
     cd = mix(cd, clipS(l0 + 1u, p.xz), e);
     mA = mix(mA, clipMA(l0 + 1u, p.xz), e);
     mB = mix(mB, clipMB(l0 + 1u, p.xz), e);
+    sd0 = mix(sd0, clipSH(l0 + 1u, p.xz), e);
   }
   // baked occlusion: ring concavity at fixed coarse scales (4 m, 16 m, 64 m texels)
-  let la = clipLevel(p.xz, max(l0, 3u), 4.0);
   let lb = clipLevel(p.xz, max(l0, 5u), 4.0);
-  let lcv = clipLevel(p.xz, max(l0, 7u), 4.0);
-  let ca = clipS(la, p.xz).w / FR.lv[la].z;
-  let cb = clipS(lb, p.xz).w / FR.lv[lb].z;
-  let cc = clipS(lcv, p.xz).w / FR.lv[lcv].z;
+  let ca = concL(3u, l0, e, p.xz);
+  let cb = concL(5u, l0, e, p.xz);
+  let cc = concL(7u, l0, e, p.xz);
+  // texel size at this pixel, continuous across the level fade
+  var tx = FR.lv[l0].z;
+  if (e > 0.0 && l0 + 1u < nLevels()) { tx = mix(tx, FR.lv[l0 + 1u].z, e); }
   let conc = cb; // broad concavity (+ = gully, - = ridge)
   let gn = normalize(vec3f(-cd.y, 1.0, -cd.z));
   let slope = 1.0 - gn.y;
@@ -241,13 +273,22 @@ fn strataAt(s: f32) -> vec3f {
   let rw = realmWeights(p.xz);
   let M0v = bfx(rw, M0); let M1v = bfx(rw, M1); let M2v = bfx(rw, M2); let M3v = bfx(rw, M3);
   let M4v = bfx(rw, M4); let M5v = bfx(rw, M5); let M6v = bfx(rw, M6);
-  let S0v = bfx(rw, S0); let S1v = bfx(rw, S1); let S2v = bfx(rw, S2); let S3v = bfx(rw, S3);
-  let S5v = bfx(rw, S5); let S6v = bfx(rw, S6); let S7v = bfx(rw, S7);
+  var S0v = bfx(rw, S0); var S1v = bfx(rw, S1); var S2v = bfx(rw, S2); var S3v = bfx(rw, S3);
+  var S5v = bfx(rw, S5); var S6v = bfx(rw, S6); var S7v = bfx(rw, S7);
+  // far ground takes the light of the sky the camera sees (the camera realm's row): a neighbour realm on the horizon
+  // is not sunlit under this realm's night sky (no pale sunlit pillars on the Aurora Ice horizon)
+  let fcam = sstep(1500.0, 4000.0, dist);
+  if (fcam > 0.0) {
+    S0v = mix(S0v, FR.row[S0], fcam); S1v = mix(S1v, FR.row[S1], fcam); S2v = mix(S2v, FR.row[S2], fcam);
+    S3v = mix(S3v, FR.row[S3], fcam); S5v = mix(S5v, FR.row[S5], fcam); S6v = mix(S6v, FR.row[S6], fcam);
+    S7v = mix(S7v, FR.row[S7], fcam);
+  }
   let T3v = bfx(rw, T3);
 
   // breakup noise at three scales
-  let nL = fbm(p.xz * (1.0 / 380.0), 3, 200u);
-  let nM = fbm(p.xz * (1.0 / 41.0), 2, 210u);
+  // (nL and nM are baked into the shade layer: 0 noise evaluations here)
+  let nL = sd0.z * 2.0 - 1.0;
+  let nM = sd0.w * 2.0 - 1.0;
   var nS = 0.0;
   let wS = bl(3.1, fp);
   if (wS > 0.0) { nS = vn(p.xz * (1.0 / 3.1), 220u) * wS; }
@@ -268,11 +309,12 @@ fn strataAt(s: f32) -> vec3f {
 
   // ---- base: grass / soil / scree / rock, height-blended ----
   var dg = vec3f(0.0); // detail height gradient (world)
-  let gd = groundDetail(p.xz, fp);
+  var gd = vec4f(0.0);
+  if (!toff(1u)) { gd = groundDetail(p.xz, fp); }
   dg += vec3f(gd.y, 0.0, gd.z);
   var rd = vec4f(1.0, 0.0, 0.0, 0.0);
   let rockMask = clamp(sstep(0.2, 0.42, slope + 0.1 * nM) + sstep(-0.05, -0.25, conc) * sstep(0.08, 0.2, slope) * 0.8, 0.0, 1.0);
-  if (rockMask > 0.02 || mB.z > 0.1) { rd = rockDetail(p, fp, 1.0, 1.0); }
+  if ((rockMask > 0.02 || mB.z > 0.1) && !toff(1u)) { rd = rockDetail(p, fp, 1.0, 1.0); }
   let rH = 0.5 + 0.3 * nM + 0.4 * (rd.x - 1.0) + 0.15 * nS;
   let gH = 0.5 + 0.15 * gd.x;
   let tw = 0.06 + min(fp * 0.02, 0.2);
@@ -294,15 +336,29 @@ fn strataAt(s: f32) -> vec3f {
   let onSlope = sstep(0.05, 0.14, slope) * sstep(0.42, 0.26, slope) * (1.0 - hollow);
   let heather = sstep(0.25, 0.6, patchN) * onSlope * M5v.w;
   let ochre = sstep(0.25, 0.6, 0.7 * ridge - 0.4 * patchN) * M5v.w;
-  grass = mix(grass, vec3f(0.085, 0.05, 0.06) * (0.85 + 0.3 * gd.x), heather * 0.55);
-  grass = mix(grass, vec3f(0.2, 0.15, 0.05) * (0.85 + 0.3 * gd.x), ochre * 0.45);
+  // heather: dark brown-green, darker than the grass rather than redder (no orange blotches under a low sun)
+  grass = mix(grass, mix(grass * 0.55, vec3f(0.07, 0.05, 0.055), 0.5) * (0.85 + 0.3 * gd.x), heather * 0.5);
+  grass = mix(grass, mix(grass, vec3f(0.16, 0.14, 0.06), 0.6) * (0.85 + 0.3 * gd.x), ochre * 0.35);
   // close turf: blade-scale tone so the ground under the flora is never a smear
   let wT = bl(0.08, fp);
   if (wT > 0.0) { grass *= 1.0 + 0.25 * vn(p.xz * (1.0 / 0.08), 236u) * wT; }
+  // mid distance (30-500 m): clump mottling (1-3 m) and wind streaks (grass bent the same way, 2 m wide, 25 m long),
+  // each fading to its mean as it drops under a few pixels, so the turf keeps a grain instead of a smear
+  let wCl = bl(2.2, fp);
+  if (wCl > 0.0 && M0v.w > 0.0) {
+    let cl1 = vn(p.xz * (1.0 / 2.2), 238u) + 0.5 * vn(p.xz * (1.0 / 0.9), 239u) * bl(0.9, fp);
+    grass *= 1.0 + 0.16 * cl1 * wCl;
+  }
+  let wWs = bl(2.5, fp);
+  if (wWs > 0.0 && M0v.w > 0.0) {
+    let wd = vec2f(0.83, 0.55);
+    let st = vn(vec2f(dot(p.xz, vec2f(-wd.y, wd.x)) * (1.0 / 2.5), dot(p.xz, wd) * (1.0 / 25.0)), 234u);
+    grass = mix(grass, grass * vec3f(1.22, 1.2, 1.05), sstep(0.1, 0.6, st) * 0.6 * wWs); // sheen where blades lean
+  }
   let wC = bl(0.35, fp);
   if (wC > 0.0) { grass *= 1.0 - 0.3 * sstep(0.15, 0.6, vn(p.xz * (1.0 / 0.35), 237u)) * wC; } // soil between tufts
 
-  let soil = mix(vec3f(0.11, 0.075, 0.045), M1v.rgb * 1.4, 0.3) * (0.85 + 0.3 * gd.x);
+  let soil = mix(vec3f(0.085, 0.07, 0.05), M1v.rgb * 1.4, 0.4) * (0.85 + 0.3 * gd.x);
   var scree = M1v.rgb * 1.35;
   var screeD = vec3f(0.0);
   if (screeW > 0.01 && fp < 0.12) {
@@ -314,12 +370,17 @@ fn strataAt(s: f32) -> vec3f {
   let rock = M1v.rgb * (0.75 + 0.3 * nM) * rd.x;
 
   var alb = grass;
-  alb = mix(alb, soil, soilW * M0v.w);
+  alb = mix(alb, soil, soilW * M0v.w * 0.6);
   alb = mix(alb, scree, screeW);
   alb = mix(alb, rock, max(rockW, 1.0 - M0v.w * (1.0 - screeW)));
   dg += rd.yzw * rockW + screeD * screeW;
-  let hi = sstep(M2v.w - 50.0, M2v.w + 50.0, h + 60.0 * nL) * (1.0 - rockW * 0.6);
-  alb = mix(alb, M2v.rgb * (0.9 + 0.2 * nM), hi);
+  // uplands: one coherent cover by exposure and slope (drier paler grass in the shelter, dark heather on the exposed
+  // convex ground, bare rock on the steep), with a broad altitude transition instead of khaki blotches
+  let hi = sstep(M2v.w - 140.0, M2v.w + 90.0, h + 30.0 * nL) * (1.0 - rockW);
+  let upl = mix(grass * vec3f(1.04, 1.0, 0.86), M2v.rgb * 0.62 * (0.9 + 0.2 * nM), 0.3);
+  let expo = sstep(-0.02, -0.22, conc + 0.04 * nM);
+  let upland = mix(upl, mix(upl * 0.55, vec3f(0.065, 0.05, 0.05), 0.5) * (0.85 + 0.3 * gd.x + 0.15 * nM), expo * 0.55 * M5v.w);
+  alb = mix(alb, upland, hi);
   let shore = sstep(M3v.w + 1.2, M3v.w - 0.6, h + nS * 0.6 + nM * 0.5);
   alb = mix(alb, M3v.rgb * (0.85 + 0.3 * nM), shore);
   var rough = 0.88;
@@ -327,30 +388,42 @@ fn strataAt(s: f32) -> vec3f {
   var emis = vec3f(0.0);
   var wet = shore * 0.6 + hollow * 0.25 * M0v.w;
   var sheen = 0.0;
+  var flatN = 0.0; // 1: shade as a level surface (pool water over terraced ground)
 
   // ---- Home Fjords: dark basalt with green ledges, waterfalls with spray, a pale tide line ----
-  if (wHome > 0.01) {
-    // basalt flows: horizontal layers of slightly different tone, ledges carry turf
-    let lay = (h + 3.0 * vn(p.xz * (1.0 / 140.0), 32u));
-    let flowT = 0.8 + 0.3 * hf(i32(floor(lay / 4.3)), 5, 244u);
-    let led = fract((h + 4.0 * vn(p.xz * (1.0 / 90.0), 32u)) / max(T3v.w, 1.0));
-    let tread = sstep(0.5, 0.3, slope) * rockMask * sstep(4.0, 1.0, FR.lv[l0].z);
+  if (wHome > 0.01 && !toff(4u)) {
+    // basalt flows (only evaluated where there is rock: grass pixels skip all of this)
+    if (rockW > 0.01) {
+    // flows wander in height along the face and each has its own tone; the contacts between flows show only on some
+    // flows and break along the contour; columnar joints cross them, so no flow line reads as a contour
+    let lay = h + 3.0 * vn(p.xz * (1.0 / 140.0), 32u) + 1.6 * vn(vec2f(u * (1.0 / 40.0), h * (1.0 / 17.0)), 246u);
+    let lk = floor(lay / 4.3);
+    let flowT = 0.72 + 0.42 * hf(i32(lk), 5, 244u);
+    let lp = (h + 4.0 * vn(p.xz * (1.0 / 90.0), 32u) + 2.5 * vn(vec2f(u * (1.0 / 55.0), 7.0), 247u)) / max(T3v.w, 1.0);
+    let led = fract(lp) * select(0.0, 1.0, hf(i32(floor(lp)), 9, 248u) < 0.6);
+    let tread = sstep(0.5, 0.3, slope) * rockMask * sstep(4.0, 1.0, tx);
     let ledge = clamp(sstep(0.62, 0.8, led) * T3v.z * 6.0 + tread * 0.6, 0.0, 1.0);
     let broken = sstep(-0.25, 0.35, vn(vec2f(u * (1.0 / 9.0), h * 0.1), 245u) + 0.3 * nS);
     let ledgeG = sstep(0.45, 0.6, ledge + 0.3 * (gH - 0.5) + 0.2 * nS) * broken;
     var bas = M1v.rgb * flowT * rd.x * vec3f(0.82, 0.9, 1.05);
-    bas = mix(bas, bas * 0.6, (1.0 - sstep(0.0, 0.05, abs(fract(lay / 4.3) - 0.5) - 0.42)) * bl(1.0, fp) * 0.5);
+    let joint = (1.0 - sstep(0.0, 0.06, abs(lay / 4.3 - lk - 0.5) - 0.41)) * select(0.0, 1.0, hf(i32(lk), 8, 249u) < 0.45)
+              * sstep(-0.2, 0.25, vn(vec2f(u * (1.0 / 16.0), lk * 1.7), 253u));
+    bas = mix(bas, bas * 0.62, joint * bl(1.0, fp) * 0.5);
+    let wcol = bl(2.0, fp);
+    if (wcol > 0.0) { bas *= 1.0 + 0.16 * vn(vec2f(u * (1.0 / 1.9), lay * (1.0 / 7.0)), 254u) * wcol; } // columns
     let homeRock = mix(bas, M0v.rgb * (0.65 + 0.4 * nS + 0.2 * gd.x), ledgeG * 0.9);
     alb = mix(alb, homeRock, rockW * wHome);
+    }
     // thread-thin waterfalls on steep concave faces (coverage-preserving: thin threads stay visible far away)
+    let steep = sstep(0.35, 0.6, slope);
+    let gully = sstep(0.02, 0.25, conc);
+    if (slope > 0.2) {
     let cell = floor(u / 26.0);
     let cu = u - cell * 26.0 - 4.0 - 18.0 * hf(i32(cell), i32(floor(h / 400.0)), 240u);
     let present = select(0.0, 1.0, hf(i32(cell), 3, 241u) < 0.35);
     let wid = 0.25 + 0.4 * hf(i32(cell), 4, 242u);
     let wv = max(wid, fp * 0.7);
     let strk = sstep(wv, wv * 0.3, abs(cu)) * present * (wid / wv);
-    let gully = sstep(0.02, 0.25, conc);
-    let steep = sstep(0.35, 0.6, slope);
     let flow = 0.55 + 0.45 * vn(vec2f(u * 0.5, (h + tm * 7.0) * 0.25), 243u);
     let fall = strk * steep * max(gully, 0.25) * wHome * flow * sstep(1.0, 8.0, h);
     // spray: a wider wet halo around each thread and a white mist at the foot of the drop
@@ -359,6 +432,7 @@ fn strataAt(s: f32) -> vec3f {
     wet = max(wet, halo * steep * 0.55);
     alb = mix(alb, alb * 0.6, sstep(0.0, 0.3, conc) * steep * wHome * 0.6);
     alb = mix(alb, vec3f(0.82, 0.86, 0.88), clamp(fall + foot * 0.45 * (0.6 + 0.4 * nS), 0.0, 1.0));
+    }
     // pale tide line on the rock just above the sea, dark wet rock below it
     let tl = h + 0.25 * nS + 0.3 * nM;
     let tide = sstep(0.1, 0.5, tl) * sstep(2.0, 1.3, tl) * wHome;
@@ -382,7 +456,7 @@ fn strataAt(s: f32) -> vec3f {
   }
 
   // ---- Painted Range: dipping, folded strata with sub-bands, rills across the beds, prismatic pools ----
-  if (wPaint > 0.01) {
+  if (wPaint > 0.01 && !toff(4u)) {
     var s = h - strataTilt(p.xz);
     // erosion rills run downhill across the beds; beds sag into them
     var rill = 0.0;
@@ -431,13 +505,14 @@ fn strataAt(s: f32) -> vec3f {
       rough = mix(rough, 0.04, water);
       f0 = mix(f0, 0.02, water);
       dg *= 1.0 - water;
+      flatN = max(flatN, sstep(1.15, 0.95, rho) * wPaint);
       wet = max(wet, sstep(1.4, 1.0, rho) * 0.5 * wPaint);
       emis += pc * water * 0.04;
     }
   }
 
   // ---- Mirror Salt: salt polygons; cone islands of dark volcanic rock, ochre lichen, salt crust ----
-  if (wSalt > 0.01) {
+  if (wSalt > 0.01 && !toff(4u)) {
     var salt = M0v.rgb * (0.9 + 0.08 * nM);
     if (fp < 0.3) {
       let ed = saltEdge(p.xz);
@@ -458,13 +533,13 @@ fn strataAt(s: f32) -> vec3f {
   }
 
   // ---- Stone Forest: fluted, bedded limestone pillars; canopy crowns that spill over the rims; jungle floor ----
-  if (wStone > 0.01) {
+  if (wStone > 0.01 && !toff(4u)) {
     // pillar top height: max over the bilinear footprint, so walls never see a top blurred with the ground
     let tg = textureGather(1, clipA, clipSm, clipUV(l0, p.xz), l0);
     let topH = max(max(tg.x, tg.y), max(tg.z, tg.w)) * 600.0;
     let below = topH - h; // m under the pillar top
     let wf = select(0.0, clamp(1.0 - below / max(topH - 40.0, 20.0), 0.0, 1.0), topH > 1.0); // ~0 foot .. 1 top
-    let fineGeo = sstep(4.0, 1.0, FR.lv[l0].z); // slope is trustworthy only on fine levels
+    let fineGeo = sstep(4.0, 1.0, tx); // slope is trustworthy only on fine levels
     let onPillar = sstep(1.0, 3.0, topH) * sstep(1.5, 4.0, below) * sstep(0.02, 0.1, wf);
     let wall = max(sstep(0.4, 0.75, slope), onPillar * sstep(0.15, 0.35, slope));
     let sd = rockDetail(p * vec3f(1.0, 0.6, 1.0), fp, 1.6, 0.6);
@@ -482,7 +557,8 @@ fn strataAt(s: f32) -> vec3f {
     let bedPos = 4.0 * (bk + 0.3 + 0.4 * hf(i32(bk), 2, 287u));
     let bw = max(0.12, fp * 0.6);
     let crack = (1.0 - sstep(bw * 0.4, bw, abs(bedS - bedPos))) * (0.12 / bw) * bl(1.0, fp) * wall;
-    var lime = M1v.rgb * (0.9 + 0.25 * flute + 0.15 * nS) * sd.x;
+    // each bed its own tone (horizontal breakup of the walls), slightly darker near the cracks
+    var lime = M1v.rgb * (0.9 + 0.25 * flute + 0.15 * nS) * sd.x * (0.84 + 0.3 * hf(i32(bk), 5, 287u) * bl(3.0, fp));
     lime = mix(lime, lime * vec3f(1.15, 0.95, 0.7), sstep(0.0, 0.6, vn(vec2f(u * 0.04, h * 0.01), 284u)) * 0.6); // ochre stain
     let streak = vn(vec2f(u * 0.3, h * 0.015), 280u) * 0.5 + vn(vec2f(u * 1.1, h * 0.05), 281u) * 0.3;
     lime = mix(lime, lime * vec3f(0.45, 0.48, 0.42), sstep(0.05, 0.45, -streak) * 0.8); // water stains
@@ -491,17 +567,47 @@ fn strataAt(s: f32) -> vec3f {
     let ledgeV = sstep(0.5, 0.3, slope) * onPillar * fineGeo;
     let cling = sstep(0.45, 0.7, ledgeV + 0.5 * min(crack, 1.0) * sstep(0.1, 0.5, vn(vec2f(u * 0.12, h * 0.25), 289u)) + 0.25 * nS);
     lime = mix(lime, M0v.rgb * (0.7 + 0.4 * nS), cling * 0.85);
+    // ferns in the cracks: tufts along the bedding cracks, hanging a little below them
+    let wfe = bl(0.8, fp) * wall;
+    if (wfe > 0.0) {
+      let fern = (1.0 - sstep(0.2, 0.9, abs(bedS - bedPos + 0.25))) * sstep(0.15, 0.55, vn(vec2f(u * (1.0 / 0.9), bk * 3.1), 291u));
+      lime = mix(lime, M0v.rgb * vec3f(0.8, 0.95, 0.6) * (0.7 + 0.5 * nS), fern * wfe * 0.9);
+    }
     // canopy: rounded crowns (geometry) shaded from their own normals; green spills down the rim in strands
-    let crownT = 0.55 + 0.6 * sstep(-0.3, 0.6, vn(p.xz * (1.0 / 5.5), 283u) + 0.5 * nM) + 0.3 * gd.x;
-    let canopy = M0v.rgb * crownT * mix(vec3f(1.0), vec3f(1.25, 1.18, 0.7), sstep(0.3, 0.8, nL) * 0.4);
-    let strand = sstep(0.0, 0.5, vn(vec2f(u * (1.0 / 1.6), 0.5), 288u) + 0.3 * nS);
-    let spill = sstep(6.0 + 14.0 * strand, 2.0, below) * sstep(1.0, 3.0, topH);
+    // canopy: far, patches of olive, green and yellow-green; near, every crown (the 5.5 m domes of terrfn) has its
+    // own green, a few are rust or in flower, with leaf clumps and dark gaps between the crowns
+    var canopy = mix(vec3f(0.06, 0.1, 0.03), vec3f(0.1, 0.19, 0.055), sstep(-0.5, 0.3, nM));
+    canopy = mix(canopy, vec3f(0.19, 0.24, 0.06), sstep(0.25, 0.75, nL + 0.35 * nM) * 0.7);
     let top = sstep(2.5, 0.5, below) * sstep(1.0, 3.0, topH);
+    let sl = 3.0 + 17.0 * sstep(-0.3, 0.6, vn(vec2f(u * (1.0 / 4.3), 1.5), 288u) + 0.45 * vn(vec2f(u * (1.0 / 1.2), 3.1), 290u));
+    let spill = sstep(sl, sl * 0.55, below) * sstep(1.0, 3.0, topH);
+    let cfp = bl(5.5, fp);
+    if (cfp > 0.0 && max(top, spill * wall) > 0.01) {
+      let cg = floor(p.xz * (1.0 / 5.5));
+      var bdd = 9.0; var bid = vec2i(0);
+      for (var j = -1; j <= 1; j++) {
+        for (var i = -1; i <= 1; i++) {
+          let ci = i32(cg.x) + i; let cj = i32(cg.y) + j;
+          let pt = (vec2f(f32(ci), f32(cj)) + 0.2 + 0.6 * vec2f(hf(ci, cj, 160u), hf(ci, cj, 161u))) * 5.5;
+          let d = length(p.xz - pt) / (5.5 * (0.62 + 0.35 * hf(ci, cj, 162u)));
+          if (d < bdd) { bdd = d; bid = vec2i(ci, cj); }
+        }
+      }
+      let k = hf(bid.x, bid.y, 170u);
+      var cc = mix(vec3f(0.055, 0.095, 0.03), vec3f(0.1, 0.2, 0.055), hf(bid.x, bid.y, 171u));
+      cc = mix(cc, vec3f(0.2, 0.26, 0.065), sstep(0.65, 0.92, hf(bid.x, bid.y, 172u)));
+      if (k < 0.035) { cc = vec3f(0.25, 0.1, 0.04); }
+      else if (k < 0.06) { cc = vec3f(0.48, 0.34, 0.4); }
+      else if (k < 0.08) { cc = vec3f(0.5, 0.42, 0.1); }
+      let lc = 1.0 + 0.35 * vn(p.xz * (1.0 / 0.9), 173u) * bl(0.9, fp) + 0.15 * gd.x;
+      let gap = sstep(0.7, 1.05, bdd);
+      canopy = mix(canopy, cc * lc * (1.0 - 0.8 * gap), cfp);
+    }
     // jungle floor: dark, damp, mossy; darker still at the pillar feet
     var floorC = M3v.rgb * (0.7 + 0.4 * gd.x + 0.2 * nM);
     floorC = mix(floorC, M0v.rgb * 0.55, sstep(-0.2, 0.4, nM + 0.3 * gd.x) * 0.7);
     var sf = mix(floorC, lime, wall);
-    sf = mix(sf, canopy, max(top, spill * wall));
+    sf = mix(sf, canopy * mix(1.0, 0.75, sstep(0.0, 6.0, below)), max(top, spill * wall)); // vines darker below the rim
     sf = mix(sf, canopy * 0.8, sstep(0.55, 0.3, slope) * sstep(30.0, 8.0, below) * onPillar * fineGeo);
     alb = mix(alb, sf, wStone);
     dg += sd.yzw * wall * wStone;
@@ -510,36 +616,64 @@ fn strataAt(s: f32) -> vec3f {
     wet = max(wet, low * 0.6 * wStone);
   }
 
-  // ---- Aurora Ice: blue-white glacier with ogives and sastrugi, narrow deep-blue crevasses glowing from inside,
-  //      black sand with a wet sheen and stranded ice, faceted striated bergs ----
-  if (wIce > 0.01) {
+  // ---- Aurora Ice: a broad glacier tongue between dark nunataks, snowfields (the brightest ground), bare cyan ice
+  //      with medial moraines, crevasse and serac fields, a blue calving cliff, black-sand outwash, bergs ----
+  var iceSnow = 0.0; var iceThin = 0.0;
+  if (wIce > 0.01 && !toff(4u)) {
     let gl = mB.w;
-    // ogives: dirt bands across the flow (flow = broad downhill direction)
+    // flow: the broad downhill direction (64 m level), moraines run along it, ogives across it
     let cl = clipS(lb, p.xz);
-    let bd = select(vec2f(1.0, 0.0), -cl.yz / max(length(cl.yz), 1e-4), length(cl.yz) > 1e-4);
-    let along = dot(p.xz, bd) + 18.0 * vn(p.xz * (1.0 / 260.0), 291u);
-    let og = sstep(0.55, 0.9, 0.5 + 0.5 * sin(along * (6.2832 / 75.0))) * bl(30.0, fp);
-    var ice = mix(vec3f(0.5, 0.66, 0.78), vec3f(0.78, 0.86, 0.92), sstep(-0.4, 0.5, nM + 0.4 * nS));
-    // wind-packed snow on the flats, bare compacted blue ice where it is scoured
-    let snow = sstep(-0.1, 0.35, fbm(p.xz * (1.0 / 70.0), 3, 294u) + 0.3 * nS) * sstep(0.25, 0.1, slope);
-    ice = mix(ice * vec3f(0.85, 0.95, 1.05), vec3f(0.86, 0.9, 0.95), snow * 0.8);
-    ice = mix(ice, ice * vec3f(0.55, 0.52, 0.5), og * 0.6 * (1.0 - snow * 0.7));
-    ice = mix(ice, vec3f(0.22, 0.45, 0.65), sstep(0.4, 0.8, slope)); // blue on steep ice faces
-    // sastrugi: wind ridges, fine and elongated
-    let ws = bl(0.9, fp);
+    let fl2 = length(cl.yz);
+    let bd = select(vec2f(1.0, 0.0), -cl.yz / max(fl2, 1e-4), fl2 > 1e-4);
+    let acr = dot(p.xz, vec2f(-bd.y, bd.x)) + 40.0 * nL + 9.0 * nM;
+    let along = dot(p.xz, bd) + 18.0 * nM;
+    // snow: wind-packed on the gentle upper ice and in hollows on the nunataks; scoured off the lower tongue
+    let snowN = nM * 0.6 + 0.4 * nS + 0.5 * nL;
+    let upper = sstep(110.0, 240.0, h + 60.0 * nL);
+    let snowIce = sstep(-0.2, 0.25, snowN + 1.1 * upper - 0.75) * sstep(0.3, 0.12, slope);
+    let snowRock = sstep(0.0, 0.3, snowN + 0.6 * max(conc, 0.0) * 4.0 + 0.4 * upper - 0.2) * sstep(0.45, 0.2, slope) * sstep(6.0, 30.0, h);
+    // bare glacier ice: deep cyan, paler where weathered, darker blue on the steep faces (cliff, serac walls)
+    var ice = mix(vec3f(0.3, 0.56, 0.68), vec3f(0.55, 0.74, 0.82), sstep(-0.4, 0.6, nM + 0.5 * nS));
+    let og = sstep(0.6, 0.95, 0.5 + 0.5 * sin(along * (6.2832 / 90.0))) * bl(30.0, fp) * (1.0 - upper);
+    ice = mix(ice, ice * vec3f(0.7, 0.74, 0.8), og * 0.5);
+    // foliation: blue and white streaks drawn out along the flow
+    let wfo = bl(6.0, fp);
+    if (wfo > 0.0) {
+      let fo = vn(vec2f(acr * (1.0 / 6.0), along * (1.0 / 140.0)), 319u);
+      ice = mix(ice, mix(ice * vec3f(0.75, 0.88, 1.0), ice * vec3f(1.2, 1.12, 1.05), sstep(-0.4, 0.4, fo)), 0.6 * wfo);
+    }
+    // medial moraines: dark rock-debris stripes along the flow, broken and of varied width
+    let mw = 0.025 + 0.03 * (0.5 + 0.5 * nL);
+    let mr = (1.0 - sstep(mw * 0.5, mw, abs(fract(acr * (1.0 / 260.0)) - 0.5))) * sstep(-0.3, 0.2, nM + 0.5);
+    let mor = mr * (1.0 - upper * 0.8) * sstep(0.35, 0.15, slope);
+    ice = mix(ice, vec3f(0.055, 0.05, 0.048) * (0.8 + 0.5 * gd.x + 0.3 * nS), mor * 0.85);
+    let steepI = sstep(0.35, 0.75, slope);
+    ice = mix(ice, vec3f(0.1, 0.36, 0.55) * (0.85 + 0.3 * nS), steepI * (1.0 - mor));
+    // seracs: blue-white blocks with fresh snow caps; crevasses: rim cyan -> deep blue
+    let ser = mB.y;
+    ice = mix(ice, vec3f(0.62, 0.8, 0.9), ser * (1.0 - steepI) * 0.6);
+    let crev = mB.x;
+    ice = mix(ice, vec3f(0.08, 0.4, 0.62), sstep(0.08, 0.45, crev));
+    ice = mix(ice, vec3f(0.01, 0.05, 0.18), sstep(0.45, 0.95, crev));
+    let snowC = vec3f(0.86, 0.92, 0.98) * (0.96 + 0.06 * nS);
+    let snowOnIce = snowIce * (1.0 - crev) * (1.0 - mor);
+    ice = mix(ice, snowC, snowOnIce);
+    // sastrugi on the snow: fine elongated wind ridges
+    let ws = bl(0.9, fp) * snowOnIce;
     if (ws > 0.0) {
       let sq = vec2f(p.x * 0.8 + p.z * 0.6, -p.x * 0.6 + p.z * 0.8) * vec2f(1.0 / 0.9, 1.0 / 5.0);
       let sn = vnoised(sq, 292u);
-      dg += vec3f(sn.y * (0.8 / 0.9) - sn.z * (0.6 / 5.0), 0.0, sn.y * (0.6 / 0.9) + sn.z * (0.8 / 5.0)) * 0.12 * ws * gl * (0.3 + 0.7 * snow);
-      ice *= 1.0 + 0.05 * sn.x * ws;
+      dg += vec3f(sn.y * (0.8 / 0.9) - sn.z * (0.6 / 5.0), 0.0, sn.y * (0.6 / 0.9) + sn.z * (0.8 / 5.0)) * 0.12 * ws * gl;
+      ice *= 1.0 + 0.04 * sn.x * ws;
     }
-    // crevasses: rim white -> cyan -> deep blue with depth
-    let crev = mB.x;
-    ice = mix(ice, vec3f(0.12, 0.45, 0.7), sstep(0.08, 0.45, crev));
-    ice = mix(ice, vec3f(0.01, 0.05, 0.2), sstep(0.45, 0.95, crev));
-    // black sand with a wet sheen near the water and stranded ice chunks
+    // nunataks: near-black basalt, frost-shattered, snow in their hollows and ledges
+    var nun = M1v.rgb * (0.7 + 0.4 * nM) * rd.x;
+    nun = mix(nun, snowC * 0.97, snowRock);
+    // black-sand outwash: braided wet channels, stranded ice chunks near the water
     var sand = M3v.rgb * (0.8 + 0.4 * gd.x + 0.3 * nM);
-    let wetS = sstep(1.2, 0.2, h + 0.3 * nS);
+    let braid = 1.0 - sstep(0.04, 0.12, abs(vn(vec2f(acr * (1.0 / 35.0), along * (1.0 / 220.0)), 295u)));
+    let plain = sstep(4.0, 1.5, h) * sstep(-0.2, 0.3, h) * (1.0 - gl);
+    let wetS = max(sstep(1.2, 0.2, h + 0.3 * nS), braid * plain * 0.8);
     var chunk = 0.0;
     if (fp < 0.2 && h > 0.05 && h < 3.0) {
       let pb = pebbles(p.xz + vec2f(13.0, 7.0), 1.2);
@@ -548,35 +682,41 @@ fn strataAt(s: f32) -> vec3f {
       dg += vec3f(pb.y, 0.0, pb.z) * 1.4 * has;
     }
     sand = mix(sand, vec3f(0.62, 0.8, 0.88), chunk);
-    var ia = mix(sand, ice, gl);
+    var land = mix(sand, nun, max(rockW, sstep(8.0, 18.0, h)));
+    var ia = mix(land, ice, gl);
+    // bergs: blue-white with cyan translucent rims and faces, a pale turquoise shelf under the water
     let bergM = mB.z;
     let berg = sstep(0.5, 0.6, bergM);
     let shelf = sstep(0.0, 0.08, bergM) * (1.0 - berg);
     let thin = (1.0 - sstep(0.5, 0.8, bergM)) * berg; // thin rim of the berg
-    var bc = mix(vec3f(0.55, 0.78, 0.88), vec3f(0.85, 0.93, 0.97), sstep(-0.2, 0.4, vn(vec2f(h * (1.0 / 0.7), u * 0.05), 293u)));
-    bc = mix(bc, vec3f(0.2, 0.62, 0.78), max(thin, sstep(0.5, 0.85, slope)) * 0.7); // translucent cyan edges
+    var bc = mix(vec3f(0.6, 0.8, 0.9), vec3f(0.88, 0.94, 0.98), sstep(-0.2, 0.4, vn(vec2f(h * (1.0 / 0.7), u * 0.05), 293u)));
+    bc = mix(bc, vec3f(0.18, 0.6, 0.76), max(thin, sstep(0.5, 0.85, slope)) * 0.7);
     ia = mix(ia, bc, berg);
     ia = mix(ia, vec3f(0.3, 0.75, 0.82), shelf);
     alb = mix(alb, ia, wIce);
-    let glow = crev * crev * 0.55 + berg * (thin * 0.35 + sstep(0.5, 0.9, slope) * 0.12) + shelf * 0.5 + gl * sstep(0.5, 0.85, slope) * 0.06;
+    iceSnow = (snowOnIce * gl + snowRock * (1.0 - gl) * (1.0 - plain) + berg * (1.0 - thin) * 0.6) * wIce;
+    iceThin = (thin + steepI * gl * 0.7 + crev * 0.5 + ser * 0.3 + shelf * 0.5) * wIce;
+    let glow = crev * crev * 0.55 + berg * (thin * 0.35 + sstep(0.5, 0.9, slope) * 0.12) + shelf * 0.5 + gl * steepI * 0.08;
     let gcol = mix(M6v.rgb, vec3f(0.05, 0.3, 0.9), crev * 0.6);
     emis += gcol * M6v.w * glow * wIce * 0.6;
-    rough = mix(rough, mix(mix(0.3, 0.12, chunk), 0.22, gl), wIce);
+    let iceR = mix(0.3, 0.16, steepI);
+    rough = mix(rough, mix(mix(mix(0.85, 0.3, chunk), iceR, gl), 0.7, max(iceSnow, 0.0)), wIce);
     rough = mix(rough, 0.14, wetS * (1.0 - gl) * wIce);
-    f0 = mix(f0, mix(0.03, 0.05, chunk), wIce);
+    f0 = mix(f0, mix(0.03, 0.05, max(chunk, gl * (1.0 - snowOnIce))), wIce);
     wet = max(wet, (1.0 - gl) * wetS * 0.7 * wIce);
     dg *= 1.0 - shelf;
   }
 
   // ---- Lumen Deep: near-black velvet ground, delta veins pulsing out of glowing sinkholes, amber lichen,
   //      pale teal faceted crystals with inner glow ----
-  if (wLum > 0.01) {
-    var lg = M1v.rgb * (0.75 + 0.35 * gd.x + 0.25 * nM);
-    // amber-gold lichen patches: the complementary accent
-    let lichN = fbm(p.xz * (1.0 / 14.0), 2, 302u) + 0.35 * nM;
-    let lich = sstep(0.55, 0.7, lichN) * (1.0 - sstep(0.3, 0.5, slope)) * sstep(0.2, 0.5, vn(p.xz * (1.0 / 3.3), 304u) + 0.4);
-    lg = mix(lg, vec3f(0.22, 0.11, 0.015) * (0.75 + 0.5 * gd.x), lich * 0.9);
-    emis += vec3f(0.45, 0.22, 0.03) * lich * 0.03 * wLum;
+  if (wLum > 0.01 && !toff(4u)) {
+    // near-black indigo velvet
+    var lg = mix(M1v.rgb, vec3f(0.012, 0.01, 0.032), 0.7) * (0.75 + 0.35 * gd.x + 0.25 * nM);
+    // amber-gold lichen: large soft patches (tens of metres) with a speckled edge: the complementary accent
+    let lichN = 0.7 * nM + 0.55 * nL + 0.25 * nS;
+    let lich = sstep(0.25, 0.7, lichN) * (1.0 - sstep(0.3, 0.5, slope)) * (0.75 + 0.25 * sstep(-0.3, 0.4, gd.x + nS));
+    lg = mix(lg, vec3f(0.26, 0.13, 0.02) * (0.75 + 0.5 * gd.x), lich * 0.9);
+    emis += vec3f(0.45, 0.22, 0.03) * lich * 0.035 * wLum;
     // veins: bold, branching, pulsing outward from the nearest sinkhole
     let rho = mA.x * 6.0;
     let vein = mA.w;
@@ -591,9 +731,12 @@ fn strataAt(s: f32) -> vec3f {
     let inner = 0.2 + 0.8 * pow(1.0 - max(dot(gn, V), 0.0), 2.0);
     emis += M6v.rgb * cr * M6v.w * inner * 0.28 * wLum;
     lg = mix(lg, ccol, cr);
-    // sinkhole floor glows through the water
+    // the pools at the delta sources: bright cyan water and a glowing rim
     let underL = sstep(0.0, -4.0, h);
-    emis += M6v.rgb * underL * 0.6 * M6v.w * wLum;
+    emis += mix(M6v.rgb, vec3f(0.4, 1.0, 0.95), 0.4) * underL * 1.2 * M6v.w * wLum;
+    let rim = sstep(0.9, 0.98, rho) * sstep(1.08, 1.0, rho) * sstep(-0.5, 0.6, h);
+    emis += M6v.rgb * rim * 0.35 * M6v.w * wLum;
+    lg = mix(lg, vec3f(0.05, 0.25, 0.24), rim * 0.5);
     // sparse glints in the velvet
     if (fp < 0.1) {
       let sc = floor(p.xz * 2.0);
@@ -616,6 +759,7 @@ fn strataAt(s: f32) -> vec3f {
 
   // detail normal: remove the part of the detail gradient along the normal, tilt against it
   var n = normalize(gn - (dg - gn * dot(dg, gn)));
+  n = normalize(mix(n, vec3f(0.0, 1.0, 0.0), flatN));
   if (dot(n, V) < 0.02) { n = normalize(n + V * (0.02 - dot(n, V))); }
 
   // ---- light ----
@@ -625,15 +769,21 @@ fn strataAt(s: f32) -> vec3f {
   let jit = ign(in.pos.xy);
   var sh = 0.0;
   let ndl = dot(n, L);
-  if (horizon > 0.0 && dot(gn, L) > -0.1) {
-    var steps = i32(mix(22.0, 10.0, sstep(400.0, 4000.0, dist)));
-    if (q < 0.5) { steps = steps / 2 + 1; }
-    sh = sunShadow(p + gn * (0.3 + dist * 0.002), L, dist, S6v.y, jit, steps);
+  // baked shadow: each level marched its own heights toward the sun at bake time; near casters come from the fine
+  // level, ridges and mountains from the coarser two (2 extra fetches, no per-pixel march)
+  let sd1 = shadeL(2u, l0, e, p.xz);
+  let sd2 = shadeL(4u, l0, e, p.xz);
+  var vis = sd0.y * mix(1.0, sd1.y, 0.7);
+  if (toff(8u)) { vis = 1.0; }
+  if (horizon > 0.0 && dot(gn, L) > -0.1 && !toff(2u)) {
+    sh = min(sd0.x, min(sd1.x, sd2.x));
+    if (toff(8u)) { sh = 1.0; }
     sh *= cloudShadow(p, L, rw); // cloud shadows (common.wgsl, same coverage field as the cloud pass)
   }
-  // occlusion from the baked ring concavity at three scales
+  if (toff(2u)) { sh = 1.0; }
+  // occlusion from the baked ring concavity at three scales and the baked sky visibility
   let occ = max(ca, 0.0) * 0.9 + max(cb, 0.0) * 1.6 + max(cc, 0.0) * 2.2;
-  let ao = clamp(1.0 - occ, 0.3, 1.0) * clamp(1.0 - max(conc, 0.0) * 0.5, 0.55, 1.0);
+  let ao = clamp(1.0 - occ, 0.3, 1.0) * clamp(1.0 - max(conc, 0.0) * 0.5, 0.55, 1.0) * mix(0.5, 1.0, vis);
 
   let zen = S2v.rgb * S3v.w;
   let hor = S3v.rgb * S3v.w;
@@ -649,6 +799,26 @@ fn strataAt(s: f32) -> vec3f {
     col += alb * gcol * wrapG * 1.2 * ao;
     let rimF = pow(1.0 - max(dot(n, V), 0.0), 4.0);
     col += mix(hor, vec3f(0.3, 0.28, 0.7) * S3v.w, 0.6) * rimF * sheen * 0.3 * ao * (0.4 + 0.6 * wrapG);
+  }
+  // Aurora Ice under the low moon and the aurora: snow glitters (per-crystal glints that twinkle as the view moves,
+  // lit by the key light and by the sky), thin ice glows cyan from light scattered through it, and snow and ice
+  // brighten looking towards the light (forward scattering)
+  if (iceSnow + iceThin > 0.01) {
+    let fwd = pow(max(dot(-V, L), 0.0), 6.0) * horizon;
+    col += alb * sunC * fwd * (0.35 * iceSnow + 0.8 * iceThin) * mix(0.5, 1.0, sh);
+    let wrap = clamp((dot(n, L) + 0.6) / 1.6, 0.0, 1.0);
+    col += vec3f(0.1, 0.55, 0.7) * iceThin * (sunC * wrap * 0.35 + skyUp * 0.6) * ao;
+    if (iceSnow > 0.01 && fp < 0.25) {
+      let gc = floor(p.xz * 6.0);
+      let gh = hf(i32(gc.x), i32(gc.y), 296u);
+      let gpos = length(p.xz * 6.0 - gc - 0.5);
+      let vb = floor(dot(V, vec3f(37.0, 23.0, 29.0)) * 2.0); // view bucket: glints switch as the camera moves
+      let tw = hf(i32(gc.x) + i32(vb), i32(gc.y), 297u);
+      let gl1 = select(0.0, 1.0, gh < 0.06) * sstep(0.22, 0.05, gpos) * bl(0.17, fp) * step(0.82, tw);
+      let gn2 = normalize(n + 0.5 * vec3f(hf(i32(gc.x), i32(gc.y), 298u) - 0.5, 0.0, hf(i32(gc.x), i32(gc.y), 299u) - 0.5));
+      let spk = pow(max(dot(reflect(-V, gn2), L), 0.0), 24.0) * sh * horizon;
+      col += (sunC * spk * 6.0 + skyUp * 1.5 + S7v.rgb * S7v.w * 4.0) * gl1 * iceSnow;
+    }
   }
   // specular: sun + sky reflection for smooth surfaces
   let sp = ggx(n, V, L, rough, f0) * max(ndl, 0.0) * sh;
