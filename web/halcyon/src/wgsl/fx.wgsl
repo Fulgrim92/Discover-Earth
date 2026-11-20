@@ -320,23 +320,25 @@ struct KOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f, @location(1
   let B = basis(dir);
   // a loose helix of motes drifting along the line
   let ph = h * 6.2831853 + tm * (0.6 + h * 0.5) + s * 9.0;
-  let rad = (0.35 + 0.5 * hash11(ii + 77u)) * sin(3.1415926 * s);
+  let rad = (0.25 + 0.35 * hash11(ii + 77u)) * sin(3.1415926 * s);
   let c = A + ax * s + (B[0] * cos(ph) + B[1] * sin(ph)) * rad;
   let d = length(c - VW.cam.xyz);
   let ps = pixAt(d);
-  let sz = max(0.03, ps * 2.2);
+  // a guide, not a light source: each mote stays about 1.5 px wide at any distance (so a run of near motes never
+  // stacks into a bright column), dim, and fades out within ~20 m of the camera and of the drone
+  let sz = max(ps * 1.6, 0.004);
   let l = QUAD[vi];
   let wp = c + (VW.right.xyz * l.x + VW.up.xyz * l.y) * sz;
   o.pos = toClip(wp);
-  // fade in and out along the line, twinkle, and conserve some energy when sub-pixel
   let tw = 0.6 + 0.4 * sin(tm * (3.0 + h * 4.0) + h * 40.0);
-  let e = sin(3.1415926 * s) * tw * pow(0.03 / sz, 1.1) * U.sp1.w * airT(normalize(c - VW.cam.xyz), d);
+  let near = sstep(5.0, 22.0, d) * sstep(4.0, 20.0, length(c - U.drone.xyz));
+  let e = sin(3.1415926 * s) * tw * near * U.sp1.w * airT(normalize(c - VW.cam.xyz), d);
   // hide motes behind the scene (tested at the centre)
   let pp = clipToPix(o.pos);
   let vis = clamp((sceneDist(pp) - d) / 0.5, 0.0, 1.0);
-  if (f32(ii) >= N || o.pos.w <= 0.0 || vis <= 0.0 || L < 1.0) { o.pos = vec4f(0.0); }
+  if (f32(ii) >= N || o.pos.w <= 0.0 || vis <= 0.0 || L < 1.0 || e <= 0.001) { o.pos = vec4f(0.0); }
   o.uv = l;
-  o.col = vec3f(1.0, 0.78, 0.45) * e * vis * 3.0;
+  o.col = vec3f(1.0, 0.8, 0.5) * e * vis * 0.55;
   return o;
 }
 @fragment fn fsSpark(in: KOut) -> @location(0) vec4f {

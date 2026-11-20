@@ -10,7 +10,8 @@ function el(css, parent) {
   return d;
 }
 
-// Start overlay: title, one call to action, three lines of controls. Fades out on the first gesture.
+// Start overlay: title, one call to action, three lines of controls. Fades out on the first gesture, once the
+// pipelines have compiled: until then the call to action is a progress line (progress(done, total) from gpu.js).
 export function startOverlay(onStart) {
   const o = el('position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;align-items:center;justify-content:center;' +
     'background:radial-gradient(ellipse at 50% 55%,rgba(0,0,0,0.05),rgba(0,0,0,0.45));transition:opacity 1.2s ease;cursor:pointer;' + FONT);
@@ -19,14 +20,18 @@ export function startOverlay(onStart) {
   const s = el('margin-top:8px;font-size:12px;letter-spacing:0.32em;font-variant:all-small-caps;opacity:0.7', o);
   s.textContent = 'a drone atlas of earth and beyond';
   const c = el('margin-top:44px;font-size:16px;letter-spacing:0.18em;font-variant:all-small-caps', o);
-  c.textContent = 'click or press any button to fly';
+  const CTA = 'click or press any button to fly';
+  c.textContent = 'preparing';
+  const bar = el('margin-top:10px;width:180px;height:1px;background:rgba(255,255,255,0.18)', o);
+  const fill = el('height:1px;width:0;background:rgba(255,255,255,0.75);transition:width 0.25s ease', bar);
+  let ready = false;
   const k = el('margin-top:30px;font-size:13px;line-height:1.9;text-align:center;font-variant:all-small-caps;opacity:0.72;white-space:pre', o);
   k.textContent = 'w a s d  climb and yaw  ·  arrows  fly forward and sideways\n' +
     'f  gps / angle / acro  ·  c  camera  ·  space  boost  ·  r  reset\n' +
     '1-6  realms  ·  h  hud  ·  m  mute  ·  p  gamepad and rc transmitter setup';
   let done = false;
   const go = () => {
-    if (done) return;
+    if (done || !ready) return;
     done = true;
     o.style.opacity = '0'; o.style.pointerEvents = 'none';
     setTimeout(() => o.remove(), 1400);
@@ -35,7 +40,14 @@ export function startOverlay(onStart) {
   };
   addEventListener('pointerdown', go, true);
   addEventListener('keydown', go, true);
-  return { dismiss: go, get done() { return done; } };
+  const progress = (k, n) => {
+    if (ready) return;
+    fill.style.width = (n > 0 ? Math.round((180 * k) / n) : 180) + 'px';
+    if (k >= n) { ready = true; c.textContent = CTA; bar.style.transition = 'opacity 0.8s'; bar.style.opacity = '0'; o.style.cursor = 'pointer'; }
+    else c.textContent = 'preparing shaders  ' + k + ' / ' + n;
+  };
+  o.style.cursor = 'progress';
+  return { dismiss: go, progress, get done() { return done; } };
 }
 
 const MSG = {

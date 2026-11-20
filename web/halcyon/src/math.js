@@ -102,3 +102,21 @@ export function mat4Invert(out, m) {
   out[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
   return out;
 }
+
+// WebXR projection -> this renderer's projection.
+// XRView.projectionMatrix in a WebGPU session (WebXR/WebGPU binding: "clip-space depth range of [0, 1]") is a
+// standard perspective: for a view-space point (x, y, z) with z < 0 in front,
+//   clip.x = P0 x + P4 y + P8 z + P12,  clip.y = P1 x + P5 y + P9 z + P13,  clip.w = P3 x + P7 y + P11 z + P15 (= -z),
+//   clip.z = P10 z + P14 with P10 = f / (n - f), P14 = n f / (n - f): ndc z = 0 at the near plane, 1 at the far one.
+// P8 = (r + l) / (r - l) and P9 = (t + b) / (t - b) carry the asymmetric (off-axis) frustum of each eye.
+// This renderer uses infinite reverse-Z (mat4PerspRevZ): clip.z = near, so ndc z = near / -z: 1 at the near plane,
+// falling to 0 at infinity (depth test 'greater', clear 0). The conversion keeps the x, y and w rows exactly (the
+// frustum, asymmetry included) and replaces the z row: P2 = P6 = P10 = 0, P14 = near. Depth never goes to the
+// XR compositor (no depthStencilFormat), so the near plane is ours to choose. tools/xrtest.mjs checks it against
+// a known frustum. off: output offset (floats) into out.
+export function mat4XRToRevZ(out, p, near, off) {
+  const o = off || 0;
+  for (let i = 0; i < 16; i++) out[o + i] = p[i];
+  out[o + 2] = 0; out[o + 6] = 0; out[o + 10] = 0; out[o + 14] = near;
+  return out;
+}

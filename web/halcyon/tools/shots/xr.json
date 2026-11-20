@@ -1,0 +1,10 @@
+{
+  "defaults": { "w": 896, "h": 464, "xrw": 448, "xrh": 464, "t": 20, "hud": 0, "sim": 1, "simt": 2, "realm": 0, "xrframes": 3 },
+  "shots": [
+    { "name": "xr_los_array",      "params": { "xrmock": 1, "xrview": "los", "xrhead": "0,1.65,0,0,18" } },
+    { "name": "xr_los_sbs",        "params": { "xrmock": 2, "xrview": "los", "xrhead": "0,1.65,0,0,18" } },
+    { "name": "xr_los_hands",      "params": { "xrmock": 1, "xrview": "los", "xrhead": "0,1.65,0,0,-38", "xrsticks": "0.6,0.8,-0.5,0.3" } },
+    { "name": "xr_fpv_array",      "params": { "xrmock": 1, "xrview": "fpv", "xrhead": "0,1.65,0,0,0" } },
+    { "name": "xr_fpv_sbs_vignette", "params": { "xrmock": 2, "xrview": "fpv", "xrhead": "0,1.65,0,0,0", "xrvig": 0.75 } }
+  ]
+}

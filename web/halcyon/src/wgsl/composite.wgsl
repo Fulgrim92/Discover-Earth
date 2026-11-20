@@ -8,14 +8,14 @@
 @group(2) @binding(4) var cloudR: texture_2d<f32>;
 @group(2) @binding(5) var cloudD: texture_2d<f32>;
 
-// ---- clouds: depth-aware upsample of the half-res cloud pass (front clouds + clouds in the mirror) ----
+// ---- clouds: depth-aware upsample of the half-res (1/3 in VR) cloud pass (front clouds + clouds in the mirror) ----
 var<private> gRC: vec4f; // mirrored clouds for this pixel, read by reflectRay's sky branch
 
 struct CUp { front: vec4f, refl: vec4f }
 // 3x3 half-res neighbourhood: a small Gaussian (it also averages out the march jitter) times a depth weight
 fn cloudUp(pix: vec2f, dist: f32) -> CUp {
   let hs = vec2i(textureDimensions(cloudT));
-  let S = max(round(VW.size.x / f32(hs.x)), 1.0); // 2 (half res) or 4 (quarter, quality=low)
+  let S = max(round(VW.size.x / f32(hs.x)), 1.0); // 2 (half res), 4 (quarter, quality=low) or 3 (VR)
   let ic = vec2i(floor(pix / S));
   var o: CUp;
   o.front = vec4f(0.0); o.refl = vec4f(0.0);
@@ -190,7 +190,7 @@ struct VO { @builtin(position) pos: vec4f }
 
   var tEnd = dist;
   // water plane at sea level
-  if (ro.y > 0.0 && d.y < 0.0 && (VW.cam.w == 0.0 || VW.cam.w >= 5.0)) {
+  if (ro.y > 0.0 && d.y < 0.0 && (VW.cam.w == 0.0 || VW.cam.w >= 5.0) && !isOff(OFF_WATER)) {
     let tw = ro.y / -d.y;
     // r16float distance is quantised (0.5 m at 1 km): allow for it, or 4 cm of water flickers in and out
     if (tw < dist + max(0.6, dist * 0.0015)) {

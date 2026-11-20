@@ -26,7 +26,7 @@ struct VOut {
   let gp = mc.xy + vec2f(f32(ix - hg), f32(iz - hg)) * s;
   let half = f32(hg) * s;
   let cam = VW.cam.xyz;
-  let dc = max(abs(gp.x - cam.x), abs(gp.y - cam.z)) / half;
+  let dc = max(abs(gp.x - VW.anc.x), abs(gp.y - VW.anc.z)) / half; // morph from the head: same mesh in both eyes
   var m = clamp((dc - 0.62) / 0.26, 0.0, 1.0);
   if (li + 1u >= nLevels()) { m = 0.0; }
   let odd = vec2f(f32(ix & 1), f32(iz & 1));
@@ -266,7 +266,8 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
   let slope = 1.0 - gn.y;
   let h = p.y;
   let ndvG = max(dot(gn, V), 0.04);
-  let fp = dist * 2.0 * VW.fwd.w * VW.size.w * inverseSqrt(ndvG); // pixel footprint on the surface (m)
+  var fp = dist * 2.0 * VW.fwd.w * VW.size.w * inverseSqrt(ndvG); // pixel footprint on the surface (m)
+  if (isOff(OFF_TDETAIL)) { fp = max(fp, 8.0); } // ablation: every micro-detail octave fades out as if far away
 
   // realm blend
   let rw = realmWeights(p.xz);
@@ -818,16 +819,16 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
   let sd1 = shadeL(2u, l0, e, p.xz);
   let sd2 = shadeL(4u, l0, e, p.xz);
   var vis = sd0.y * mix(1.0, sd1.y, 0.7);
-  if (toff(8u)) { vis = 1.0; }
+  if (toff(8u) || isOff(OFF_TAO)) { vis = 1.0; }
   if (horizon > 0.0 && dot(gn, L) > -0.1 && !toff(2u)) {
     sh = min(sd0.x, min(sd1.x, sd2.x));
-    if (toff(8u)) { sh = 1.0; }
+    if (toff(8u) || isOff(OFF_TSHADOW)) { sh = 1.0; }
     sh *= cloudShadow(p, L, rw); // cloud shadows (common.wgsl, same coverage field as the cloud pass)
   }
   if (toff(2u)) { sh = 1.0; }
   // occlusion from the baked ring concavity at three scales and the baked sky visibility
   let occ = max(ca, 0.0) * 0.9 + max(cb, 0.0) * 1.6 + max(cc, 0.0) * 2.2;
-  let ao = clamp(1.0 - occ, 0.3, 1.0) * clamp(1.0 - max(conc, 0.0) * 0.5, 0.55, 1.0) * mix(0.5, 1.0, vis);
+  let ao = select(clamp(1.0 - occ, 0.3, 1.0) * clamp(1.0 - max(conc, 0.0) * 0.5, 0.55, 1.0) * mix(0.5, 1.0, vis), 1.0, isOff(OFF_TAO));
 
   let zen = S2v.rgb * S3v.w;
   let hor = S3v.rgb * S3v.w;
