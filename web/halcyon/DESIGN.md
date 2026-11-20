@@ -298,3 +298,24 @@ feathers on the wind, a changed sky). Sound is half of it: procedural calls, sur
 
 Test: `?enc=<type>&et=<seconds into it>` forces an encounter for captures; `tools/shots/encounters.json` holds one
 view per encounter at build-up and peak.
+
+## 13. Addendum from C, 2026-11-20: the atlas grows
+
+C's words: "Think of the most beautiful natural resorts and areas of the world which enables the player to explore."
+
+The planet becomes an atlas of twelve realms: the six above plus six more, chosen so that each adds a kind of
+flying and a kind of light the others do not have. Curated layout: Home in the centre, two hexagonal rings (19
+cells) so every realm appears near the start; beyond that, hash-assigned as before. Every realm obeys sections 5,
+11 and 12 (photoreal, melts into its neighbours, has weather, wildlife and encounters).
+
+| # | Realm | Real anchors | Shape and flying | Light | Life and encounters |
+|---|-------|--------------|------------------|-------|---------------------|
+| 6 | **Coral Atoll** | Bora Bora, Maldives, Raja Ampat, Whitehaven | Ring reefs and sand motus around a jungle-clad volcanic core; lagoon 1-30 m deep with reef patterns visible through water; skim centimetres above glass-clear water | Tropical noon, towering trade-wind cumulus, squalls with rainbows | Manta rays and reef sharks as shadows under the surface, turtles, frigatebirds, dolphins riding your bow; bioluminescent surf at night |
+| 7 | **Slot Canyons** | Antelope Canyon, The Wave, Zion Narrows, Grand Canyon | Mesas cut by deep, sinuous slots 3-15 m wide and 60 m deep, widening into amphitheatres: the precision course | High sun pouring down as light shafts in dust; glowing orange bounce light on the walls | Ravens, bighorn sheep on ledges, a flash flood roaring through a side canyon, a condor at eye level |
+| 8 | **Alpine Crown** | Dolomites, Torres del Paine, Moraine Lake, Lauterbrunnen | Granite towers and hanging glaciers above milky-turquoise lakes; larch and pine forest; waterfalls free-falling 300 m into a U-valley | Alpenglow at sunrise, clearing storm, cloud banners off summits | Eagles soaring the walls, ibex, marmot calls, an avalanche on the far wall, a glory around the drone's shadow |
+| 9 | **Falling Waters** | Plitvice, Jiuzhaigou, Iguazu, Havasu, Pamukkale | Stepped travertine terraces holding jewel-blue pools, joined by hundreds of cascades, ending in one immense horseshoe fall with a permanent mist plume | Soft overcast breaking to sun; rainbows in the spray, wet-leaf greens | Swifts flying through the falls, butterflies in clouds, fish visible in the pools, a moonbow at night |
+| 10 | **Fire Fields** | Fagradalsfjall, Kilauea, Erta Ale, Na Pali | Fresh black lava plains, spatter cones, a lava river and lava falls to the sea with steam explosions; old flows under green moss | Blue hour: the lava is the light source; orange underlit steam and clouds | Lava fountaining, a new skylight opening, volcanic lightning in the plume, seabirds along the steaming coast |
+| 11 | **Red Dunes** | Sossusvlei and Deadvlei, Rub' al Khali, White Sands | Star dunes 300 m high with knife crests, white clay pans with dead camel-thorn trees, a dry river; ridge-surfing lines | First light: one face orange, the other in blue shadow; fog rolling in from a cold coast | Oryx walking a crest, ostriches, sand streaming off ridges in wind, a sand storm front, a night of zodiacal light |
+
+Rule for adding a realm: it is a row of parameters plus at most two new terrain terms, two materials, one flora
+set, one fauna set and three encounters; nothing in the frame loop may scale with the number of realms.
