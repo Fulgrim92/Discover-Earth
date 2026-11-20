@@ -201,3 +201,48 @@ Headless Chromium flags that work here: `--enable-unsafe-webgpu --enable-feature
 capture at 960x540. It proves the picture, not the frame time. Frame time is measured on C's PC with `?bench=1`.
 
 **Nobody is done until they have looked at their own renders** (the Read tool shows PNGs) and fixed what is ugly.
+
+## 11. Addendum from C, 2026-11-20: fluid transitions and photorealism
+
+C's words: "make it so the transition from one area to the next is fluid and together so the dreamlike design
+remains. Ideally we make it photorealistic graphics as initially designed."
+
+### 11.1 The Drift (realm transitions)
+
+A border is never a line, an outcrop pattern or a cross-fade of two pictures. It is a place: a 2-3 km wide zone
+where one world **melts** into the next, the way scenes change in a dream. Rules:
+
+- Nothing may reveal the cell geometry. Borders are warped by large-scale domain warp; the blend is smooth
+  (smootherstep over ~2.4 km), never thresholded.
+- **Landform morphs continuously** (the blended row drives one terrain function; keep it that way). Features of
+  one realm grow out of features of the other: fjord ridges stretch into Painted strata; Painted terraces flatten
+  and flood into the Mirror; pillars rise out of fjord cliffs; glacier ice creeps over meadow; Lumen veins thread
+  into Earth soil before the ground darkens.
+- **Skin flows.** Inside the zone, material weights are displaced by a slow, time-animated flow field (period
+  20-40 s, advected like ink in water), so the surface of one world visibly drifts into the other in tongues and
+  eddies. Height does not animate (physics and bake stay static); only materials, emission, wetness and flora do.
+- **Light and air morph together**: sun direction, sky, fog, cloud type, water colour, exposure and grade all blend
+  with the same weight, plus a faint **veil** in the middle of the zone: thin luminous mist that carries both
+  realms' colours, with slightly raised bloom, so crossing feels like passing through a held breath.
+- **Life overlaps**: both realms' flora coexist and thin out through each other (glow-bulbs among meadow grass,
+  ice crystals on flowers); creatures may cross.
+- Sound cross-fades modes through shared notes.
+- Test views: one per curated border, at 5 m and at 150 m, at the midpoint and at both quarter points.
+
+### 11.2 Photoreal
+
+The target is a photograph taken from a drone, not concept art. Earth realms must hold up next to real photos of
+their anchors (the repo has Saksun reference photos in `content/references/saksun/`: use them for Home Fjords).
+Lumen Deep stays unearthly in content but is rendered with the same physical camera and materials.
+
+- Physically based light: real sun/sky ratio, Rayleigh/Mie atmosphere with ozone, energy-conserving GGX specular,
+  measured-range albedos (grass 0.08-0.2, basalt 0.05-0.1, sand 0.3-0.4, snow 0.8-0.9, water F0 0.02), no
+  hand-painted rim lights or tinted shadows beyond what sky light gives.
+- Photographic camera: exposure in EV, a neutral filmic curve, natural saturation (colour comes from the place and
+  the light, not from the grade), subtle lens effects only.
+- Natural geometry and texture statistics: erosion-shaped landforms (drainage networks, talus, alluvial fans),
+  multi-scale detail down to centimetres near the camera, no cartoon bands, no flat-colour fills, no smooth
+  blob shapes; vegetation with real density and colour variance.
+- Stylisation that must go: neon outlines, toy-like mushrooms and crystals, barcode or poster-like sky features,
+  uniformly saturated fills.
+- Where photorealism and frame budget conflict, look wins (priority 1), but dynamic resolution must keep pacing.
