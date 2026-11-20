@@ -13,6 +13,9 @@ import * as terrain from './fx/terrain.js';
 import * as clouds from './fx/clouds.js';
 import * as composite from './fx/composite.js';
 import * as post from './fx/post.js';
+import * as flora from './fx/flora.js';
+import * as fauna from './fx/fauna.js';
+import * as particles from './fx/particles.js';
 
 export const world = { heightAt, CURATED };
 
@@ -105,6 +108,7 @@ function makeTargets(w, h) {
   t.cloudV = clouds.bind(ctx, t);
   composite.bind(ctx, t);
   post.bind(ctx, t);
+  particles.bind(ctx, t);
   return t;
 }
 
@@ -153,6 +157,7 @@ async function init() {
     ctx.views.push({ data: new Float32Array(VIEW_FLOATS), buf, bg0: bindGroup(ctx.bgl0, [ctx.frameBuf, buf, realmBuf]), vx: 0, vy: 0, vw: 1, vh: 1, eye: i === 0 ? (P.stereo ? -0.032 : 0) : 0.032 });
   }
   clipmap.init(ctx); terrain.init(ctx); clouds.init(ctx); composite.init(ctx); post.init(ctx);
+  flora.init(ctx); fauna.init(ctx); particles.init(ctx);
   layoutViews();
   initCamera();
   if (!P.shot) {
@@ -192,9 +197,11 @@ function renderView(v, enc, canvasView, first) {
   writeView(v);
   const p = enc.beginRenderPass(opaqueDesc);
   terrain.draw(ctx, p, v);
+  flora.draw(ctx, p, v); fauna.draw(ctx, p, v);
   p.end();
   clouds.draw(ctx, enc, v);
   composite.draw(ctx, enc, v);
+  particles.draw(ctx, enc, v);
   post.draw(ctx, enc, v, canvasView, first);
 }
 
