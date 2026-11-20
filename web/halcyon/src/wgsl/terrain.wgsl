@@ -26,7 +26,7 @@ struct VOut {
   let gp = mc.xy + vec2f(f32(ix - hg), f32(iz - hg)) * s;
   let half = f32(hg) * s;
   let cam = VW.cam.xyz;
-  let dc = max(abs(gp.x - VW.anc.x), abs(gp.y - VW.anc.z)) / half; // morph from the head: same mesh in both eyes
+  let dc = max(abs(gp.x - cam.x), abs(gp.y - cam.z)) / half;
   var m = clamp((dc - 0.62) / 0.26, 0.0, 1.0);
   if (li + 1u >= nLevels()) { m = 0.0; }
   let odd = vec2f(f32(ix & 1), f32(iz & 1));
@@ -228,6 +228,11 @@ fn shadeL(off: u32, l0: u32, e: f32, p: vec2f) -> vec4f {
   if (e > 0.0 && l0 + off < n) { s = mix(s, clipSH(clipLevel(p, l0 + off + 1u, 4.0), p), e); }
   return s;
 }
+fn lvlColor(l: u32) -> vec3f {
+  var c = array<vec3f, 9>(vec3f(1.0), vec3f(1.0, 0.1, 0.1), vec3f(1.0, 0.55, 0.1), vec3f(1.0, 1.0, 0.1), vec3f(0.2, 1.0, 0.2),
+    vec3f(0.1, 1.0, 1.0), vec3f(0.2, 0.3, 1.0), vec3f(0.7, 0.2, 1.0), vec3f(0.45));
+  return c[min(l, 8u)];
+}
 fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
 
 @fragment fn fs(in: VOut) -> FOut {
@@ -266,8 +271,7 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
   let slope = 1.0 - gn.y;
   let h = p.y;
   let ndvG = max(dot(gn, V), 0.04);
-  var fp = dist * 2.0 * VW.fwd.w * VW.size.w * inverseSqrt(ndvG); // pixel footprint on the surface (m)
-  if (isOff(OFF_TDETAIL)) { fp = max(fp, 8.0); } // ablation: every micro-detail octave fades out as if far away
+  let fp = dist * 2.0 * VW.fwd.w * VW.size.w * inverseSqrt(ndvG); // pixel footprint on the surface (m)
 
   // realm blend
   let rw = realmWeights(p.xz);
@@ -839,6 +843,12 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
   if (VW.cam.w == 4.0) { o.c = vec4f(n * 0.5 + 0.5, 1.0); }
   if (VW.cam.w == 9.0) { o.c = vec4f(mA.xyw, 1.0); }  // masks A: sink distance, pillar wall, veins
   if (VW.cam.w == 10.0) { o.c = vec4f(mB.xyz, 1.0); } // masks B: crevasse, crystal, cone/berg
+  // dbg=20: clip level sampled here (0 white, 1 red, 2 orange, 3 yellow, 4 green, 5 cyan, 6 blue, 7 violet, 8 grey),
+  // darkened inside the cross-fade; dbg=21: the mesh ring drawing this pixel, same colours; dbg=22: age of the
+  // sampled level's bake (green just baked -> red 10 s+; a level re-baked every frame stays bright green)
+  if (VW.cam.w == 20.0) { o.c = vec4f(lvlColor(l0) * (1.0 - 0.5 * e), 1.0); }
+  if (VW.cam.w == 21.0) { o.c = vec4f(lvlColor(in.lvl), 1.0); }
+  if (VW.cam.w == 22.0) { let ag = clamp((FR.time.x - FR.lv[l0].w) / 10.0, 0.0, 1.0); o.c = vec4f(ag, 1.0 - ag, 0.0, 1.0); }
   o.d = vec4f(dist, 0.0, 0.0, 1.0);
   return o;
 }

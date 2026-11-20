@@ -27,7 +27,12 @@ struct B1 { @location(0) h: f32, @location(1) a: vec4f, @location(2) b: vec4f }
 
 fn tH(q: vec2i) -> f32 { return textureLoad(tmpH, clamp(q, vec2i(0), vec2i(513)), 0).x; }
 
-@fragment fn fsGrad(in: VO) -> @location(0) vec4f {
+// pass 2: the level's height (r32float, read by clip.wgsl clipH with textureGather + exact bilinear) and its
+// derivatives (rgba16float, hardware-filtered; .x is unused so no half-float height exists to be read by mistake).
+// Heights never live in half floats: above 256 m they step 0.25-0.5 m, which drew facets, cliff bands and sawtooth
+// ridges on GPUs without float32-filterable (RX 6650 XT, D3D12), where the old single texture fell back to rgba16float.
+struct B2 { @location(0) h: f32, @location(1) d: vec4f }
+@fragment fn fsGrad(in: VO) -> B2 {
   let m = vec2i(floor(in.pos.xy)) + 1;
   let h = tH(m);
   let t = BK.c.z;
@@ -37,8 +42,11 @@ fn tH(q: vec2i) -> f32 { return textureLoad(tmpH, clamp(q, vec2i(0), vec2i(513))
     let a = f32(k) * 0.7853982;
     ring += tH(m + vec2i(round(vec2f(cos(a), sin(a)) * 2.0)));
   }
-  return vec4f(h, (tH(m + vec2i(1, 0)) - tH(m - vec2i(1, 0))) / (2.0 * t), (tH(m + vec2i(0, 1)) - tH(m - vec2i(0, 1))) / (2.0 * t),
-               ring * 0.125 - h);
+  var o: B2;
+  o.h = h;
+  o.d = vec4f(0.0, (tH(m + vec2i(1, 0)) - tH(m - vec2i(1, 0))) / (2.0 * t), (tH(m + vec2i(0, 1)) - tH(m - vec2i(0, 1))) / (2.0 * t),
+              ring * 0.125 - h);
+  return o;
 }
 
 // pass 3 (also run alone when the sun drifts): the level's shade layer (rgba8) from its baked heights.

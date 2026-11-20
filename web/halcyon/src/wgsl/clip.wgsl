@@ -4,6 +4,10 @@
 @group(1) @binding(2) var clipB: texture_2d_array<f32>;
 @group(1) @binding(3) var clipSm: sampler;
 @group(1) @binding(4) var clipSh: texture_2d_array<f32>; // shade: sun shadow, sky visibility, nL, nM (bake.wgsl)
+// Heights: r32float, unfilterable on adapters without float32-filterable, so never put through the linear sampler.
+// clipH gathers the 2x2 texels once and blends them in f32 (exact bilinear, same result with or without the feature).
+@group(1) @binding(5) var clipHt: texture_2d_array<f32>;
+@group(1) @binding(6) var clipPt: sampler; // non-filtering, clamp-to-edge
 fn clipSH(i: u32, p: vec2f) -> vec4f { return textureSampleLevel(clipSh, clipSm, clipUV(i, p), i, 0.0); }
 
 fn nLevels() -> u32 { return u32(FR.misc.x); }
@@ -30,8 +34,20 @@ fn clipUV(i: u32, p: vec2f) -> vec2f {
   let lv = FR.lv[i];
   return ((p - lv.xy) / lv.z + 0.5) * (1.0 / 512.0);
 }
-fn clipS(i: u32, p: vec2f) -> vec4f { return textureSampleLevel(clipT, clipSm, clipUV(i, p), i, 0.0); }
-fn clipH(i: u32, p: vec2f) -> f32 { return clipS(i, p).x; }
+fn clipH(i: u32, p: vec2f) -> f32 {
+  let t = clipUV(i, p) * 512.0 - 0.5;
+  let b = floor(t);
+  let f = t - b;
+  // footprint centred on the shared corner of texels b and b+1: w = (b.x, b.y), z = (b.x+1, b.y), x = (b.x, b.y+1), y = (b.x+1, b.y+1)
+  let g = textureGather(0, clipHt, clipPt, (b + 1.0) * (1.0 / 512.0), i);
+  return mix(mix(g.w, g.z, f.x), mix(g.x, g.y, f.x), f.y);
+}
+// (h, dh/dx, dh/dz, concavity): exact height from clipH, the rest hardware-filtered from rgba16float
+fn clipS(i: u32, p: vec2f) -> vec4f {
+  var s = textureSampleLevel(clipT, clipSm, clipUV(i, p), i, 0.0);
+  s.x = clipH(i, p);
+  return s;
+}
 fn clipMA(i: u32, p: vec2f) -> vec4f { return textureSampleLevel(clipA, clipSm, clipUV(i, p), i, 0.0); }
 fn clipMB(i: u32, p: vec2f) -> vec4f { return textureSampleLevel(clipB, clipSm, clipUV(i, p), i, 0.0); }
 

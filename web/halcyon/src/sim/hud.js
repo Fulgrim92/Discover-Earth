@@ -5,6 +5,8 @@
 const FLIGHT = ['gps', 'angle', 'acro'];
 const CAMS = ['fpv', 'chase', 'line of sight'];
 const REALMS = ['home fjords', 'painted range', 'mirror salt', 'stone forest', 'aurora ice', 'lumen deep'];
+// the compass names the next destination, not where the drone is: "to <realm>" (built once, no per-frame strings)
+const DEST = REALMS.map((n) => 'to ' + n);
 const STATUS = ['', 'crashed', 'transit', 'landed', 'all realms visited'];
 
 const H = {
@@ -136,7 +138,7 @@ export function update(phys, flight, sport, cam, status, realm, rings) {
   const ck = realm < 0 ? -1 : realm * 1000 + d;
   if (ck !== last[4]) {
     last[4] = ck;
-    H.compName.textContent = realm < 0 ? '' : REALMS[realm];
+    H.compName.textContent = realm < 0 ? '' : DEST[realm];
     H.compDist.textContent = realm < 0 ? '' : H.distStr[d];
   }
   let r = rings > 999 ? 999 : rings;
