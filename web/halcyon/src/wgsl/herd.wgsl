@@ -400,8 +400,10 @@ fn coat(sp: u32, part: u32, tint: vec4f, loc: vec2f, wp: vec3f) -> vec3f {
     }
     case 3u: { return mix(vec3f(0.78, 0.8, 0.82), vec3f(0.62, 0.6, 0.56), v * 0.5); }
     case 4u: {
-      let m = sstep(0.1, 0.5, vn(wp.xz * 6.0 + wp.y * 4.0, 962u));
-      return mix(vec3f(0.16, 0.16, 0.15), vec3f(0.3, 0.29, 0.27), m) * mix(1.0, 1.4, sstep(-0.2, -0.6, loc.y));
+      // harbour seal: grey-brown with small dark spots (not bands), paler belly
+      let base = mix(vec3f(0.2, 0.19, 0.17), vec3f(0.28, 0.27, 0.24), vn(wp.xz * 1.5 + wp.y, 962u));
+      let spots = sstep(0.62, 0.7, vn(wp.xz * 13.0 + wp.y * 11.0, 965u));
+      return base * (1.0 - 0.5 * spots) * mix(1.0, 1.4, sstep(-0.2, -0.6, loc.y));
     }
     case 7u: {
       // orca: black back, white belly running forward, white eye patch, grey saddle behind the fin
