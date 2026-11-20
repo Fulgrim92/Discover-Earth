@@ -271,7 +271,18 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
   // realm blend
   let rw = realmWeights(p.xz);
   // the skin drifts (common.wgsl driftW): materials come from flow-displaced, sharpened weights; light does not
-  let rwm = driftW(p.xz, rw);
+  var rwm = driftW(p.xz, rw);
+  // Mirror Salt seeks the low ground in a border: salt crust and brine creep along hollows between the neighbour's
+  // tussocks and ridges instead of averaging into a pale mid tone
+  if (rwm.id[1] >= 0) {
+    let lowG = sstep(-0.12, 0.2, conc + 0.12 * (sd0.w * 2.0 - 1.0));
+    var sw = 0.0;
+    for (var s = 0; s < 4; s++) {
+      if (rwm.id[s] == 2) { rwm.w[s] *= 0.25 + 1.75 * lowG; }
+      sw += rwm.w[s];
+    }
+    rwm.w /= max(sw, 1e-6);
+  }
   let M0v = bfx(rwm, M0); let M1v = bfx(rwm, M1); let M2v = bfx(rwm, M2); let M3v = bfx(rwm, M3);
   let M4v = bfx(rwm, M4); let M5v = bfx(rwm, M5); let M6v = bfx(rwm, M6);
   var S0v = bfx(rw, S0); var S1v = bfx(rw, S1); var S2v = bfx(rw, S2); var S3v = bfx(rw, S3);
@@ -329,7 +340,7 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
   let ridge = sstep(0.0, -0.25, conc);
   let hollow = sstep(0.02, 0.35, conc);
   var grass = M0v.rgb * (0.85 + 0.22 * nL + 0.12 * gd.x);
-  grass = mix(grass, grass * vec3f(1.3, 1.22, 0.78), ridge * 0.65);
+  grass = mix(grass, grass * vec3f(1.22, 1.28, 0.8), ridge * 0.6); // yellow-green on the dry crests
   grass = mix(grass, grass * vec3f(0.62, 0.78, 0.72), hollow * 0.7);
   // heather and dry ochre grass: drifts elongated along the contours, muted, never blotches
   let along0 = dot(p.xz, down);
@@ -338,8 +349,8 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
   let heather = sstep(0.25, 0.6, patchN) * onSlope * M5v.w;
   let ochre = sstep(0.25, 0.6, 0.7 * ridge - 0.4 * patchN) * M5v.w;
   // heather: dark brown-green, darker than the grass rather than redder (no orange blotches under a low sun)
-  grass = mix(grass, mix(grass * 0.55, vec3f(0.07, 0.05, 0.055), 0.5) * (0.85 + 0.3 * gd.x), heather * 0.5);
-  grass = mix(grass, mix(grass, vec3f(0.16, 0.14, 0.06), 0.6) * (0.85 + 0.3 * gd.x), ochre * 0.35);
+  grass = mix(grass, mix(grass * 0.55, vec3f(0.07, 0.05, 0.055), 0.5) * (0.85 + 0.3 * gd.x), heather * 0.3);
+  grass = mix(grass, mix(grass, vec3f(0.16, 0.14, 0.06), 0.6) * (0.85 + 0.3 * gd.x), ochre * 0.18); // ochre and heather only as accents
   // close turf: blade-scale tone so the ground under the flora is never a smear
   let wT = bl(0.08, fp);
   if (wT > 0.0) { grass *= 1.0 + 0.25 * vn(p.xz * (1.0 / 0.08), 236u) * wT; }
@@ -380,7 +391,7 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
   let hi = sstep(M2v.w - 140.0, M2v.w + 90.0, h + 30.0 * nL) * (1.0 - rockW);
   let upl = mix(grass * vec3f(1.04, 1.0, 0.86), M2v.rgb * 0.62 * (0.9 + 0.2 * nM), 0.3);
   let expo = sstep(-0.02, -0.22, conc + 0.04 * nM);
-  let upland = mix(upl, mix(upl * 0.55, vec3f(0.065, 0.05, 0.05), 0.5) * (0.85 + 0.3 * gd.x + 0.15 * nM), expo * 0.55 * M5v.w);
+  let upland = mix(upl, mix(upl * 0.55, vec3f(0.065, 0.05, 0.05), 0.5) * (0.85 + 0.3 * gd.x + 0.15 * nM), expo * 0.35 * M5v.w);
   alb = mix(alb, upland, hi);
   let shore = sstep(M3v.w + 1.2, M3v.w - 0.6, h + nS * 0.6 + nM * 0.5);
   alb = mix(alb, M3v.rgb * (0.85 + 0.3 * nM), shore);
@@ -406,7 +417,7 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
     let ledge = clamp(sstep(0.62, 0.8, led) * T3v.z * 6.0 + tread * 0.6, 0.0, 1.0);
     let broken = sstep(-0.25, 0.35, vn(vec2f(u * (1.0 / 9.0), h * 0.1), 245u) + 0.3 * nS);
     let ledgeG = sstep(0.45, 0.6, ledge + 0.3 * (gH - 0.5) + 0.2 * nS) * broken;
-    var bas = M1v.rgb * flowT * rd.x * vec3f(0.82, 0.9, 1.05);
+    var bas = M1v.rgb * flowT * rd.x * vec3f(0.92, 0.95, 1.02);
     let joint = (1.0 - sstep(0.0, 0.06, abs(lay / 4.3 - lk - 0.5) - 0.41)) * select(0.0, 1.0, hf(i32(lk), 8, 249u) < 0.45)
               * sstep(-0.2, 0.25, vn(vec2f(u * (1.0 / 16.0), lk * 1.7), 253u));
     bas = mix(bas, bas * 0.62, joint * bl(1.0, fp) * 0.5);
@@ -514,7 +525,7 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
 
   // ---- Mirror Salt: salt polygons; cone islands of dark volcanic rock, ochre lichen, salt crust ----
   if (wSalt > 0.01 && !toff(4u)) {
-    var salt = M0v.rgb * (0.9 + 0.08 * nM);
+    var salt = RT[2u * ROW + M0].rgb * (0.9 + 0.08 * nM); // the salt's own colour, not the blended M0 (no beige mix)
     if (fp < 0.3) {
       let ed = saltEdge(p.xz);
       let rim = (1.0 - sstep(0.0, 0.06, ed)) * bl(2.0, fp);
@@ -531,6 +542,10 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
     alb = mix(alb, sa, wSalt);
     dg += rd.yzw * cone * wSalt * (1.0 - rockW);
     rough = mix(rough, mix(0.75, 0.9, cone), wSalt);
+    // brine: in a border the salt in the hollows is wet and glassy (a thin sheet creeping between the tussocks)
+    let brine = wSalt * (1.0 - cone) * sstep(0.04, 0.25, conc) * (1.0 - M4v.y);
+    wet = max(wet, min(brine * 3.0, 0.55));
+    rough = mix(rough, 0.2, clamp(brine * 3.0, 0.0, 0.8));
   }
 
   // ---- Stone Forest: fluted, bedded limestone pillars; canopy crowns that spill over the rims; jungle floor ----
@@ -596,10 +611,10 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
       }
       let k = hf(bid.x, bid.y, 170u);
       var cc = mix(vec3f(0.055, 0.095, 0.03), vec3f(0.1, 0.2, 0.055), hf(bid.x, bid.y, 171u));
-      cc = mix(cc, vec3f(0.2, 0.26, 0.065), sstep(0.65, 0.92, hf(bid.x, bid.y, 172u)));
-      if (k < 0.035) { cc = vec3f(0.25, 0.1, 0.04); }
-      else if (k < 0.06) { cc = vec3f(0.48, 0.34, 0.4); }
-      else if (k < 0.08) { cc = vec3f(0.5, 0.42, 0.1); }
+      cc = mix(cc, vec3f(0.13, 0.2, 0.06), sstep(0.7, 0.95, hf(bid.x, bid.y, 172u)) * 0.7); // fresh leaves, not lime
+      if (k < 0.02) { cc = mix(cc, vec3f(0.2, 0.11, 0.05), 0.6); }       // rare rust crown
+      else if (k < 0.032) { cc = mix(cc, vec3f(0.36, 0.3, 0.32), 0.45); } // rare pale flowering crown, half blended
+      else if (k < 0.045) { cc = mix(cc, vec3f(0.3, 0.28, 0.1), 0.45); }
       let lc = 1.0 + 0.35 * vn(p.xz * (1.0 / 0.9), 173u) * bl(0.9, fp) + 0.15 * gd.x;
       let gap = sstep(0.7, 1.05, bdd);
       canopy = mix(canopy, cc * lc * (1.0 - 0.8 * gap), cfp);
