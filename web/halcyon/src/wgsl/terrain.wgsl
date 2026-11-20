@@ -307,6 +307,7 @@ fn strataCol(i: f32) -> vec3f {
     var steps = 22;
     if (q < 0.5) { steps = 12; }
     sh = sunShadow(p + gn * (0.3 + dist * 0.002), L, dist, S6v.y, jit, steps);
+    sh *= cloudShadow(p, L, rw); // cloud shadows (common.wgsl, same coverage field as the cloud pass)
   }
   // horizon occlusion from the broad height field
   var occ = 0.0;

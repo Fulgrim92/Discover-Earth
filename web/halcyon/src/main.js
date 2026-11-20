@@ -1,7 +1,7 @@
 // main.js: boot, frame loop, pass order, per-view rendering, resize, dynamic-resolution plumbing.
 // Zero per-frame allocations: everything the loop touches is built in init(); see DESIGN section 9.
 // Debug URL params: dbg=1 no water, 2 terrain albedo, 3 sun shadow, 4 terrain normal, 5 water reflection only,
-// 6 water refraction only, 7 water normal, 8 no fog. staged=1 (+verbose=1) times each pass of a shot separately.
+// 6 water refraction only, 7 water normal, 8 no fog, 9 no clouds. staged=1 (+verbose=1) times each pass of a shot separately.
 // Platform objects we cannot avoid per frame: the command encoder, pass encoders, the command buffer and
 // getCurrentTexture().createView() (canvas path only).
 import { G, H, fail, initDevice, bgl, bindGroup, tex, buffer, FRAME_FLOATS, VIEW_FLOATS, FO, VO } from './gpu.js';
