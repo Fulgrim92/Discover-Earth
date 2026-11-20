@@ -10,6 +10,7 @@
 
 // ---- clouds: depth-aware upsample of the half-res (1/3 in VR) cloud pass (front clouds + clouds in the mirror) ----
 var<private> gRC: vec4f; // mirrored clouds for this pixel, read by reflectRay's sky branch
+var<private> gJit: f32;  // per-pixel noise for reflectRay's start (set in the fragment entry)
 
 struct CUp { front: vec4f, refl: vec4f }
 // 3x3 low-res neighbourhood: a smooth Gaussian (it also averages out the march's ray and step jitter) times a depth
@@ -118,18 +119,38 @@ fn saltEdgeW(xz: vec2f) -> f32 {
 
 // march the height clipmaps along a reflected ray; returns hit colour or sky
 fn reflectRay(P: vec3f, R: vec3f, rw: RWt, pix: f32) -> vec3f {
-  var t = 1.0 + length(P - VW.cam.xyz) * 0.003;
+  // geometric steps from a per-pixel jittered start (step shells become grain), then bisection between the last
+  // miss and the first hit, so the reflected shore line is not a staircase of step shells
+  var t = (1.0 + length(P - VW.cam.xyz) * 0.003) * (1.0 + 0.2 * gJit);
   var lv = clipLevel(P.xz, 0u, 8.0);
   var hit = false; var hp = vec3f(0.0);
+  var tp = 0.0; var pen = 0.0;
   for (var i = 0; i < 28; i++) {
     let q = P + R * t;
     if (q.y > 1200.0) { break; }
     lv = clipLevel(q.xz, lv, 8.0);
     let h = clipH(lv, q.xz);
-    if (q.y < h) { hit = true; hp = q; break; }
+    if (q.y < h) { hit = true; pen = h - q.y; break; }
+    tp = t;
     t = t * 1.2 + 1.0;
   }
-  var c: vec3f;
+  var cover = 0.0; // how much of the pixel the reflected land covers (soft at grazing silhouettes)
+  if (hit) {
+    var a = tp; var b = t;
+    for (var k = 0; k < 5; k++) {
+      let m = 0.5 * (a + b); let q = P + R * m;
+      if (q.y < clipH(clipLevel(q.xz, lv, 8.0), q.xz)) { b = m; } else { a = m; }
+    }
+    t = b; hp = P + R * t;
+    // a shallow first hit is a grazing silhouette: part land, part sky
+    cover = sstep(0.0, max(0.015 * t * max(abs(R.y), 0.05), 0.4), pen);
+  }
+  var c = vec3f(0.0);
+  if (cover < 1.0) {
+    c = skyFull(R, pix);
+    c = c * (1.0 - gRC.a) + gRC.rgb; // clouds in the mirror (marched by the cloud pass)
+  }
+  let skyC = c;
   if (hit) {
     // cheap terrain shade in the reflection
     let l = clipLevel(hp.xz, 0u, 8.0);
@@ -163,10 +184,7 @@ fn reflectRay(P: vec3f, R: vec3f, rw: RWt, pix: f32) -> vec3f {
     c = alb * (sc * max(dot(n, L), 0.0) * 0.8 + amb);
     let m6 = bf(rq, M6);
     c += m6.rgb * m6.w * (mb.y + mb.x + ma.w * 0.5) * 0.8;
-    c = applyFog(c, P, R, t);
-  } else {
-    c = skyFull(R, pix);
-    c = c * (1.0 - gRC.a) + gRC.rgb; // clouds in the mirror (marched by the cloud pass)
+    c = mix(skyC, applyFog(c, P, R, t), cover);
   }
   return c;
 }
@@ -191,6 +209,7 @@ struct VO { @builtin(position) pos: vec4f }
   var cu = cloudUp(in.pos.xy, dist);
   if (VW.cam.w == 9.0) { cu.front = vec4f(0.0); cu.refl = vec4f(0.0); } // dbg=9: no clouds
   gRC = cu.refl;
+  gJit = ign(in.pos.xy + vec2f(31.0, 17.0));
   let isSky = dist > 50000.0;
   if (isSky) { dist = 1e9; }
   var col = textureLoad(sceneT, px, 0).rgb;
