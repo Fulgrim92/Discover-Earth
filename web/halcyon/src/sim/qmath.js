@@ -167,3 +167,18 @@ export function vnoiseA(A, i, seed) {
 
 // (init-time / tests only; returns a double)
 export function wrapPi(a) { return a - 6.283185307179586 * Math.round(a / 6.283185307179586); }
+
+// JIT warm-up at load: run every branch of qfromMat and qfromUp, so the optimising compiler has type feedback for
+// all of them and never deoptimises the first time a flight turns into a rare branch (each deopt runs the function
+// in baseline code for a while, boxing doubles: tools/alloc.mjs --xrmock caught one in the steady state). V8 only
+// records feedback once a function has run a few times (lazy feedback allocation), hence the repeats.
+{
+  const q = new Float64Array(4);
+  const M = [[1, 0, 0, 0, 1, 0, 0, 0, 1], [1, 0, 0, 0, -1, 0, 0, 0, -1], [-1, 0, 0, 0, 1, 0, 0, 0, -1], [-1, 0, 0, 0, -1, 0, 0, 0, 1]]
+    .map((m) => new Float64Array(m));
+  const U = [new Float64Array([0, 1, 0]), new Float64Array([0, -1, 0]), new Float64Array([0.6, 0.8, 0])];
+  for (let r = 0; r < 64; r++) {
+    for (let k = 0; k < 4; k++) qfromMat(q, M[k]);
+    for (let k = 0; k < 3; k++) qfromUp(q, U[k]);
+  }
+}

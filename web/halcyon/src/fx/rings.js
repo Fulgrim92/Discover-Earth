@@ -102,11 +102,13 @@ export function upload() {
 export function hide() { S[1] = 0; FX.u[FXO.sp0 + 3] = 0; FX.u[FXO.sp1 + 3] = 0; }
 
 // the effects pass for one view: drone shadow / props / lights (drawFx), then rings and sparks
-export function pass(ctx, enc, view, drawFx) {
+// after(pass): optional last draw in the same pass (the VR HUD; it may replace group 1)
+export function pass(ctx, enc, view, drawFx, after) {
   const p = enc.beginRenderPass(FX.desc);
   p.setBindGroup(0, view.bg0); p.setBindGroup(1, FX.bg);
   drawFx(p);
   if (S[1] > 0) { p.setPipeline(FX.pRing); p.draw(36, S[1]); }
   if (FX.u[FXO.sp0 + 3] > 0) { p.setPipeline(FX.pSpark); p.draw(6, SPARKS); }
+  if (after) after(p);
   p.end();
 }

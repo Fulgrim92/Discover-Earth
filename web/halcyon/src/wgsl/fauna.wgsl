@@ -54,7 +54,7 @@ struct Bird { ok: bool, p: vec3f, fwd: vec3f, up: vec3f, flapA: f32, flapP: f32,
 fn flockCell(g: u32, fi: u32) -> vec2i {
   let fg = FG[g];
   let n = u32(fg.y);
-  let cam = VW.cam.xyz;
+  let cam = VW.anc.xyz; // the head, shared by both eyes
   let c0 = vec2i(floor(cam.xz / fg.x)) - vec2i(i32(n / 2u));
   return c0 + vec2i(i32(fi % n), i32(fi / n));
 }
@@ -128,7 +128,7 @@ fn bird(ii: u32) -> Bird {
     B.flapP = t * 3.6 * 6.2832 + lfRand(hb, 6u) * 6.2832;
     B.flapA = 0.65 * sstep(0.35, 0.75, sin(t * 0.37 + lfRand(hb, 7u) * 6.2832));
   }
-  let d = length(B.p - VW.cam.xyz);
+  let d = length(B.p - VW.anc.xyz);
   B.size *= sstep(1500.0, 1000.0, d);
   if (B.size < 0.01) { return B; }
   let rel = B.p - VW.cam.xyz;
@@ -201,7 +201,7 @@ fn birdVertex(vi: u32, B: Bird, mirror: bool) -> BV {
   var n = normalize(fwd * ln.x + up * ln.y + side * ln.z);
   if (mirror) { wp.y = -wp.y; n.y = -n.y; }
   o.wp = wp; o.n = n; o.loc = loc; o.part = part; o.kind = B.kind;
-  o.sh = lfShadow(B.p + vec3f(0.0, 0.5, 0.0), length(B.p - cam), 0.5, 8);
+  o.sh = lfShadow(B.p + vec3f(0.0, 0.5, 0.0), length(B.p - VW.anc.xyz), 0.5, 8);
   o.pos = VW.vp * vec4f(wp - cam, 1.0);
   return o;
 }
@@ -333,7 +333,7 @@ fn jelly(ii: u32) -> Jelly {
   if (k > 0.92) { J.col = vec3f(1.0, 0.65, 0.25); }
   let cam = VW.cam.xyz;
   let d = length(J.p - cam);
-  if (d > 1300.0 || !lfVisible(J.p - cam - vec3f(0.0, J.R * 1.5, 0.0), J.R * 4.0)) { return J; }
+  if (length(J.p - VW.anc.xyz) > 1300.0 || !lfVisible(J.p - cam - vec3f(0.0, J.R * 1.5, 0.0), J.R * 4.0)) { return J; }
   J.fog = lfFogT(cam, normalize(J.p - cam), d);
   J.ok = true;
   return J;

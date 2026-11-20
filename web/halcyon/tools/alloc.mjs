@@ -16,6 +16,9 @@
 //
 // Usage: node tools/alloc.mjs [--frames 1800] [--warm 5400] [--script tour] [--interval 128] [--keep] [--set k=v;...]
 //        [--jsflags '--trace-deopt'] (prints the V8 trace lines inside the measured window) [--gclog] [--noprofile]
+//        [--xrmock [1|2]] runs the VR frame loop instead (xr.js on the src/xrmock.js stand-in, texture-array layer or
+//        side by side, scripted head and sticks): xrFrame, readFrame, the controllers and the HUD, two views per frame.
+//        The XR objects a real UA hands out per frame are listed under XR_PLATFORM below; the mock reuses its own.
 // It builds an unminified bundle (out/alloc/index.html) so functions keep their names.
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
@@ -56,6 +59,17 @@ const PLATFORM = {
   'sim/hud.js:drawStick': 'Canvas 2D arc()/moveTo() calls (number arguments into the platform); only when a HUD stick moves a pixel',
   'sim/input.js:pollPad': 'navigator.getGamepads() snapshot array',
   'sim/audio.js:update': 'WebAudio AudioParam.setTargetAtTime(value, ctx.currentTime): boxed doubles into the platform, 30 Hz',
+  // VR (--xrmock): what a real browser allocates per XR frame, at the call that receives it (the mock reuses its
+  // objects, so on the mock these sites stay near zero; on a headset they are the XR platform's)
+  'main.js:xrFrame': 'XRSession.requestAnimationFrame() registration; the XRFrame and its DOMHighResTimeStamp',
+  'xr.js:readFrame': 'XRViewerPose, its views array, 2 XRView, XRRigidTransform + 2 DOMPointReadOnly per pose, ' +
+    'projectionMatrix Float32Array per view, XRGPUSubImage + XRViewport + getViewDescriptor() dictionary per view, and ' +
+    'colorTexture.createView() whenever the UA hands out a new texture (every frame on a real device)',
+  'xr.js:readInputs': 'XRInputSourceArray access, XRPose (+ transform, 2 DOMPointReadOnly) per grip, Gamepad axes/buttons arrays',
+  'fx/xrfx.js:upload': 'queue.writeBuffer() (VR controllers + HUD uniforms)',
+  'fx/xrfx.js:drawHud': 'draw() argument wrapper',
+  'xrmock.js:onRaf': 'the mock UA: page requestAnimationFrame registration that stands in for the XR frame loop',
+  'xrmock.js:deliver': 'the mock UA: calls the XR frame callback',
   '(V8 API)': 'objects created by the browser outside any JS frame',
   '(BYTECODE_COMPILER)': 'lazy compilation', '(PARSER)': 'lazy compilation', '(IDLE)': 'idle-time tasks', '(program)': 'runtime',
   '(garbage collector)': 'runtime', '(root)': 'runtime',
@@ -170,8 +184,13 @@ async function main() {
     const cdp = await context.newCDPSession(page);
     await cdp.send('HeapProfiler.enable');
     const q = new URLSearchParams({ script: SCRIPT, alloc: 1, warm: WARM, frames: FRAMES, w: 320, h: 180, quality: 'low', present: 0, inflight: 0, dynres: 0, audio: 1, hud: 1 });
+    if (args.includes('--xrmock')) {
+      const v = opt('--xrmock', '1');
+      q.set('xrmock', v === '2' ? '2' : '1'); q.set('xrscript', '1'); q.set('xrw', '288'); q.set('xrh', '300');
+    }
     if (opt('--set')) for (const kv of opt('--set').split(';')) { const i = kv.indexOf('='); q.set(kv.slice(0, i), kv.slice(i + 1)); }
     const url = pathToFileURL(path.join(root, 'out/alloc/index.html')).href + '?' + q.toString();
+    if (q.has('xrmock')) console.log('VR loop on the mock (xrmock=' + q.get('xrmock') + '): two 288x300 eyes per frame');
     console.log('alloc gate: ' + FRAMES + ' frames after ' + WARM + ' warm-up frames, script ' + SCRIPT + ', 320x180 quality=low, sampling every ' + INTERVAL + ' B');
     const t0 = Date.now();
     await page.goto(url);

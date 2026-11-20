@@ -8,14 +8,15 @@
 @group(2) @binding(4) var cloudR: texture_2d<f32>;
 @group(2) @binding(5) var cloudD: texture_2d<f32>;
 
-// ---- clouds: depth-aware upsample of the half-res cloud pass (front clouds + clouds in the mirror) ----
+// ---- clouds: depth-aware upsample of the half-res (1/3 in VR) cloud pass (front clouds + clouds in the mirror) ----
 var<private> gRC: vec4f; // mirrored clouds for this pixel, read by reflectRay's sky branch
 
 struct CUp { front: vec4f, refl: vec4f }
 // 3x3 half-res neighbourhood: a small Gaussian (it also averages out the march jitter) times a depth weight
 fn cloudUp(pix: vec2f, dist: f32) -> CUp {
   let hs = vec2i(textureDimensions(cloudT));
-  let ic = vec2i(floor(pix * 0.5));
+  let kd = max(round(VW.size.x / f32(hs.x)), 1.0); // cloud pass divisor: 2, 3 in VR
+  let ic = vec2i(floor(pix / kd));
   var o: CUp;
   o.front = vec4f(0.0); o.refl = vec4f(0.0);
   var ws = 0.0; var best = 1e9;
@@ -23,7 +24,7 @@ fn cloudUp(pix: vec2f, dist: f32) -> CUp {
   for (var k = 0; k < 9; k++) {
     let off = vec2i(k % 3 - 1, k / 3 - 1);
     let q = clamp(ic + off, vec2i(0), hs - 1);
-    let dp = ((vec2f(q) + 0.5) * 2.0 - pix) * 0.5;
+    let dp = ((vec2f(q) + 0.5) * kd - pix) / kd;
     let wb = exp(-dot(dp, dp) * 1.1);
     let dq = textureLoad(cloudD, q, 0).x;
     let rel = abs(dq - dist) / max(min(dq, dist), 1.0);

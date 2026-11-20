@@ -36,13 +36,16 @@ struct View {
   ofs: vec4f,    // viewport x offset in canvas px, y, canvas w, canvas h
   right: vec4f,  // camera right, tan(fovX/2)
   up: vec4f,     // camera up
+  skew: vec4f,   // off-axis projection centre in tan units (x = P8 / P0, y = P9 / P5; XR views are asymmetric), 0, 0
+  anc: vec4f,    // view anchor: the head (cyclopean eye) shared by both eyes, so camera-centred grids pick the same
+                 // instances in each eye; w = comfort vignette strength (0 off)
 }
 
 // world-space view ray through pixel position pp (target pixels)
 fn viewRay(pp: vec2f) -> vec3f {
   let uv = pp * VW.size.zw;
-  let x = (uv.x * 2.0 - 1.0) * VW.right.w;
-  let y = (1.0 - uv.y * 2.0) * VW.fwd.w;
+  let x = (uv.x * 2.0 - 1.0) * VW.right.w + VW.skew.x;
+  let y = (1.0 - uv.y * 2.0) * VW.fwd.w + VW.skew.y;
   return normalize(VW.fwd.xyz + VW.right.xyz * x + VW.up.xyz * y);
 }
 

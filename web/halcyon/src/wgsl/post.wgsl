@@ -103,11 +103,22 @@ fn oetf(c: vec3f) -> vec3f {
   t = clamp((t - 0.18) * g0.z + 0.18 + (t - 0.18) * 0.0, vec3f(0.0), vec3f(1.0));
   t = t * g2.rgb + g1.rgb * (1.0 - t);
   t = pow(max(t, vec3f(0.0)), 1.0 / max(g3.rgb, vec3f(0.2)));
-  // vignette
+  // vignette: the lens look on a screen; in VR (misc.w bit 4) none, since the headset's lenses already fall off,
+  // and instead the FPV comfort vignette: a soft dark ring around the eye's optical axis that closes in as the view
+  // turns and accelerates (VW.anc.w, 0..1, from xr.js), drawn per eye at the same angle so both eyes agree
   let q = uv * 2.0 - 1.0;
-  let asp = VW.ofs.z / VW.ofs.w;
-  let v = 1.0 - g1.w * 0.22 * pow(dot(q * vec2f(asp * 0.75, 1.0), q * vec2f(asp * 0.75, 1.0)) * 0.5, 1.3);
-  t *= v;
+  if ((mw & 4u) == 0u) {
+    let asp = VW.ofs.z / VW.ofs.w;
+    let v = 1.0 - g1.w * 0.22 * pow(dot(q * vec2f(asp * 0.75, 1.0), q * vec2f(asp * 0.75, 1.0)) * 0.5, 1.3);
+    t *= v;
+  } else if (VW.anc.w > 0.003) {
+    // tangent of the angle from the optical axis (the eye's own frustum, asymmetric part included)
+    let tv = vec2f(q.x * VW.right.w + VW.skew.x, -q.y * VW.fwd.w + VW.skew.y);
+    let s = clamp(VW.anc.w, 0.0, 1.0);
+    let inner = mix(1.25, 0.42, s); // ~51 deg at rest down to ~23 deg at full strength
+    let k = sstep(inner, inner + 0.38, length(tv));
+    t *= 1.0 - k * sstep(0.0, 0.25, s);
+  }
   // Display-P3: convert linear sRGB primaries to P3
   if ((mw & 1u) != 0u) {
     t = mat3x3f(0.8225, 0.0332, 0.0171, 0.1774, 0.9669, 0.0724, 0.0, 0.0, 0.9108) * t;
@@ -115,6 +126,7 @@ fn oetf(c: vec3f) -> vec3f {
   // HDR: the graded image fills [0, 1] of the shoulder-compressed range; scale it back up into the headroom
   t = clamp(t, vec3f(0.0), vec3f(1.0)) * HR;
   var e = oetf(t);
+  if ((mw & 8u) != 0u) { e = t; } // an sRGB target (XR layer format *-srgb) encodes in hardware
   // triangular dither
   let n1 = ign(in.pos.xy); let n2 = ign(in.pos.xy + vec2f(17.0, 59.0));
   e += (n1 + n2 - 1.0) / 255.0;

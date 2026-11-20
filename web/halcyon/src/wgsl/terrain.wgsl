@@ -26,7 +26,7 @@ struct VOut {
   let gp = mc.xy + vec2f(f32(ix - hg), f32(iz - hg)) * s;
   let half = f32(hg) * s;
   let cam = VW.cam.xyz;
-  let dc = max(abs(gp.x - cam.x), abs(gp.y - cam.z)) / half;
+  let dc = max(abs(gp.x - VW.anc.x), abs(gp.y - VW.anc.z)) / half; // morph from the head: same mesh in both eyes
   var m = clamp((dc - 0.62) / 0.26, 0.0, 1.0);
   if (li + 1u >= nLevels()) { m = 0.0; }
   let odd = vec2f(f32(ix & 1), f32(iz & 1));

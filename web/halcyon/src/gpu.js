@@ -10,7 +10,7 @@ export function fail(msg) {
   console.error('[halcyon] ' + m);
 }
 
-export const G = { device: null, queue: null, adapter: null, f32filter: false, timestamp: false, clipFormat: 'rgba32float', canvasFormat: 'bgra8unorm', p3: false, hdr: false, lost: null };
+export const G = { device: null, queue: null, adapter: null, f32filter: false, timestamp: false, clipFormat: 'rgba32float', canvasFormat: 'bgra8unorm', p3: false, hdr: false, lost: null, xrCompatible: false };
 
 // Errors that mean "this machine cannot run HALCYON" (shown as a friendly message, not a stack trace)
 export class Unsupported extends Error {}
@@ -18,7 +18,15 @@ export class Unsupported extends Error {}
 export async function initDevice(opts) {
   if (!navigator.gpu) throw new Unsupported('nogpu');
   let adapter = null;
-  try { adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }); } catch (e) { adapter = null; }
+  // VR (xr.js): an XR-compatible adapter (WebXR/WebGPU binding: GPURequestAdapterOptions.xrCompatible; there is no
+  // makeXRCompatible for WebGPU, so it must be asked for up front). Falls back to a plain adapter if refused.
+  if (opts && opts.xrCompatible) {
+    try { adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance', xrCompatible: true }); } catch (e) { adapter = null; }
+    G.xrCompatible = !!adapter;
+  }
+  if (!adapter) {
+    try { adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }); } catch (e) { adapter = null; }
+  }
   if (!adapter) throw new Unsupported('noadapter');
   const req = [];
   if (adapter.features.has('float32-filterable')) { req.push('float32-filterable'); G.f32filter = true; }
@@ -76,8 +84,8 @@ export function setTimerBase(slot, view) {
 // Uniform block sizes (bytes). Offsets in floats, matching common.wgsl Frame/View.
 export const FRAME_FLOATS = 4 * 3 + 4 * 12 * 2 + ROW * 4 + 4;
 export const FO = { time: 0, sun: 4, misc: 8, lv: 12, mc: 12 + 48, row: 12 + 96, flags: 12 + 96 + ROW * 4 };
-export const VIEW_FLOATS = 16 * 2 + 4 * 6;
-export const VO = { vp: 0, ivp: 16, cam: 32, size: 36, fwd: 40, ofs: 44, right: 48, up: 52 };
+export const VIEW_FLOATS = 16 * 2 + 4 * 8;
+export const VO = { vp: 0, ivp: 16, cam: 32, size: 36, fwd: 40, ofs: 44, right: 48, up: 52, skew: 56, anc: 60 };
 
 const PRE = wgslPreamble() + COMMON;
 

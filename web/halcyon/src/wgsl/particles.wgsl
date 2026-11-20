@@ -37,7 +37,7 @@ struct PV {
   var hmax = 7.0;
   var size = 0.006;
   if (kind == 0u) {
-    let wv = lfWind(cam.xz, t);
+    let wv = lfWind(VW.anc.xz, t);
     vel = vec3f(LF_WD.x, 0.0, LF_WD.y) * (0.5 + 0.5 * r.y) * (0.6 + 1.5 * wv.z);
     size = select(0.004 + 0.004 * r.x, 0.018 + 0.01 * r.x, lfRand(h, 6u) < 0.15); // a few seed fluffs
     hmax = 9.0;
@@ -51,28 +51,31 @@ struct PV {
   if (kind == 4u) { amp = 1.2; }
   if (kind == 2u) { amp = 0.4; }
   let pw = r * B + vel * t + wob * amp;
-  var rel = (fract((pw - cam) / B + 0.5) - 0.5) * B;
-  var wp = cam + rel;
+  // the box wraps around the head (VW.anc), not the eye, so both eyes see the same motes
+  let anc = VW.anc.xyz;
+  var rel = (fract((pw - anc) / B + 0.5) - 0.5) * B;
+  var wp = anc + rel;
   if (hug) {
     let g = heightAny(wp.xz);
     let hy = (fract(r.y + vel.y * t / hmax) * hmax + wob.y * amp * 0.5);
     let base = max(g, select(-1e4, 0.02, kind == 1u));
     wp.y = base + 0.15 + hy * hy / hmax;
-    rel = wp - cam;
+    rel = wp - anc;
   }
   var nd = rel / (B * 0.5);
   if (hug) { nd.y = rel.y / 12.0; }
   let fade = sstep(1.0, 0.65, length(nd));
   if (fade <= 0.0) { return o; }
-  let d = length(rel);
-  if (d < 0.6) { return o; }
-  let dir = rel / d;
+  let da = length(rel);
+  if (da < 0.6) { return o; }
+  let d = length(wp - cam);
+  let dir = (wp - cam) / d;
   // brightness by kind
   let L = FR.sun.xyz;
   let sc = sunCol();
   var col = vec3f(0.0);
   if (kind == 0u) {
-    let sh = lfShadow(wp, d, r.z, 8);
+    let sh = lfShadow(wp, da, r.z, 8);
     let fwd = hg(dot(dir, L), 0.8) * 6.0 + 0.05;
     col = vec3f(1.0, 0.92, 0.7) * sc * sh * fwd * 0.1 + lfAmb(1.0, vec3f(0.3)) * 0.02;
   } else if (kind == 1u) {
@@ -94,10 +97,10 @@ struct PV {
     col = vec3f(0.75, 1.0, 0.25) * blink * 14.0;
   }
   // keep a mote at least ~1.6 px wide; shrink its brightness by the area it gained (no sparkly aliasing)
-  let pxs = size / (d * VW.fwd.w * 2.0) * VW.size.y;
+  let pxs = size / (da * VW.fwd.w * 2.0) * VW.size.y;
   var s2 = size;
   if (pxs < 1.6) { s2 = size * 1.6 / pxs; col *= (pxs / 1.6) * (pxs / 1.6); }
-  col *= fade * sstep(0.6, 2.5, d) * lfFogT(cam, dir, d);
+  col *= fade * sstep(0.6, 2.5, da) * lfFogT(cam, dir, d);
   let c = vec2f(f32(vi & 1u), f32(vi >> 1u)) * 2.0 - 1.0;
   let q = wp + (VW.right.xyz * c.x + VW.up.xyz * c.y) * s2 * 2.0;
   o.pos = VW.vp * vec4f(q - cam, 1.0);

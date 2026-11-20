@@ -20,6 +20,11 @@
 //   split=1          opaque pass split into terrain / flora / fauna passes, timed separately (TS_FLORA, TS_FAUNA;
 //                    costs an extra MSAA store and load per split, so totals read a little high)
 //   bench=1          renders at a fixed 1920x1080 canvas (w=, h= override) with dynamic resolution on (dynres=0: off)
+//   VR (src/xr.js): an Enter VR control (also V, gamepad d-pad left) wherever navigator.xr exists.
+//   xrmock=1|2       fake WebXR + XRGPUBinding (src/xrmock.js): 1 texture-array layer, 2 side-by-side; with shot=1
+//                    renders xrframes=<n> (3) XR frames and shows both eyes side by side; xrview=los|fpv,
+//                    xrhead=x,y,z,yaw,pitch, xrsticks=lx,ly,rx,ry, xrw/xrh (eye size), xrscript=1 (moving head/sticks),
+//                    xrvig=<0..1> (force the FPV comfort vignette, shots); xrenter=1 enters VR at once (alloc gate)
 // Debug: dbg=1 no water, 2 terrain albedo, 3 sun shadow, 4 terrain normal, 5 water reflection only, 6 water
 // refraction only, 7 water normal, 8 no fog, 9 no clouds. staged=1 (+verbose=1) times each pass of a static shot separately.
 import { G, H, fail, initDevice, Unsupported, bgl, bindGroup, tex, buffer, FRAME_FLOATS, VIEW_FLOATS, FO, VO, pipelinesReady,
@@ -43,6 +48,9 @@ import { startOverlay, showMessage, benchPanel } from './ui.js';
 import * as flora from './fx/flora.js';
 import * as fauna from './fx/fauna.js';
 import * as particles from './fx/particles.js';
+import * as xr from './xr.js';
+import { XR, XR_LOS, XR_FPV, VP, WHEAD } from './xr.js';
+import * as xrfx from './fx/xrfx.js';
 
 export const world = { heightAt, heightBatch, CURATED };
 
@@ -69,6 +77,8 @@ if (P.bench && !P.script) P.script = 'bench';
 // bench: a fixed 1920x1080 canvas whatever the window, so runs on different screens compare
 if (P.bench && !P.w) { P.w = 1920; P.h = 1080; P.benchFixed = true; }
 P.split = num('split', 0) > 0;
+P.xrmock = num('xrmock', 0) | 0;
+P.xrenter = P.xrmock > 0 && (P.shot || P.alloc || num('xrenter', 0) > 0);
 
 // ---------- ablation (?off=) ----------
 // bit i of Frame.flags = OFF_NAMES[i]; the same bits are named constants OFF_* in wgsl/common.wgsl
@@ -100,7 +110,7 @@ const OFFSCREEN = P.shot || !P.present;
 // queue. Cap the frames in flight (default 2; inflight=0 turns the cap off, as the alloc gate does).
 const MAX_INFLIGHT = OFFSCREEN && !P.shot ? num('inflight', 2) : 0;
 const FL = { n: 0, done: () => { FL.n--; } };
-const USE_SIM = !P.free && (STATIC ? P.sim > 0 : true);
+const USE_SIM = !P.free && (STATIC ? P.sim > 0 || P.xrmock > 0 : true);
 const FIXED_DT = SCRIPTED ? 1 / P.fps : 0;
 
 // ---------- camera ----------
@@ -148,6 +158,8 @@ function freeFly(dt) {
 const ctx = { frame: new Float32Array(FRAME_FLOATS), frameBuf: null, views: [], bgl0: null, linear: null, quality: P.quality,
   msaa: OFF & OFF_MSAA ? 1 : 4 };
 let splitDesc = null; // ?split=1: [terrain, flora, fauna] pass descriptors
+// VR session state (ints only): [in session, eye viewport w, h, d-pad-left last frame]
+const XRI = new Int32Array(4);
 let context = null, canvas, tg, opaqueDesc, nViews = 1, offTex = null, offView = null;
 const owned = [];
 const CMD = [null];
@@ -261,7 +273,10 @@ function toggleHDR() {
 }
 
 async function init() {
-  await initDevice({ noTimer: !P.timer, syncPipelines: num('asyncpipes', 1) === 0 });
+  xr.useGPU(G);
+  await xr.probe(P.xrmock); // before the device: VR needs an xrCompatible adapter
+  await initDevice({ noTimer: !P.timer, syncPipelines: num('asyncpipes', 1) === 0, xrCompatible: XR.wantCompatible });
+  xr.deviceReady();
   canvas = document.getElementById('c');
   const W = P.w || Math.round(innerWidth * devicePixelRatio), Hh = P.h || Math.round(innerHeight * devicePixelRatio);
   canvas.width = W; canvas.height = Hh;
@@ -297,7 +312,7 @@ async function init() {
       data: new Float32Array(VIEW_FLOATS), buf, bg0: bindGroup(ctx.bgl0, [ctx.frameBuf, buf, realmBuf]),
       vx: 0, vy: 0, vw: 1, vh: 1, eye: i === 0 ? (P.stereo ? -0.032 : 0) : 0.032,
       // the view's own pose and projection (XR fills these from XRView; desktop/stereo from cam + eye offset)
-      pose: new Float32Array(7), fovY: 1, proj: new Float32Array(16), useProj: 0,
+      pose: new Float32Array(7), fovY: 1, proj: new Float32Array(16), useProj: 0, anc: new Float32Array(4),
     });
   }
   perf.initTimer();
@@ -307,6 +322,7 @@ async function init() {
   perf.dyn.timer = G.timestamp;
   clipmap.init(ctx); terrain.init(ctx); clouds.init(ctx); composite.init(ctx); rings.init(ctx); drone.init(ctx); post.init(ctx);
   flora.init(ctx); fauna.init(ctx); particles.init(ctx);
+  if (XR.state > 0) xrfx.init(ctx);
   layoutViews();
   initCamera();
 
@@ -327,7 +343,10 @@ async function init() {
     if (P.audio) sim.startAudio();
   }
   if (!P.shot) attachPage();
+  if (XR.state > 0 && !P.shot) xr.attachButton({ start: xrStart, end: xrEnd });
+  else if (XR.state > 0) { XR.onStart = xrStart; XR.onEnd = xrEnd; } // shots: no DOM control over the capture
   H.timer = G.timestamp ? 'timestamp-query' : 'none';
+  H.xr = XR.state === 0 ? 'none' : XR.state === 1 ? 'unavailable: ' + XR.why : 'ready';
 }
 
 // ---------- page events (outside the frame loop) ----------
@@ -398,6 +417,12 @@ function writeView(v) {
   quatRotate(v3b, vq, UPV);
   a[VO.up] = v3b[0]; a[VO.up + 1] = v3b[1]; a[VO.up + 2] = v3b[2]; a[VO.up + 3] = 0;
   a[VO.ofs] = v.vx; a[VO.ofs + 1] = v.vy; a[VO.ofs + 2] = v.vw; a[VO.ofs + 3] = v.vh;
+  // off-axis centre (XR projections are asymmetric; see math.js mat4XRToRevZ and common.wgsl viewRay)
+  a[VO.skew] = v.useProj ? v.proj[8] / v.proj[0] : 0; a[VO.skew + 1] = v.useProj ? v.proj[9] / v.proj[5] : 0;
+  a[VO.skew + 2] = 0; a[VO.skew + 3] = 0;
+  // anchor for camera-centred grids: the head in VR (xr.fillView), the flat camera otherwise (?stereo=1 too)
+  if (XRI[0]) { a[VO.anc] = v.anc[0]; a[VO.anc + 1] = v.anc[1]; a[VO.anc + 2] = v.anc[2]; a[VO.anc + 3] = v.anc[3]; }
+  else { a[VO.anc] = cam[0]; a[VO.anc + 1] = cam[1]; a[VO.anc + 2] = cam[2]; a[VO.anc + 3] = 0; }
   G.queue.writeBuffer(v.buf, 0, a);
 }
 
@@ -408,6 +433,7 @@ function renderView(v, enc, target, first) {
   writeView(v);
   let p = enc.beginRenderPass(splitDesc ? splitDesc[0] : opaqueDesc);
   if (!(OFF & OFF_DRONE)) drone.drawBody(ctx, p, v);
+  if (XRI[0]) xrfx.drawControllers(p, v);
   terrain.draw(ctx, p, v);
   if (splitDesc) { p.end(); p = enc.beginRenderPass(splitDesc[1]); }
   if (!(OFF & OFF_FLORA)) flora.draw(ctx, p, v);
@@ -418,7 +444,7 @@ function renderView(v, enc, target, first) {
   composite.draw(ctx, enc, v);
   // fauna's transparent jellies + motes (off=fauna hides the jellies through the fauna row, see prepareFrame)
   if (!(OFF & OFF_PARTICLES) && particles.draw(ctx, enc, v)) perf.markRan(TSLOT[0], TS_LIFE);
-  rings.pass(ctx, enc, v, drone.drawFx);
+  rings.pass(ctx, enc, v, drone.drawFx, XRI[0] ? xrfx.drawHud : null);
   post.draw(ctx, enc, v, target, first);
 }
 
@@ -446,6 +472,7 @@ function prepareFrame() {
 function renderFrame(bakeAll) {
   prepareFrame();
   if (R.sim) rings.upload(); // writeBuffer: platform calls stay in renderFrame
+  if (XRI[0]) xrfx.upload();
   const slot = perf.frameBegin(frameNo, nViews);
   TSLOT[0] = slot;
   setTimerBase(slot, 0);
@@ -453,12 +480,14 @@ function renderFrame(bakeAll) {
   if (clipmap.update(ctx, enc, cam[0], cam[2], bakeAll) > 0) perf.markRan(slot, TS_BAKE);
   terrain.setup(ctx, cam[0], cam[2]);
   G.queue.writeBuffer(ctx.frameBuf, 0, ctx.frame);
-  const target = offView || context.getCurrentTexture().createView();
+  // VR: each view renders into its own sub-image (a texture-array layer, or one half of a side-by-side texture)
+  const target = XRI[0] ? null : offView || context.getCurrentTexture().createView();
   for (let i = 0; i < nViews; i++) {
     const v = ctx.views[i];
     if (!v.useProj) viewFromCam(v);
     setTimerBase(slot, i);
-    renderView(v, enc, target, i === 0);
+    if (XRI[0]) renderView(v, enc, XR.target[i], i === 0 || XR.layered === 1);
+    else renderView(v, enc, target, i === 0);
   }
   perf.markRan(slot, TS_OPAQUE); perf.markRan(slot, TS_COMPOSITE); perf.markRan(slot, TS_FX);
   if (splitDesc) { perf.markRan(slot, TS_FLORA); perf.markRan(slot, TS_FAUNA); }
@@ -495,11 +524,8 @@ function cameraFromUrl() {
 
 // ---------- the frame loop ----------
 const A = { cpu0: 0 };
-function frame(now) {
-  if (!running || paused) return;
-  if (MAX_INFLIGHT > 0 && FL.n >= MAX_INFLIGHT) { requestAnimationFrame(frame); return; } // GPU behind: wait
-  if (P.bench) A.cpu0 = performance.now();
-  // the clock lives in CLK (doubles in a typed array: no boxing on the frame path)
+// the clock lives in CLK (doubles in a typed array: no boxing on the frame path); `now` is the rAF timestamp
+function advanceClock(now) {
   const frameMs = CLK[C_PREV] < 0 || resumed ? 1000 / 60 : now - CLK[C_PREV];
   CLK[C_PREV] = now; resumed = false;
   let dt = frameMs * 0.001;
@@ -507,6 +533,14 @@ function frame(now) {
   if (FIXED_DT > 0) dt = FIXED_DT;
   CLK[C_DT] = dt; CLK[C_FRAME_MS] = frameMs;
   CLK[C_TIME] = P.t >= 0 ? P.t : CLK[C_TIME] + dt;
+}
+
+function frame(now) {
+  if (!running || paused || XRI[0]) return; // in VR the session's requestAnimationFrame drives xrFrame instead
+  if (MAX_INFLIGHT > 0 && FL.n >= MAX_INFLIGHT) { requestAnimationFrame(frame); return; } // GPU behind: wait
+  if (P.bench) A.cpu0 = performance.now();
+  advanceClock(now);
+  const dt = CLK[C_DT];
   if (H.error && !P.shot) { running = false; showMessage('error', H.error); return; }
 
   const sim = R.sim;
@@ -518,6 +552,12 @@ function frame(now) {
     if (R.player) R.player.update();
     sim.step();
     if (STATIC) cameraFromUrl(); else cameraFromSim();
+    // gamepad d-pad left: Enter VR (a gamepad press may not count as a user gesture: then the control says so)
+    if (XR.state > 0 && XR.click) {
+      const b = sim._dbg.IN.buttons[14] > 0.5 ? 1 : 0;
+      if (b && !XRI[3]) XR.click();
+      XRI[3] = b;
+    }
   } else {
     if (P.free && frameNo > 0) freeFly(dt);
     cameraFromUrl();
@@ -557,6 +597,96 @@ function pollStartButton(sim) {
   const IN = sim._dbg.IN;
   if (!IN.padInfo[0]) return;
   for (let i = 0; i < IN.MAX_BUTTONS; i++) if (IN.buttons[i] > 0.5) { overlay.dismiss(); return; }
+}
+
+// ---------- VR (xr.js) ----------
+// The XR frame shares the desktop frame body: real dt from the XR rAF timestamp, sim step, one renderView per XR
+// view into intermediate targets sized to the sub-image viewport (rebuilt only when that or the dynres scale
+// changes), the final pass into the XR colour texture at its viewport. Once-per-frame work (clip bake, realm row,
+// weather, sim, uniform uploads) runs once, in renderFrame / prepareFrame, as on the desktop.
+const miscSaved = new Float32Array(1);
+function xrStart(session) {
+  XRI[0] = 1; XRI[1] = 0; XRI[2] = 0;
+  started = true;
+  if (overlay) overlay.dismiss();
+  post.setFinalFormat(XR.format);
+  ctx.cloudDiv = 3; // a third of each eye's internal size: eyes are large and the frame budget short
+  miscSaved[0] = ctx.frame[FO.misc + 3];
+  ctx.frame[FO.misc + 3] = 4 + (/-srgb$/.test(XR.format) ? 8 : 0); // XR: no screen vignette; an sRGB layer encodes itself
+  // dynamic resolution against the session's frame budget (72/90/120 Hz): GPU target 80 % of the frame
+  perf.dyn.enabled = P.scale > 0 ? false : P.dynres !== 0 && !P.shot && !P.alloc;
+  perf.dyn.target = (1000 / XR.frameRate) * 0.8;
+  perf.dyn.vsyncTarget = (1000 / XR.frameRate) * 1.05;
+  if (R.sim) xr.setMode(R.sim, Q.get('xrview') === 'fpv' ? XR_FPV : XR_LOS);
+  resumed = true;
+  session.requestAnimationFrame(xrFrame);
+}
+function xrEnd() {
+  XRI[0] = 0;
+  post.setFinalFormat(G.canvasFormat);
+  ctx.cloudDiv = 2;
+  ctx.frame[FO.misc + 3] = miscSaved[0];
+  nViews = P.stereo ? 2 : 1;
+  for (const v of ctx.views) v.useProj = 0;
+  perf.dyn.target = P.target; perf.dyn.vsyncTarget = 17.5;
+  perf.dyn.enabled = P.scale > 0 ? false : P.dynres >= 0 ? P.dynres > 0 : !P.shot && !P.alloc;
+  if (R.sim) { R.sim.setHeadPose(null); R.sim.cameraMode = 1; }
+  layoutViews();
+  resumed = true;
+  if (running) requestAnimationFrame(frame);
+}
+function layoutXR() {
+  const s = internalScale();
+  const w = Math.max(8, Math.round(VP[2] * s)), h = Math.max(8, Math.round(VP[3] * s));
+  if (!tg || tg.w !== w || tg.h !== h) tg = makeTargets(w, h);
+  XRI[1] = VP[2]; XRI[2] = VP[3];
+  H.size = [VP[2], VP[3], w, h];
+}
+const XVIG = new Float32Array([Q.has('xrvig') ? num('xrvig', 0.6) : -1]); // shots: force the comfort vignette
+function xrFrame(now, xf) {
+  const session = XR.session;
+  if (!session || !running) return;
+  session.requestAnimationFrame(xrFrame);
+  if (MAX_INFLIGHT > 0 && FL.n >= MAX_INFLIGHT) return; // GPU behind: skip this one
+  advanceClock(now);
+  const n = xr.readFrame(xf);
+  if (!n) return; // no pose (tracking lost): nothing to show this frame
+  const sim = R.sim;
+  if (sim) {
+    xr.controls(sim);
+    sim.dtIn[0] = CLK[C_DT];
+    if (R.player) R.player.update();
+    sim.step();
+    xr.place(sim);
+  }
+  // the head drives the clipmap centre, the realm row and the terrain mesh (shared by both eyes)
+  cam[0] = WHEAD[0]; cam[1] = WHEAD[1]; cam[2] = WHEAD[2];
+  if (XRI[1] !== VP[2] || XRI[2] !== VP[3]) layoutXR();
+  if (perf.dyn.tick(frameNo)) layoutXR();
+  nViews = n;
+  for (let i = 0; i < n; i++) xr.fillView(ctx.views[i], i);
+  if (XVIG[0] >= 0) for (let i = 0; i < n; i++) ctx.views[i].anc[3] = XVIG[0];
+  if (sim) xrfx.update(sim, sim._dbg.IN.phys, XR.mode, XR.vignette);
+  renderFrame(frameNo === 0);
+  if (P.alloc) allocFrame();
+  if (SCRIPTED && R.player.done) R.player.reset(P.alloc);
+}
+// ?shot=1&xrmock=1|2: enter VR on the mock, render xrframes XR frames, show both eyes side by side in the 2D canvas
+async function xrShot() {
+  const M = XR.mock;
+  M.auto = false; // frames on demand, not on the page's rAF
+  await xr.enter();
+  const nf = num('xrframes', 3);
+  for (let i = 0; i < nf; i++) { M.frame(); await G.queue.onSubmittedWorkDone(); }
+  const img = await M.readback();
+  canvas.width = img.w; canvas.height = img.h;
+  context.putImageData(new ImageData(img.data, img.w, img.h), 0, 0);
+  H.realm = REALM_NAMES[W_NEAR[2]];
+  H.xrcalls = M.calls;
+  H.xrstate = { mode: XR.mode === XR_FPV ? 'fpv' : 'los', layered: XR.layered, views: XR.views, format: XR.format,
+    head: Array.from(WHEAD), vignette: ctx.views[0].anc[3], internal: [tg.w, tg.h], cloudDiv: ctx.cloudDiv,
+    drone: R.sim ? Array.from(R.sim.drone.subarray(0, 3)) : null, pilot: R.sim ? Array.from(R.sim.pilot) : null };
+  H.ready = true;
 }
 
 // ---------- ?bench=1 ----------
@@ -745,8 +875,10 @@ function boot() {
       H.scriptReady = true;
       return;
     }
+    if (STATIC && P.xrmock) { cameraFromUrl(); await xrShot(); return; }
     if (STATIC) { cameraFromUrl(); await prebake(); }
     H.running = true;
+    if (P.xrenter && !P.shot) xr.enter().catch((e) => fail('xr: ' + (e && e.message)));
     requestAnimationFrame(frame);
   }).catch((e) => {
     if (e instanceof Unsupported) { H.error = 'unsupported: ' + e.message; if (!P.shot) showMessage(e.message); return; }

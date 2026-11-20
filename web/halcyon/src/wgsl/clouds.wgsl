@@ -319,14 +319,17 @@ struct CF { @location(0) front: vec4f, @location(1) refl: vec4f, @location(2) di
 @fragment fn fsC(in: CVO) -> CF {
   let hp = vec2i(in.pos.xy);
   let full = vec2i(VW.size.xy);
-  // nearest of the 2x2 full-res block: the march stops at the closest surface, the upsample sorts out edges
-  let b = hp * 2;
+  // nearest of the kd x kd full-res block (kd = 2, or 3 in VR: ctx.cloudDiv): the march stops at the closest
+  // surface, the upsample sorts out edges (corners of the block are enough)
+  let kd = max(i32(round(VW.size.x * CU.misc.z)), 1);
+  let b = hp * kd;
+  let e = kd - 1;
   let d00 = textureLoad(cDistT, min(b, full - 1), 0).x;
-  let d10 = textureLoad(cDistT, min(b + vec2i(1, 0), full - 1), 0).x;
-  let d01 = textureLoad(cDistT, min(b + vec2i(0, 1), full - 1), 0).x;
-  let d11 = textureLoad(cDistT, min(b + vec2i(1, 1), full - 1), 0).x;
+  let d10 = textureLoad(cDistT, min(b + vec2i(e, 0), full - 1), 0).x;
+  let d01 = textureLoad(cDistT, min(b + vec2i(0, e), full - 1), 0).x;
+  let d11 = textureLoad(cDistT, min(b + vec2i(e, e), full - 1), 0).x;
   let dist = min(min(d00, d10), min(d01, d11));
-  let pp = in.pos.xy * 2.0;
+  let pp = in.pos.xy * f32(kd);
   let d = viewRay(pp);
   let ro = VW.cam.xyz;
   var jit = ign(in.pos.xy);

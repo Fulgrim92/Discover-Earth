@@ -40,6 +40,14 @@ announced it but not shipped it. So:
 - VR flight modes: **Line of sight** (you stand on the ground and watch the drone, the real beginner skill and
   comfortable) and **FPV** (you are the camera; comfort vignette on by default). Sticks come from the XR controller
   thumbsticks (left = throttle/yaw, right = pitch/roll) or any gamepad/transmitter.
+- How it is built (`src/xr.js`, `src/fx/xrfx.js`, `src/wgsl/xr.wgsl`): each XR view renders through `renderView`
+  into intermediate targets sized to its sub-image viewport, then the final pass writes into the layer's colour
+  texture at that viewport (texture-array and side-by-side layouts both work). The XR projection keeps its x/y/w
+  rows and gets reverse-Z depth (`mat4XRToRevZ`); `View.skew` carries the off-axis centre and `View.anc` the head,
+  so camera-centred grids (flora, fauna, motes, terrain morph) pick the same instances in both eyes. Clouds march
+  at 1/3 resolution in VR; dynres targets 80 % of the session's frame time. Controllers are a procedural mesh and the
+  HUD a dot-matrix panel above the left controller. `?xrmock=1|2` fakes the API headlessly (`tools/shots/xr.json`,
+  `tools/xrtest.mjs`, `tools/alloc.mjs --xrmock`).
 
 ## 4. The planet
 
