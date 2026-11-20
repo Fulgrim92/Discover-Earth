@@ -130,7 +130,7 @@ fn aurora(d: vec3f) -> vec3f {
     let fr = f32(r);
     // ribbons run roughly east-west across the northern sky, one nearly overhead, one low on the horizon
     let ang = 0.12 + fr * 0.21 - fr * fr * 0.05;
-    let off = select(select(select(-1.0, -2.3, r == 1), -4.6, r == 2), 1.5, r == 3);
+    let off = select(select(select(-1.35, -2.4, r == 1), -4.6, r == 2), 1.6, r == 3);
     let wdt = 0.03 + 0.012 * fr;             // sheet half-thickness
     let bright = select(1.0, 0.7, r == 3);
     let ax = vec2f(cos(ang), sin(ang));
@@ -152,6 +152,8 @@ fn aurora(d: vec3f) -> vec3f {
         if (abs(a1 - a0) > 1e-3) { I = dh * 0.5 * (erfA(a1) - erfA(a0)) / (a1 - a0) / wdt; }
         else { I = dh * exp(-a0 * a0) / (wdt * 1.7724539); }
       }
+      // grazing paths (looking straight up a sheet, fold edges) saturate softly: no overhead wash, no streaks
+      I = I / (1.0 + I * 0.8);
       if (I > 1e-4) {
         // where in the segment the ray is closest to the sheet
         var hs = select(h, hp, abs(fp) < abs(f));
@@ -309,7 +311,7 @@ fn skyFull(d: vec3f, pix: f32) -> vec3f {
   var g = vec4f(0.0);
   if (s5.z > 0.01 && d.y > -0.05) { g = giant(d); g.a *= s5.z; }
   if (vis > 0.01 && d.y > 0.0) {
-    let unit = rowv(S8).z * 8.3e-6; // a magnitude-0 star: 10^(-0.4 * 12.7) of a full moon
+    let unit = 0.9 * 8.3e-6; // a magnitude-0 star: 10^(-0.4 * 12.7) of a full moon (0.9 in every realm)
     var sk = stars(d, pix, unit);
     sk += milkyWay(d) * sstep(0.45, 0.9, s5.x);
     c += sk * vis * A.a * (1.0 - g.a);
