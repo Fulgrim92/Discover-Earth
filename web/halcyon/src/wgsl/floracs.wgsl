@@ -4,8 +4,7 @@
 // FA is cleared by the encoder before this pass; the first thread of a layer sets its vertexCount.
 @group(2) @binding(0) var<storage, read_write> FI: array<vec4f>;
 @group(2) @binding(1) var<storage, read_write> FA: array<atomic<u32>>;
-@group(2) @binding(2) var<uniform> FM: vec4u; // x: layers enabled this frame, y: ablation bits (LF_OFF_*)
-const LF_OFF_FSHADOW = 8u; // off=fshadow: no flora sun-shadow march (lit as if in sun, cloud shadow kept)
+@group(2) @binding(2) var<uniform> FM: vec4u; // x: layers enabled this frame, y: ablation bits (OFF_* in common.wgsl)
 
 @compute @workgroup_size(64) fn cs(@builtin(global_invocation_id) gid: vec3u) {
   let g = gid.x;
@@ -23,7 +22,8 @@ const LF_OFF_FSHADOW = 8u; // off=fshadow: no flora sun-shadow march (lit as if 
   // sun shadow once per instance (10-step march over the clipmap, then cloud shadow)
   var I2 = I;
   let pr = I.p + vec3f(0.0, I.sh, 0.0);
-  if ((FM.y & LF_OFF_FSHADOW) != 0u) { I2.sh = select(0.0, lfCloudShadow(pr), FR.sun.y > -0.03); }
+  // off=fshadow: no sun-shadow march (cloud shadow kept)
+  if ((FM.y & OFF_FSHADOW) != 0u) { I2.sh = select(0.0, lfCloudShadow(pr), FR.sun.y > -0.03); }
   else { I2.sh = lfShadow(pr, I.d, lfRand(I.h, 11u), 10); }
   atomicMax(&FA[L * 4u], select(LV[L], latheVerts(I.kind), L == 6u || L == 9u));
   let k = atomicAdd(&FA[L * 4u + 1u], 1u);
@@ -31,5 +31,5 @@ const LF_OFF_FSHADOW = 8u; // off=fshadow: no flora sun-shadow march (lit as if 
   FI[o] = vec4f(I.p, I.fade);
   FI[o + 1u] = vec4f(I.g, I2.sh, I.cell);
   FI[o + 2u] = vec4f(I.alb, I.d);
-  FI[o + 3u] = vec4f(bitcast<f32>(I.kind), bitcast<f32>(I.h), I.x, 0.0);
+  FI[o + 3u] = vec4f(bitcast<f32>(I.kind), bitcast<f32>(I.h), I.x, I.hy);
 }

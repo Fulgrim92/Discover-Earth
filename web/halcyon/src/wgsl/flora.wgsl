@@ -54,6 +54,7 @@ struct Inst {
   d: f32,
   cell: f32,
   sh: f32,
+  hy: f32,    // dream hybrid amount (flowers: frost toward Ice; grass: strata tips toward Painted)
   x: f32,     // kind-specific extra (far tuft: flower tint code + drift, -1 dry)
   alb: vec3f,
   mA: vec4f,
@@ -117,22 +118,31 @@ fn mushHR(I: Inst) -> vec2f {
   return vec2f(H, H * select(0.28 + 0.22 * r3, 0.36 + 0.14 * r3, I.x > 0.5));
 }
 
+var<private> PRW: RWt;
+fn lrow(f: u32) -> vec4f { return bf(PRW, f); }
+
 fn place(L: u32, li: u32) -> Inst {
-  var I: Inst; I.ok = false; I.x = 0.0;
+  var I: Inst; I.ok = false; I.x = 0.0; I.hy = 0.0;
   let la = LA[L]; let lb = LB[L];
   var cell = la.x; var N = u32(la.y);
   if (FR.time.w < 0.5) { cell *= 2.0; N = N / 2u; }
   if (li >= N * N) { return I; }
   let cam = VW.cam.xyz;
-  let b0 = vec2i(floor(cam.xz / cell)) - vec2i(i32(N / 2u));
+  let anc = VW.anc.xyz; // grid, range and fade from the head: both eyes place the same instances
+  let b0 = vec2i(floor(anc.xz / cell)) - vec2i(i32(N / 2u));
   let ci = b0 + vec2i(i32(li % N), i32(li / N));
   let h = hu(ci.x, ci.y, 7001u + L * 31u);
   I.h = h; I.cell = cell;
   let u = lfRand(h, 3u); let u2 = lfRand(h, 4u);
   let p2 = (vec2f(ci) + vec2f(lfRand(h, 1u), lfRand(h, 2u))) * cell;
-  if (length(p2 - cam.xz) > lb.w) { return I; }
+  if (length(p2 - anc.xz) > lb.w) { return I; }
   let cls = u32(la.w);
-  let v0 = rowv(V0); let v1 = rowv(V1);
+  // The Drift: the realm row at the instance's own position (not the camera's), so both realms' life coexists
+  // and thins out through each other across a border zone, and nothing pops when the camera crosses it
+  PRW = realmWeights(p2);
+  let v0 = lrow(V0); let v1 = lrow(V1);
+  // hybrids peak at the middle of a two-realm zone
+  let zone = 4.0 * PRW.w.x * (1.0 - PRW.w.x);
   // kind from the realm weights (no texture fetch yet: zero-weight kinds cost one hash)
   var kind = 99u;
   if (cls == 0u) { let k = pick(u, vec4f(v0.x, v0.w, v1.x, v1.y)); if (k == 0) { kind = K_GRASS; } else if (k == 1) { kind = K_TUSSOCK; } else if (k == 2) { kind = K_REED; } else if (k == 3) { kind = K_FERN; } }
@@ -140,14 +150,14 @@ fn place(L: u32, li: u32) -> Inst {
   else if (cls == 2u) { if (u < v1.z) { kind = select(K_STALK, K_TENDRIL, lfRand(h, 9u) > 0.62); } }
   else if (cls == 3u) { let k = pick(u, vec4f(v1.z, v1.y, 0.0, 0.0)); if (k == 0) { kind = K_MUSH; } else if (k == 1) { kind = K_CROWN; } }
   else if (cls == 4u) { let k = pick(u, vec4f(v1.z, v1.w, 0.0, 0.0)); if (k == 0) { kind = K_CRYSTAL; } else if (k == 1) { kind = K_SHARD; } }
-  else if (cls == 5u) { let k = pick(u, vec4f(v0.x, v0.w, v1.y * rowv(V4).w, 0.0)); if (k == 0) { kind = K_TUFT; I.x = 0.0; } else if (k == 1) { kind = K_TUFT; I.x = -1.0; } else if (k == 2) { kind = K_VINE; } }
-  else { if (u < rowv(V4).z * 0.35) { kind = K_MUSH; I.x = 1.0; } } // giant mushrooms, landmarks from afar
+  else if (cls == 5u) { let k = pick(u, vec4f(v0.x, v0.w, v1.y * lrow(V4).w, 0.0)); if (k == 0) { kind = K_TUFT; I.x = 0.0; } else if (k == 1) { kind = K_TUFT; I.x = -1.0; } else if (k == 2) { kind = K_VINE; } }
+  else { if (u < lrow(V4).z * 0.35) { kind = K_MUSH; I.x = 1.0; } } // giant mushrooms, landmarks from afar
   if (kind == 99u) { return I; }
 
   let lv = clipLevel(p2, 0u, 8.0);
   let s = clipS(lv, p2);
   I.p = vec3f(p2.x, s.x, p2.y); I.g = s.yz;
-  let d = length(I.p - cam);
+  let d = length(I.p - anc);
   var fade = sstep(lb.w, lb.z, d);
   if (kind == K_MUSH && L == 6u) { fade = sstep(122.0, 90.0, d); } // mushrooms share the crown layer, nearer reach
   if (lb.y > 0.0 && kind != K_VINE) { fade *= sstep(lb.x, lb.y, d); }
@@ -169,14 +179,15 @@ fn place(L: u32, li: u32) -> Inst {
   } else if (kind == K_GRASS || kind == K_FLOWER || kind == K_TUFT) {
     let nM = fbm(p2 * (1.0 / 41.0), 2, 210u);
     let rockT = sstep(0.2 + 0.1 * nM, 0.36 + 0.1 * nM, slope);
-    let shore = sstep(rowv(M3).w + 0.4, rowv(M3).w + 1.6, y + 0.5 * vn(p2 * 0.3, 813u));
-    let high = sstep(rowv(M2).w + 60.0, rowv(M2).w - 40.0, y);
+    let shore = sstep(lrow(M3).w + 0.4, lrow(M3).w + 1.6, y + 0.5 * vn(p2 * 0.3, 813u));
+    let high = sstep(lrow(M2).w + 60.0, lrow(M2).w - 40.0, y);
     let base = (1.0 - rockT) * shore * high;
     if (kind == K_TUFT) {
       // far impostor tufts: thin out with distance (they grow in the vertex shader), flower colour in the drifts
       keep = base * (0.55 + 0.45 * sstep(-0.35, 0.35, vn(p2 * (1.0 / 9.0), 811u))) * clamp(90.0 / d, 0.4, 1.0);
-      alb = lfGrassAlb(p2);
-      let drift = sstep(0.1, 0.5, vn(p2 * (1.0 / 23.0), 251u)) * v0.y;
+      I.hy = lrow(M4).x;
+      alb = lfGrassAlb(p2, lrow(M0));
+      let drift = sstep(0.2, 0.6, vn(p2 * (1.0 / 23.0), 251u)) * v0.y * 0.45;
       let c = vn(p2 * (1.0 / 9.0), 252u);
       var code = 1.0;
       if (c > 0.08) { code = 2.0; }
@@ -185,17 +196,21 @@ fn place(L: u32, li: u32) -> Inst {
     } else if (kind == K_GRASS) {
       let clump = 0.45 + 0.55 * sstep(-0.35, 0.35, vn(p2 * (1.0 / 2.1), 811u));
       keep = base * clump;
-      alb = lfGrassAlb(p2);
+      alb = lfGrassAlb(p2, lrow(M0));
+      I.hy = lrow(M4).x; // toward the Painted Range the tips take the strata colours
       let heath = sstep(0.06, 0.15, slope + 0.07 * vn(p2 * (1.0 / 17.0), 812u)) * v0.z;
       if (lfRand(h, 5u) < heath * 0.85) { kind = K_HEATHER; }
     } else {
-      let drift = sstep(0.1, 0.5, vn(p2 * (1.0 / 23.0), 251u));
-      keep = base * drift * 0.9;
+      // sparse, as in a grazed Faroese hayfield: a few flowers per square metre inside loose drifts
+      let drift = sstep(0.2, 0.6, vn(p2 * (1.0 / 23.0), 251u));
+      keep = base * drift * 0.32;
+      I.hy = lrow(M4).w; // toward Aurora Ice: frost on the petals
       // drifts of one colour: yellow, white, violet
       let c = vn(p2 * (1.0 / 9.0), 252u) + 0.35 * (lfRand(h, 6u) - 0.5);
       alb = vec3f(0.95, 0.62, 0.04);
       if (c > 0.08) { alb = vec3f(0.86, 0.86, 0.8); }
       if (c > 0.42 || c < -0.55) { alb = vec3f(0.22, 0.12, 0.85); }
+      alb *= 0.8; // measured-range petal albedo
     }
   } else if (kind == K_TUSSOCK) {
     let nM = fbm(p2 * (1.0 / 41.0), 2, 210u);
@@ -207,12 +222,15 @@ fn place(L: u32, li: u32) -> Inst {
   } else if (kind == K_REED) {
     I.mB = clipMB(lv, p2);
     let isl = sstep(0.05, 0.25, I.mB.z) * sstep(0.02, 0.15, y);
-    if (y < 3.5) { keep = isl * 0.85 * sstep(3.5, 2.0, y); alb = mix(vec3f(0.16, 0.17, 0.06), vec3f(0.36, 0.28, 0.12), lfRand(h, 7u)); }
+    // dream hybrid: toward the Mirror, reeds stand in its first centimetres of water
+    let mir = lrow(M4).y;
+    let shallow = zone * sstep(0.05, 0.6, mir) * sstep(-0.25, -0.02, y) * sstep(0.12, 0.0, y);
+    if (y < 3.5) { keep = max(isl * 0.85 * sstep(3.5, 2.0, y), shallow * 0.7); alb = mix(vec3f(0.16, 0.17, 0.06), vec3f(0.36, 0.28, 0.12), lfRand(h, 7u)); }
     else { kind = K_TUSSOCK; keep = isl * 0.28 * sstep(0.4, 0.2, slope); alb = mix(vec3f(0.26, 0.2, 0.09), vec3f(0.14, 0.16, 0.06), lfRand(h, 7u)); }
   } else if (kind == K_FERN) {
     I.mA = clipMA(lv, p2);
     keep = sstep(0.42, 0.25, slope) * mix(0.55, 0.9, onPillarTop(I.mA.y, y)) * sstep(0.0, 1.0, y);
-    alb = rowv(M0).rgb * mix(vec3f(0.45, 0.55, 0.38), vec3f(0.8, 0.78, 0.5), lfRand(h, 7u));
+    alb = lrow(M0).rgb * mix(vec3f(0.45, 0.55, 0.38), vec3f(0.8, 0.78, 0.5), lfRand(h, 7u));
   } else if (kind == K_STALK || kind == K_TENDRIL) {
     I.mB = clipMB(lv, p2); I.mA = clipMA(lv, p2);
     let pch = sstep(-0.15, 0.45, vn(p2 * (1.0 / 16.0), 821u));
@@ -233,7 +251,7 @@ fn place(L: u32, li: u32) -> Inst {
       }
       keep = 0.75 * sstep(5.0, 12.0, y - lo);
       I.x = dir;
-      alb = rowv(M0).rgb * mix(vec3f(0.42, 0.55, 0.36), vec3f(0.6, 0.66, 0.4), lfRand(h, 7u));
+      alb = lrow(M0).rgb * mix(vec3f(0.42, 0.55, 0.36), vec3f(0.6, 0.66, 0.4), lfRand(h, 7u));
     }
   } else if (kind == K_CROWN) {
     I.mA = clipMA(lv, p2);
@@ -243,7 +261,7 @@ fn place(L: u32, li: u32) -> Inst {
     var tint = vec3f(0.36, 0.44, 0.3);
     tint = mix(tint, vec3f(0.66, 0.66, 0.38), sstep(0.15, 0.45, hv));
     tint = mix(tint, vec3f(0.3, 0.42, 0.38), sstep(-0.2, -0.5, hv));
-    alb = rowv(M0).rgb * tint * (0.85 + 0.3 * lfRand(h, 9u));
+    alb = lrow(M0).rgb * tint * (0.85 + 0.3 * lfRand(h, 9u));
     if (lfRand(h, 12u) < 0.12) { I.x = 1.0; } // emergent tree above the canopy
   } else if (kind == K_CRYSTAL) {
     I.mB = clipMB(lv, p2);

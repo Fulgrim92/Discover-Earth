@@ -152,9 +152,7 @@ fn lightOD(p: vec3f, L: vec3f, sea: bool, n: i32, jit: f32) -> f32 {
 // march state; the sample budget (dense samples nd, iterations it) is shared by the sea and the main layer, so a ray
 // through both costs no more than one through either (the worst case was 2x before: the p99 spikes)
 struct MS { scat: vec3f, T: f32, tw: f32, ww: f32, nd: i32, it: i32, cap: i32 }
-// cost ablation: flip to false to drop a part of the cloud cost (the front march, the mirror march)
-const CLOUD_MARCH_ON: bool = true;
-const CLOUD_REFL_ON: bool = true;
+// cost ablation: off=clouds, off=water (the mirror march), off=veil (common.wgsl OFF_*)
 // stop once the clouds in front are this opaque (what is left behind would add < 3%)
 const T_MIN: f32 = 0.03;
 
@@ -340,7 +338,7 @@ struct CF { @location(0) front: vec4f, @location(1) refl: vec4f, @location(2) di
 @fragment fn fsC(in: CVO) -> CF {
   let hp = vec2i(in.pos.xy);
   let full = vec2i(VW.size.xy);
-  // cloud resolution: half (2) or quarter (4, quality=low) of the view
+  // cloud resolution: half (2), quarter (4, quality=low) or a third (3, VR) of the view
   let S = max(i32(round(VW.size.x * CU.misc.z)), 1);
   // nearest of the corners of the SxS full-res block: the march stops at the closest surface, the upsample sorts
   // out edges
@@ -363,8 +361,9 @@ struct CF { @location(0) front: vec4f, @location(1) refl: vec4f, @location(2) di
   var o: CF;
   o.refl = vec4f(0.0);
   o.dist = vec4f(dist, 0.0, 0.0, 1.0);
+  if (isOff(OFF_CLOUDS)) { o.front = vec4f(0.0); return o; } // ablation (common.wgsl)
   // the water plane: march the mirrored ray for the reflection, the front only up to the water
-  if (ro.y > 0.0 && d.y < 0.0) {
+  if (ro.y > 0.0 && d.y < 0.0 && !isOff(OFF_WATER)) {
     let tw = ro.y / -d.y;
     if (tw < tmax + max(0.6, tmax * 0.0015)) {
       tmax = tw;
@@ -373,10 +372,10 @@ struct CF { @location(0) front: vec4f, @location(1) refl: vec4f, @location(2) di
       // skip the mirror march where the water reflects little (Fresnel at this angle and the realm's mirror floor,
       // as composite.wgsl weighs it): most water seen from above in all realms but Mirror Salt and Aurora Ice
       let wr = max(0.02 + 0.98 * pow(1.0 - min(-d.y, 1.0), 5.0), rowv(W2).w);
-      if (CLOUD_REFL_ON && wr > 0.12) { o.refl = marchAll(P, R, 1e9, i32(CU.q.w), max(nl - 2, 2), jit); }
+      if (wr > 0.12) { o.refl = marchAll(P, R, 1e9, i32(CU.q.w), max(nl - 2, 2), jit); }
     }
   }
-  if (CLOUD_MARCH_ON) { o.front = marchAll(ro, d, tmax, n, nl, jit); } else { o.front = vec4f(0.0); }
+  o.front = marchAll(ro, d, tmax, n, nl, jit);
   // the veil of a Drift, in front of the clouds (it hugs the ground)
   let vl = veilMarch(ro, d, tmax, jit);
   o.front = vec4f(vl.rgb + o.front.rgb * (1.0 - vl.a), 1.0 - (1.0 - vl.a) * (1.0 - o.front.a));
@@ -397,7 +396,6 @@ struct CF { @location(0) front: vec4f, @location(1) refl: vec4f, @location(2) di
 // Densest where two realms weigh the same (1 - sum w^2), hugging the ground with a faint tall tail so that from
 // outside the zone it reads as a soft glowing seam of weather between the worlds. Each realm's colour (its sunward
 // horizon tone and its night light) shows in slow drifting tongues. 10 samples, densest near the camera.
-const VEIL_ON: bool = true;      // cost ablation
 const VEIL_D: f32 = 0.0008;      // extinction per m at the heart of a Drift, at the ground
 fn realmTone(id: i32) -> vec3f {
   let s4 = RT[u32(id) * ROW + S4].rgb;
@@ -424,7 +422,7 @@ fn veilAt(p: vec3f, tm: f32) -> vec4f {
   return vec4f(col / max(ws, 1e-4), dens);
 }
 fn veilMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
-  if (!VEIL_ON) { return vec4f(0.0); }
+  if (isOff(OFF_VEIL)) { return vec4f(0.0); } // ablation (common.wgsl)
   let tEnd = min(tmax, 9000.0);
   let N = 10;
   var T = 1.0; var acc = vec3f(0.0);

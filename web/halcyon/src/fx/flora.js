@@ -18,9 +18,9 @@
 //   6 crowns/mush   64^2 =  4096 x 672/1440      7 crystals   48^2 =  2304 x 288    8 impostor  168^2 = 28224 x 27
 //   9 giant mush    14^2 =   196 x 1440
 // Prepass: 103872 threads per view, most rejected after one hash. Accepted per view in the shots: 0.3-3k per layer.
-// Ablation (integration's off= bits, ctx.off): OFF_FLORA here; LF_OFF_FSHADOW in floracs.wgsl.
+// Ablation (integration's off= bits, ctx.off): OFF_FLORA here; OFF_FSHADOW (common.wgsl) in floracs.wgsl.
 import { G, shader, pipeline, computePipeline, bgl, bindGroup, buffer, FO, VO } from '../gpu.js';
-import { F } from '../realms.js';
+import { F, TABLE, ROWF, NREALM, W_IN, W_ID, W_W, realmWeightsA } from '../realms.js';
 import { heightBatch } from '../world.js';
 import { clip } from './clipmap.js';
 import CLIP from '../wgsl/clip.wgsl';
@@ -47,7 +47,7 @@ const verts = new Uint32Array(NLAYER), cls = new Uint8Array(NLAYER), reach = new
 const wCls = new Float32Array(7);
 const mask = new Uint32Array(4); // x: layers enabled this frame, y: ablation bits (both read by the prepass)
 // ablation bits (integration's off= URL parameter, read from ctx.off; mirror of common.wgsl): flora skips prepare
-// and draw here; fshadow is handled in floracs.wgsl (LF_OFF_FSHADOW)
+// and draw here; fshadow is handled in floracs.wgsl (OFF_FSHADOW)
 const OFF_FLORA = 1;
 let pPool, bgPool, poolN = 0, pStrip, pBlade, pLathe, pPlace, statBuf = null, statState = 0, bgC, bgR = [], args, maskBuf, groups = 0;
 // camera height above ground, in typed arrays: a double in a module `let` or passed to heightAt is boxed per frame
@@ -100,18 +100,44 @@ export function init(ctx) {
 }
 
 // layers to draw this frame, from the realm row and the camera's height above the ground (cached per frame)
+// Realms whose life can be in reach: the realm weights at the camera and at 8 points 250 m and 900 m around it
+// (bit per realm). Layers and fauna groups are enabled from the life fields of every present realm, so life that
+// belongs to a neighbouring realm is already being placed (thinned by its own weight) before the camera arrives.
+const RING = new Float64Array([0, 0, 250, 0, -250, 0, 0, 250, 0, -250, 900, 0, -900, 0, 0, 900, 0, -900]);
+export const LIFE_PRESENT = new Uint32Array(2); // [0]: realm bits, [1]: frame they were computed for
+LIFE_PRESENT[1] = 0xffffffff;
+// largest value of every row entry over the present realms (read LMAX[field * 4 + component]; a typed array, so
+// no double crosses a function boundary)
+export const LMAX = new Float32Array(ROWF);
+export function lifePresent(ctx, view) {
+  const fno = ctx.frame[FO.time + 2];
+  if (fno === LIFE_PRESENT[1]) return;
+  const d = view.data;
+  let bits = 0;
+  for (let i = 0; i < RING.length; i += 2) {
+    W_IN[0] = d[VO.cam] + RING[i]; W_IN[1] = d[VO.cam + 2] + RING[i + 1];
+    realmWeightsA();
+    for (let s = 0; s < 4; s++) if (W_ID[s] >= 0 && W_W[s] > 1e-4) bits |= 1 << W_ID[s];
+  }
+  LIFE_PRESENT[0] = bits; LIFE_PRESENT[1] = fno;
+  LMAX.fill(0);
+  for (let r = 0; r < NREALM; r++) {
+    if (!(bits & (1 << r))) continue;
+    for (let c = 0; c < ROWF; c++) if (TABLE[r * ROWF + c] > LMAX[c]) LMAX[c] = TABLE[r * ROWF + c];
+  }
+}
+
 function layers(ctx, view) {
   const fr = ctx.frame, fno = fr[FO.time + 2];
   if (fno === AGL[1]) return mask[0];
-  const o = FO.row, v0 = o + F.V0 * 4, v1 = o + F.V1 * 4;
-  wCls[0] = fr[v0] + fr[v0 + 3] + fr[v1] + fr[v1 + 1];
-  wCls[1] = fr[v0 + 1];
-  wCls[2] = fr[v1 + 2];
-  wCls[3] = fr[v1 + 2] + fr[v1 + 1];
-  wCls[4] = fr[v1 + 2] + fr[v1 + 3];
-  const v4 = o + F.V4 * 4;
-  wCls[5] = fr[v0] + fr[v0 + 3] + fr[v1 + 1] * fr[v4 + 3];
-  wCls[6] = fr[v4 + 2];
+  const V0 = F.V0, V1 = F.V1, V4 = F.V4;
+  wCls[0] = LMAX[V0 * 4 + 0] + LMAX[V0 * 4 + 3] + LMAX[V1 * 4 + 0] + LMAX[V1 * 4 + 1];
+  wCls[1] = LMAX[V0 * 4 + 1];
+  wCls[2] = LMAX[V1 * 4 + 2];
+  wCls[3] = LMAX[V1 * 4 + 2] + LMAX[V1 * 4 + 1];
+  wCls[4] = LMAX[V1 * 4 + 2] + LMAX[V1 * 4 + 3];
+  wCls[5] = LMAX[V0 * 4 + 0] + LMAX[V0 * 4 + 3] + LMAX[V1 * 4 + 1] * LMAX[V4 * 4 + 3];
+  wCls[6] = LMAX[V4 * 4 + 2];
   const d = view.data;
   AQ[0] = d[VO.cam]; AQ[1] = d[VO.cam + 2]; heightBatch(AQ, 1, AH);
   AGL[0] = d[VO.cam + 1] - Math.max(0, AH[0]);
@@ -119,7 +145,8 @@ function layers(ctx, view) {
   let m = 0;
   for (let i = 0; i < NLAYER; i++) if (wCls[cls[i]] >= 0.002 && AGL[0] <= reach[i] + 10) m |= 1 << i;
   mask[0] = m; mask[1] = ctx.off | 0;
-  mask[2] = fr[v1 + 1] < 0.002 && fr[v0 + 3] < 0.002 ? 1 : 0; // no ferns or tussock cards: tuft layers use the opaque blades (JS only)
+  // no ferns or tussock cards in any present realm: the tuft layers use the opaque blades (JS only)
+  mask[2] = LMAX[V1 * 4 + 1] < 0.002 && LMAX[V0 * 4 + 3] < 0.002 ? 1 : 0;
   G.queue.writeBuffer(maskBuf, 0, mask);
   return m;
 }
@@ -127,6 +154,10 @@ function layers(ctx, view) {
 // once per frame: the second eye of a stereo pair reuses the first eye's records (its frustum differs by the eye
 // offset, inside the cull margin)
 export function prepare(ctx, enc, view) {
+  lifePresent(ctx, view); // page code, kept out of the platform-registered prepass below
+  placePass(ctx, enc, view);
+}
+function placePass(ctx, enc, view) {
   if ((ctx.off | 0) & OFF_FLORA) { mask[0] = 0; return; }
   const fno = ctx.frame[FO.time + 2];
   if (fno === PREP[0]) return;
@@ -163,11 +194,11 @@ export function draw(ctx, pass, view) {
 
 // in the blended pass (groups 0-2 bound by particles.js): 1 when drawn
 export function drawPools(ctx, pass) {
-  if (!(mask[0] & ((1 << 6) | (1 << 9))) || ctx.frame[FO.row + F.V1 * 4 + 2] < 0.002) return 0;
+  if (!(mask[0] & ((1 << 6) | (1 << 9))) || LMAX[F.V1 * 4 + 2] < 0.002) return 0;
   pass.setPipeline(pPool); pass.setBindGroup(3, bgPool);
   pass.draw(4, poolN);
   return 1;
 }
 
 // draws anything in the blended pass
-export function anyPools(ctx) { return (mask[0] & ((1 << 6) | (1 << 9))) && ctx.frame[FO.row + F.V1 * 4 + 2] >= 0.002; }
+export function anyPools(ctx) { return (mask[0] & ((1 << 6) | (1 << 9))) && LMAX[F.V1 * 4 + 2] >= 0.002; }

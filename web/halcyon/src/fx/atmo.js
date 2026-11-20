@@ -10,7 +10,10 @@ const TW = 64, TH = 32, SW = 256, SH = 129;
 let pT, pS, bgF, bgT, bgS, auBuf;
 const AU = new Float32Array(4);
 
-export function init(ctx) {
+let CTX = null, SO = 0, OFFB = 0, baked = false;
+// sunOfs: FO.sun in the frame uniforms (FR.sun.w is the drift); offBit: OFF_ATMO
+export function init(ctx, sunOfs, offBit) {
+  CTX = ctx; SO = sunOfs; OFFB = offBit;
   const d = G.device;
   const U = GPUTextureUsage;
   const trans = tex(TW, TH, 'rgba16float', U.STORAGE_BINDING | U.TEXTURE_BINDING, { label: 'atmoTrans' });
@@ -41,9 +44,13 @@ export function init(ctx) {
   pT = cp(lT, 'csTrans'); pS = cp(lS, 'csSky');
 }
 
-// once per frame, after the frame uniforms are written and before any view draws: camY in m, drift as FR.sun.w
-export function bake(enc, camY, drift) {
-  AU[0] = camY; AU[1] = drift;
+// once per frame (all views and both XR eyes share it), after the frame uniforms are written and before any view
+// draws. cam: main.js cam (y in m); arrays only, a double argument would be boxed every frame.
+// off=atmo: bake once, then keep the LUTs (bench ablation)
+export function bake(enc, cam) {
+  if (baked && (CTX.off & OFFB)) return;
+  baked = true;
+  AU[0] = cam[1]; AU[1] = CTX.frame[SO + 3];
   G.queue.writeBuffer(auBuf, 0, AU);
   const c = enc.beginComputePass();
   c.setBindGroup(0, bgF);

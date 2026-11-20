@@ -3,20 +3,28 @@ import { G, shader, bgl, bindGroup, tex, pipeline, tsBoth, tsBegin, tsEnd, TS_BL
 import POST from '../wgsl/post.wgsl';
 
 const NB = 6;
-let pDown, pUp, pFinal, bl1;
+let pDown, pUp, pFinal, bl1, mod, lay, finalFmt = '';
 const down = [], up = [], downBG = [], upBG = [], downDesc = [], upDesc = [];
 let finalBG;
 export const finalDesc = [null, null]; // [clear, load]
 
 export function init(ctx) {
   bl1 = bgl('fsf', 'post1');
-  const mod = shader(POST, 'post');
-  const lay = [ctx.bgl0, bl1];
+  mod = shader(POST, 'post');
+  lay = [ctx.bgl0, bl1];
+  finalFmt = G.canvasFormat;
   pDown = pipeline({ label: 'bloomDown', module: mod, fs: 'fsDown', layouts: lay, targets: [{ format: 'rgba16float' }] });
   pUp = pipeline({ label: 'bloomUp', module: mod, fs: 'fsUp', layouts: lay, targets: [{ format: 'rgba16float' }] });
   pFinal = pipeline({ label: 'final', module: mod, fs: 'fsFinal', layouts: lay, targets: [{ format: G.canvasFormat }] });
   finalDesc[0] = { colorAttachments: [{ view: null, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }], timestampWrites: tsBoth(TS_FINAL) };
   finalDesc[1] = { colorAttachments: [{ view: null, loadOp: 'load', storeOp: 'store' }], timestampWrites: tsBoth(TS_FINAL) };
+}
+
+// the final pass's target format: the canvas, or an XR projection layer's (xr.js); rebuilt only when it changes
+export function setFinalFormat(fmt) {
+  if (fmt === finalFmt) return;
+  finalFmt = fmt;
+  pFinal = pipeline({ label: 'final ' + fmt, module: mod, fs: 'fsFinal', layouts: lay, targets: [{ format: fmt }] });
 }
 
 export function bind(ctx, tg) {

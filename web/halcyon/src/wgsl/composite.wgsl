@@ -8,7 +8,7 @@
 @group(2) @binding(4) var cloudR: texture_2d<f32>;
 @group(2) @binding(5) var cloudD: texture_2d<f32>;
 
-// ---- clouds: depth-aware upsample of the half-res cloud pass (front clouds + clouds in the mirror) ----
+// ---- clouds: depth-aware upsample of the half-res (1/3 in VR) cloud pass (front clouds + clouds in the mirror) ----
 var<private> gRC: vec4f; // mirrored clouds for this pixel, read by reflectRay's sky branch
 
 struct CUp { front: vec4f, refl: vec4f }
@@ -17,7 +17,7 @@ struct CUp { front: vec4f, refl: vec4f }
 // water, where the old per-texel weight degenerated to nearest-neighbour blocks
 fn cloudUp(pix: vec2f, dist: f32) -> CUp {
   let hs = vec2i(textureDimensions(cloudT));
-  let S = max(round(VW.size.x / f32(hs.x)), 1.0); // 2 (half res) or 4 (quarter, quality=low)
+  let S = max(round(VW.size.x / f32(hs.x)), 1.0); // 2 (half res), 4 (quarter, quality=low) or 3 (VR)
   let ic = vec2i(floor(pix / S));
   var o: CUp;
   o.front = vec4f(0.0); o.refl = vec4f(0.0);
@@ -135,9 +135,21 @@ fn reflectRay(P: vec3f, R: vec3f, rw: RWt, pix: f32) -> vec3f {
     let mb = clipMB(l, hp.xz); let ma = clipMA(l, hp.xz);
     var alb = mix(m0, m1, sstep(0.25, 0.5, 1.0 - n.y));
     let m4 = bf(rq, M4);
-    alb = mix(alb, vec3f(0.55, 0.25, 0.1), m4.x * 0.7);
-    alb = mix(alb, vec3f(0.75, 0.85, 0.92), mb.w * m4.w);
-    alb = mix(alb, bf(rq, M2).rgb, sstep(bf(rq, M2).w - 50.0, bf(rq, M2).w + 50.0, hp.y));
+    let m2 = bf(rq, M2);
+    // uplands (terrain.wgsl: a soft altitude blend towards the drier upland tone, not the raw M2 colour)
+    alb = mix(alb, mix(alb, m2.rgb * 0.62, 0.3), sstep(m2.w - 140.0, m2.w + 90.0, hp.y));
+    // Painted strata: rust and ochre beds
+    alb = mix(alb, mix(vec3f(0.33, 0.07, 0.025), vec3f(0.5, 0.3, 0.12), 0.5 + 0.5 * sin(hp.y * 0.95)), m4.x * 0.8);
+    // Mirror cones: dark volcanic rock
+    alb = mix(alb, vec3f(0.034, 0.027, 0.026), sstep(0.15, 0.6, mb.z) * m4.y);
+    // Stone Forest: limestone walls, green canopy on the tops
+    alb = mix(alb, mix(m1, vec3f(0.09, 0.16, 0.05), sstep(-4.0, -1.0, hp.y - ma.y * 600.0) * step(0.002, ma.y)), m4.z);
+    // Aurora Ice: cyan glacier ice, snow above, white bergs; the nunataks keep the dark rock
+    let iceC = mix(vec3f(0.4, 0.64, 0.75), vec3f(0.86, 0.92, 0.98), sstep(110.0, 240.0, hp.y));
+    alb = mix(alb, iceC, mb.w * m4.w);
+    alb = mix(alb, vec3f(0.75, 0.88, 0.95), sstep(0.5, 0.6, mb.z) * m4.w);
+    // Lumen: near-black indigo
+    alb = mix(alb, vec3f(0.018, 0.014, 0.045), bf(rq, M5).x * 0.6);
     let KLr = keyLight(bf(rq, S0), bf(rq, S1), bf(rq, S8), FR.sun.w);
     let L = KLr.dir;
     let sc = KLr.col;
@@ -180,16 +192,20 @@ struct VO { @builtin(position) pos: vec4f }
 
   var tEnd = dist;
   // water plane at sea level
-  if (ro.y > 0.0 && d.y < 0.0 && (VW.cam.w == 0.0 || VW.cam.w >= 5.0)) {
+  if (ro.y > 0.0 && d.y < 0.0 && (VW.cam.w == 0.0 || VW.cam.w >= 5.0) && !isOff(OFF_WATER)) {
     let tw = ro.y / -d.y;
     // r16float distance is quantised (0.5 m at 1 km): allow for it, or 4 cm of water flickers in and out
     if (tw < dist + max(0.6, dist * 0.0015)) {
       tEnd = tw;
       let P = ro + d * tw;
       let rw = realmWeights(P.xz);
-      let w0 = bf(rw, W0); let w1 = bf(rw, W1); let w2 = bf(rw, W2);
+      let rwd = driftW(P.xz, rw); // water colour and surface drift with the skin (The Drift)
+      let w0 = bf(rwd, W0); let w1 = bf(rwd, W1); let w2 = bf(rwd, W2);
       let foot = tw * pix / max(-d.y, 0.05);
       var n = waveN(P.xz, w0.w, foot);
+      // splashes, wakes and ripples from living things (fx/lifefx.js; a zero stub until it is wired, see composite.js)
+      let lf = lfWater(P.xz, FR.time.x);
+      n = normalize(n + vec3f(-lf.x, 0.0, -lf.y));
       let V = -d;
       // Mirror Salt: raised polygon rims of salt just under the sheet, seen with a few cm of parallax;
       // the meniscus over each rim breaks the mirror slightly
@@ -239,7 +255,7 @@ struct VO { @builtin(position) pos: vec4f }
       let foamAmt = rowv(G3).w;
       let fz = sstep(1.2, 0.0, depth + 0.3 * vn(P.xz * 0.3 + vec2f(FR.time.x * 0.3, 0.0), 550u));
       let fn1 = sstep(0.1, 0.6, vn(P.xz * 1.7 + vec2f(0.0, FR.time.x * 0.5), 551u) * 0.5 + 0.5 * fz);
-      let foam = fz * fn1 * foamAmt * bf(rw, G3).w;
+      let foam = max(fz * fn1 * foamAmt * bf(rw, G3).w, clamp(lf.z, 0.0, 1.0));
       wcol = mix(wcol, vec3f(0.8) * (sunCol() * 0.25 + mix(rowv(S3).rgb, rowv(S2).rgb, 0.5) * I), foam * 0.6);
       col = mix(wcol, rc, refl * (1.0 - foam));
       if (VW.cam.w == 5.0) { col = rc; }

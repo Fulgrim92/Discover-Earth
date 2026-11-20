@@ -40,6 +40,14 @@ announced it but not shipped it. So:
 - VR flight modes: **Line of sight** (you stand on the ground and watch the drone, the real beginner skill and
   comfortable) and **FPV** (you are the camera; comfort vignette on by default). Sticks come from the XR controller
   thumbsticks (left = throttle/yaw, right = pitch/roll) or any gamepad/transmitter.
+- How it is built (`src/xr.js`, `src/fx/xrfx.js`, `src/wgsl/xr.wgsl`): each XR view renders through `renderView`
+  into intermediate targets sized to its sub-image viewport, then the final pass writes into the layer's colour
+  texture at that viewport (texture-array and side-by-side layouts both work). The XR projection keeps its x/y/w
+  rows and gets reverse-Z depth (`mat4XRToRevZ`); `View.skew` carries the off-axis centre and `View.anc` the head,
+  so camera-centred grids (flora, fauna, motes, terrain morph) pick the same instances in both eyes. Clouds march
+  at 1/3 resolution in VR; dynres targets 80 % of the session's frame time. Controllers are a procedural mesh and the
+  HUD a dot-matrix panel above the left controller. `?xrmock=1|2` fakes the API headlessly (`tools/shots/xr.json`,
+  `tools/xrtest.mjs`, `tools/alloc.mjs --xrmock`).
 
 ## 4. The planet
 
@@ -187,6 +195,8 @@ web/halcyon/
   tools/shots/*.json     step lists: per-realm hero views, stereo, fly-throughs
   tools/alloc.mjs        the zero-allocation gate (scripted frame loop, --trace-gc + sampling heap profile)
   tools/bench.mjs        headless smoke test of ?bench=1 (report shape, GPU timer readback)
+  tools/dyntest.mjs      dynamic-resolution controller against synthetic GPU-time feeds (node, no browser)
+  tools/readytest.mjs    __halcyon.ready outside shot mode, start overlay progress while pipelines compile
   tools/play.mjs         scripted flights (?script=) -> frames + contact sheet; --dry runs the sim in node
 ```
 
@@ -194,7 +204,13 @@ URL parameters (all optional) make captures deterministic: `realm`, `pos=x,y,z`,
 (freeze time), `w`, `h`, `scale`, `stereo`, `hud=0`, `bench=1`, `quality=low|high`; the full list (script, sim,
 orbit, present, alloc, dynres, target, hdr, stride, inflight, ...) is at the top of `src/main.js`. The page sets
 `window.__halcyon = {ready, frame, error}` and the harness waits for `ready` (all clip levels baked) before
-grabbing. Shader compile errors and uncaptured GPU errors must surface in `__halcyon.error` and fail the shot.
+grabbing; outside shot mode `ready` turns true once the pipelines have compiled and the first frame has finished.
+
+Benching on the reference machine: `?bench=1` renders a fixed 1920x1080 canvas with dynamic resolution on (`dynres=0`
+for a fixed internal 1920x1080). `off=<names>` switches costs off one by one (flora, fauna, particles, tshadow,
+tdetail, tao, fshadow, clouds, cloudshadow, water, rings, drone, msaa, or `all`): bits in `Frame.flags`, named
+`OFF_*` in common.wgsl. `split=1` splits the opaque pass into terrain / flora / fauna and times each (`gpuPassMs`
+opaque = terrain + sky + drone); it adds an MSAA store and load per split, so compare totals with `split=0`. Shader compile errors and uncaptured GPU errors must surface in `__halcyon.error` and fail the shot.
 
 Headless Chromium flags that work here: `--enable-unsafe-webgpu --enable-features=Vulkan --use-angle=swiftshader
 --use-webgpu-adapter=swiftshader --ignore-gpu-blocklist`. SwiftShader is a CPU rasteriser: expect seconds per frame;
@@ -246,3 +262,76 @@ Lumen Deep stays unearthly in content but is rendered with the same physical cam
 - Stylisation that must go: neon outlines, toy-like mushrooms and crystals, barcode or poster-like sky features,
   uniformly saturated fills.
 - Where photorealism and frame budget conflict, look wins (priority 1), but dynamic resolution must keep pacing.
+
+## 12. Addendum from C, 2026-11-20: encounters
+
+C's words: "any encounter includes otherworldly feelings for the operator of the drone, meaning we have animals,
+wildlife, as well as natural occurrences such as waves splashing, night sky shifting, rain and weather, sunsets."
+
+The world must **do things to you**. Scenery alone is a postcard; an encounter is a moment that happens once, near
+you, because you were there. Target rhythm: something worth turning the camera for every 40-90 s of flight, and one
+rare, overwhelming event every 5-8 minutes. Never a notification, never UI: the pilot notices it themselves (a
+glint, a sound, a shadow passing over the ground), per the cue grammar of Discover Earth (glint, call, ripple,
+gust, hum).
+
+### 12.1 The living baseline (always on, photoreal, everywhere it belongs)
+
+- **Sea and shore**: swell that travels, waves that steepen and break on beaches, surf line foam that washes up and
+  drains back leaving wet sand, spray bursting on cliffs and skerries with mist drifting downwind, tide pools.
+- **Weather**: every realm has weather that moves across it: rain squalls with visible rain shafts under their
+  clouds, wet darkened ground and puddles that dry, fog banks that roll through valleys, wind you can see in grass,
+  water and cloud; snow showers over the Ice; dust devils in the Painted Range; spore storms in Lumen. Flying into
+  rain puts drops on the lens (subtle) and changes the sound.
+- **The sky turns**: the star field rotates around a pole, moons rise and set, the ringed giant shows phases and its
+  ring shadow moves; every realm's sun drifts along a slow arc so sunsets and blue hours actually happen (a few
+  minutes each), with afterglow, Belt of Venus, crepuscular rays, green flash at a sea horizon.
+- **Wildlife as populations**, placed by habitat, behaving: sheep on Faroese slopes, puffins and gannets diving at
+  cliffs, seals on skerries; ibex or wild horses in the Painted Range; flamingos feeding and taking off in waves;
+  hornbills and monkeys in the Stone Forest canopy, swifts around pillars; arctic foxes, seals and whales at the
+  Ice; Lumen's own ecology (sky jellies, grazing light-eaters, a slow giant on the horizon). They **react to the
+  drone**: flocks lift and wheel away, a curious bird flies alongside for a while, whales ignore you.
+
+### 12.2 Encounters (directed, rare, seeded)
+
+A director (`src/encounters.js`, deterministic from seed + position + time, allocation-free) keeps up to 8 active
+encounter slots `[type, x, y, z, t0, duration, seed, intensity]` in a uniform buffer that every shader can read,
+and chooses events by realm, time since the last event, and where the pilot is looking and heading (events start
+ahead of the flight path, in view, at a readable distance). Examples, each must be built to photoreal standard and
+feel uncanny in a quiet way:
+
+| Realm | Common | Rare |
+|-------|--------|------|
+| Home Fjords | Gannets plunge-diving beside you; a rainbow in a passing squall; a wave set bursting on a headland | A pod of orcas travelling up the fjord under the drone; a murmuration folding around you at dusk |
+| Painted Range | Dust devil crossing a basin; a hot pool erupting as a geyser; wild horses running a ridge | A dry thunderstorm: lightning walking along the horizon, virga lit pink |
+| Mirror Salt | Flamingos taking off in a wave that doubles in the mirror; a far rain shaft with its reflection | Night falls for a minute and the Milky Way is above and below you |
+| Stone Forest | Cloud sea rising and pouring between pillars like a waterfall; swifts streaming past | Brocken spectre: the drone's shadow in a rainbow halo on the cloud below |
+| Aurora Ice | A glacier calving with a wave rolling across the lagoon; a meteor; aurora surge to a corona | A humpback breaching in moonlight; a total lunar eclipse turning the ice red |
+| Lumen Deep | A pulse of light travelling through every plant; sky jellies gathering | The ringed giant eclipses the sun: diamond ring, then the whole land lights itself; a migration of giants |
+| The Drift | Creatures of one realm crossing into the other | Both skies visible at once through the veil |
+
+Each encounter has: a cue (sound + visual), a build-up, a peak, and an afterimage that lingers (wet rock, ripples,
+feathers on the wind, a changed sky). Sound is half of it: procedural calls, surf, rain, thunder, ice cracking.
+
+Test: `?enc=<type>&et=<seconds into it>` forces an encounter for captures; `tools/shots/encounters.json` holds one
+view per encounter at build-up and peak.
+
+## 13. Addendum from C, 2026-11-20: the atlas grows
+
+C's words: "Think of the most beautiful natural resorts and areas of the world which enables the player to explore."
+
+The planet becomes an atlas of twelve realms: the six above plus six more, chosen so that each adds a kind of
+flying and a kind of light the others do not have. Curated layout: Home in the centre, two hexagonal rings (19
+cells) so every realm appears near the start; beyond that, hash-assigned as before. Every realm obeys sections 5,
+11 and 12 (photoreal, melts into its neighbours, has weather, wildlife and encounters).
+
+| # | Realm | Real anchors | Shape and flying | Light | Life and encounters |
+|---|-------|--------------|------------------|-------|---------------------|
+| 6 | **Coral Atoll** | Bora Bora, Maldives, Raja Ampat, Whitehaven | Ring reefs and sand motus around a jungle-clad volcanic core; lagoon 1-30 m deep with reef patterns visible through water; skim centimetres above glass-clear water | Tropical noon, towering trade-wind cumulus, squalls with rainbows | Manta rays and reef sharks as shadows under the surface, turtles, frigatebirds, dolphins riding your bow; bioluminescent surf at night |
+| 7 | **Slot Canyons** | Antelope Canyon, The Wave, Zion Narrows, Grand Canyon | Mesas cut by deep, sinuous slots 3-15 m wide and 60 m deep, widening into amphitheatres: the precision course | High sun pouring down as light shafts in dust; glowing orange bounce light on the walls | Ravens, bighorn sheep on ledges, a flash flood roaring through a side canyon, a condor at eye level |
+| 8 | **Alpine Crown** | Dolomites, Torres del Paine, Moraine Lake, Lauterbrunnen | Granite towers and hanging glaciers above milky-turquoise lakes; larch and pine forest; waterfalls free-falling 300 m into a U-valley | Alpenglow at sunrise, clearing storm, cloud banners off summits | Eagles soaring the walls, ibex, marmot calls, an avalanche on the far wall, a glory around the drone's shadow |
+| 9 | **Falling Waters** | Plitvice, Jiuzhaigou, Iguazu, Havasu, Pamukkale | Stepped travertine terraces holding jewel-blue pools, joined by hundreds of cascades, ending in one immense horseshoe fall with a permanent mist plume | Soft overcast breaking to sun; rainbows in the spray, wet-leaf greens | Swifts flying through the falls, butterflies in clouds, fish visible in the pools, a moonbow at night |
+| 10 | **Fire Fields** | Fagradalsfjall, Kilauea, Erta Ale, Na Pali | Fresh black lava plains, spatter cones, a lava river and lava falls to the sea with steam explosions; old flows under green moss | Blue hour: the lava is the light source; orange underlit steam and clouds | Lava fountaining, a new skylight opening, volcanic lightning in the plume, seabirds along the steaming coast |
+| 11 | **Red Dunes** | Sossusvlei and Deadvlei, Rub' al Khali, White Sands | Star dunes 300 m high with knife crests, white clay pans with dead camel-thorn trees, a dry river; ridge-surfing lines | First light: one face orange, the other in blue shadow; fog rolling in from a cold coast | Oryx walking a crest, ostriches, sand streaming off ridges in wind, a sand storm front, a night of zodiacal light |
+
+Rule for adding a realm: it is a row of parameters plus at most two new terrain terms, two materials, one flora
+set, one fauna set and three encounters; nothing in the frame loop may scale with the number of realms.

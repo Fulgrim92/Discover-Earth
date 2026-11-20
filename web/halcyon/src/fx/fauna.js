@@ -8,6 +8,7 @@
 import { shader, bgl, pipeline, FO } from '../gpu.js';
 import { F } from '../realms.js';
 import { clip } from './clipmap.js';
+import { LMAX } from './flora.js';
 import CLIP from '../wgsl/clip.wgsl';
 import SKY from '../wgsl/sky.wgsl';
 import LIFE from '../wgsl/life.wgsl';
@@ -37,10 +38,12 @@ const OFF_FAUNA = 2;
 
 export function draw(ctx, pass, view) {
   if ((ctx.off | 0) & OFF_FAUNA) return;
-  const fr = ctx.frame, v2 = FO.row + F.V2 * 4;
+  // groups are enabled by every realm in reach (flora.prepare computes LMAX each frame); each flock thins by the
+  // weights at its home
+  const v2 = F.V2 * 4;
   let bound = 0;
   for (let g = 0; g < 3; g++) {
-    if (fr[v2 + g] < 0.002) continue;
+    if (LMAX[v2 + g] < 0.002) continue;
     if (!bound) { pass.setPipeline(pBird); pass.setBindGroup(0, view.bg0); pass.setBindGroup(1, clip.bg); bound = 1; }
     pass.draw(BIRD_VERTS, BIRDS[g], 0, g << 16);
   }
@@ -48,13 +51,13 @@ export function draw(ctx, pass, view) {
 
 // blended pass (groups 0, 1, 2 already bound by the caller): flamingo reflections, then jellies
 export function drawTransparent(ctx, pass, view) {
-  const fr = ctx.frame, v2 = FO.row + F.V2 * 4;
-  if (fr[v2] > 0.002 && fr[FO.row + F.M4 * 4 + 1] > 0.2) { pass.setPipeline(pMirror); pass.draw(BIRD_VERTS, BIRDS[0], 0, 0); }
-  if (fr[v2 + 3] > 0.002) { pass.setPipeline(pJelly); pass.draw(JELLY_VERTS, 25, 0, 3 << 16); }
+  const fr = ctx.frame, v2 = F.V2 * 4;
+  if (LMAX[v2] > 0.002 && fr[FO.row + F.M4 * 4 + 1] > 0.2) { pass.setPipeline(pMirror); pass.draw(BIRD_VERTS, BIRDS[0], 0, 0); }
+  if (LMAX[v2 + 3] > 0.002) { pass.setPipeline(pJelly); pass.draw(JELLY_VERTS, 25, 0, 3 << 16); }
 }
 
 export function anyTransparent(ctx) {
   if ((ctx.off | 0) & OFF_FAUNA) return false;
-  const fr = ctx.frame, v2 = FO.row + F.V2 * 4;
-  return fr[v2] > 0.002 || fr[v2 + 3] > 0.002;
+  const v2 = F.V2 * 4;
+  return LMAX[v2] > 0.002 || LMAX[v2 + 3] > 0.002;
 }
