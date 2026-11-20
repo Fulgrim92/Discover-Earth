@@ -10,6 +10,7 @@ struct Frame {
   row: array<vec4f, ROW>, // realm row blended at the camera
   flags: vec4f,  // x: ablation bits OFF_* (bench ?off=..., 0 in normal play), yz: cloud-shadow map texel-0 x, z,
                  // w: its texel size (fx/atmo.js; 0 = not baked yet)
+  sky: vec4f,    // x: time of day 0..1, y: star-field turn (rad), z: accumulated sun motion (deg, for re-bakes)
 }
 
 // Ablation bits (URL ?off=flora,fauna,...; main.js OFF_NAMES). A set bit switches that cost off: draws are skipped

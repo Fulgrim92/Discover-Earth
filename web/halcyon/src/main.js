@@ -31,6 +31,7 @@ import { G, H, fail, initDevice, Unsupported, bgl, bindGroup, tex, buffer, FRAME
   setTimerBase, tsBoth, TS_BAKE, TS_OPAQUE, TS_CLOUDS, TS_COMPOSITE, TS_FX, TS_BLOOM, TS_FINAL, TS_LIFE, TS_WEATHER,
   TS_FLORA, TS_FAUNA } from './gpu.js';
 import { TABLE, ROWF, F, realmCentre, CURATED, REALM_NAMES } from './realms.js';
+import { skyTick, SKY_IN } from './realms.js'; // the sky turns (sky programmer)
 import { heightAt, heightBatch, blendAtA, W_IN, W_NEAR, setFootprint } from './world.js';
 import { CLK, C_DT, C_TIME, C_FRAME_MS, C_PREV } from './clock.js';
 import { quatFromYawPitchRoll, quatRotate, mat4ViewRot, mat4PerspRevZ, mat4Mul, mat4Invert } from './math.js';
@@ -65,6 +66,7 @@ const P = {
   agl: num('agl', 0) > 0,
   yaw: num('yaw', 0), pitch: num('pitch', -4), fov: num('fov', 60),
   t: Q.has('t') ? num('t', 0) : -1,
+  tod: Q.has('tod') ? Math.min(Math.max(num('tod', 0), 0), 1) : -1, // time of day 0..1 pinned (captures)
   w: num('w', 0), h: num('h', 0), scale: Q.has('scale') ? Math.min(1, Math.max(0.25, num('scale', 1))) : 0,
   stereo: num('stereo', 0) > 0, hud: num('hud', 1) > 0, bench: num('bench', 0) > 0,
   quality: Q.get('quality') === 'low' ? 0 : Q.get('quality') === 'high' ? 2 : 1,
@@ -303,6 +305,7 @@ async function init() {
   const d = G.device;
   ctx.frameBuf = buffer(FRAME_FLOATS * 4, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'frame');
   const realmBuf = buffer(TABLE.byteLength, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, 'realms');
+  realmBufG = realmBuf; // rewritten each frame as the suns move (skyTime)
   G.queue.writeBuffer(realmBuf, 0, TABLE);
   ctx.bgl0 = bgl('uurfsf', 'g0'); // + the sky-view LUT and its sampler (fx/atmo.js)
   atmo.init(ctx, FO.sun, FO.flags, OFF_ATMO, realmBuf);
@@ -471,11 +474,27 @@ function keyLightDir(fr, row) {
 }
 
 // frame-wide uniforms, the drone and the rings
+// ---- the sky turns (sky programmer, DESIGN 12.1): one day every SKY_PERIOD seconds; each realm's sun and moon
+// swing along their arcs (realms.js SKY_ARC, skyTick). FR.sky: x time of day, y star-field turn (rad), z the
+// accumulated sun motion in degrees (a monotonic key for re-baking sun shadows)
+const SKY_PERIOD = 900;
+let realmBufG = null;
+const SKYM = new Float64Array(3); // previous s, accumulated motion (deg), time of day: typed, never boxed
+const SKY_TOD = Math.max(P.tod, -1); // a small int or a constant: read once
+function skyTime(fr) {
+  SKYM[2] = SKY_TOD >= 0 ? SKY_TOD : (CLK[C_TIME] / SKY_PERIOD) % 1;
+  SKY_IN[0] = -Math.sin(SKYM[2] * 2 * Math.PI); // from the signature light the sun first sinks
+  skyTick();
+  SKYM[1] += Math.abs(SKY_IN[0] - SKYM[0]) * 16; SKYM[0] = SKY_IN[0];
+  fr[FO.sky] = SKYM[2]; fr[FO.sky + 1] = SKYM[2] * 2 * Math.PI; fr[FO.sky + 2] = SKYM[1];
+}
+
 function prepareFrame() {
   const fr = ctx.frame, dt = CLK[C_DT], timeS = CLK[C_TIME];
+  skyTime(fr);
   W_IN[0] = cam[0]; W_IN[1] = cam[2]; blendAtA(rowTmp);
   for (let i = 0; i < ROWF; i++) fr[FO.row + i] = rowTmp[i];
-  const drift = 6 * Math.sin(timeS * 0.004);
+  const drift = 0; // the suns move along their arcs in the realm table now (skyTime)
   const s0 = F.S0 * 4;
   const el = ((rowTmp[s0] + drift * 0.5) * Math.PI) / 180, az = ((rowTmp[s0 + 1] + drift) * Math.PI) / 180;
   fr[FO.sun] = Math.sin(az) * Math.cos(el); fr[FO.sun + 1] = Math.sin(el); fr[FO.sun + 2] = -Math.cos(az) * Math.cos(el); fr[FO.sun + 3] = drift;
@@ -504,6 +523,7 @@ function renderFrame(bakeAll) {
   terrain.setup(ctx, cam[0], cam[2]);
   atmo.bake(enc, cam); // + the cloud-shadow map window, in ctx.frame
   G.queue.writeBuffer(ctx.frameBuf, 0, ctx.frame);
+  G.queue.writeBuffer(realmBufG, 0, TABLE); // the suns moved (skyTime)
   // VR: each view renders into its own sub-image (a texture-array layer, or one half of a side-by-side texture)
   const target = XRI[0] ? null : offView || context.getCurrentTexture().createView();
   for (let i = 0; i < nViews; i++) {
@@ -597,6 +617,7 @@ function frame(now) {
     terrain.setup(ctx, cam[0], cam[2]);
     atmo.bake(enc, cam);
     G.queue.writeBuffer(ctx.frameBuf, 0, ctx.frame);
+    G.queue.writeBuffer(realmBufG, 0, TABLE);
     CMD[0] = enc.finish(); G.queue.submit(CMD); running = false;
     stagedFrame().then(shotDone);
     return;

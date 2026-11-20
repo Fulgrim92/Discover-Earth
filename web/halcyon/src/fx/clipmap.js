@@ -33,7 +33,7 @@ export function init(ctx) {
   data = tex(N, N, G.clipFormat, U.RENDER_ATTACHMENT | U.TEXTURE_BINDING | U.COPY_SRC, { layers: LEVELS, label: 'clip' });
   maskA = tex(N, N, 'rgba8unorm', U.COPY_DST | U.TEXTURE_BINDING, { layers: LEVELS, label: 'maskA' });
   maskB = tex(N, N, 'rgba8unorm', U.COPY_DST | U.TEXTURE_BINDING, { layers: LEVELS, label: 'maskB' });
-  sunSrc = ctx.frame.subarray(FO.sun + 3, FO.sun + 4);
+  sunSrc = ctx.frame.subarray(FO.sky + 2, FO.sky + 3); // accumulated sun motion (deg, main.js skyTime)
   shade = tex(N, N, 'rgba8unorm', U.RENDER_ATTACHMENT | U.TEXTURE_BINDING, { layers: LEVELS, label: 'clipShade' });
   clip.data = data; clip.format = G.clipFormat;
 
@@ -119,7 +119,7 @@ export function update(ctx, enc, camX, camZ, all) {
     return n;
   }
   if (best >= 0) { bakeLevel(ctx, enc, best); return 1; }
-  const sd = ctx.frame[FO.sun + 3];
+  const sd = ctx.frame[FO.sky + 2];
   for (let i = 0; i < LEVELS; i++) if (baked[i] && Math.abs(sd - sunAt[i]) > SUN_REBAKE) { bakeLevel(ctx, enc, i, true); return 0; }
   return 0;
 }

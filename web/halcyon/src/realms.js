@@ -2,7 +2,7 @@
 // The same Float32Array is uploaded to the GPU (followed by the 3x3 curated cell table) and read by world.js.
 // Colours are sRGB hex here and converted to linear at pack time.
 
-import { params as atmoParams, derive as atmoDerive } from './atmo.js';
+import { params as atmoParams, derive as atmoDerive, transmittanceA as atmoTransA, TR_IN, RG as ATMO_RG } from './atmo.js';
 
 export const CELL = 5500; // m, Voronoi cell pitch
 export const BAND = 2400; // m, blend band (in nearest-distance difference): the Drift, a ~2.4 km zone (DESIGN 11.1)
@@ -224,6 +224,79 @@ for (let r = 0; r < NREALM; r++) {
     put('S3', o.hor.map((x) => x * E * kh), 1);
     put('S4', o.sunward.map((x) => x * E * kh));
     TABLE[r * ROWF + F.S6 * 4] = 1;
+  }
+}
+
+// ---- the sky turns (DESIGN 12.1): each realm's sun and moon swing along a slow arc around its signature light ----
+// SKY_ARC per realm: sun elevation and azimuth swing, moon elevation swing (degrees), at s = -1..1 (s = 0 is the
+// signature light of section 11). Home: late afternoon to blue hour; Ice: dusk to deep night while the moon climbs.
+// skyTick() rewrites S0, S8 and the derived light S1..S4 of every realm in TABLE for the frame's s, so all realm
+// blending (per pixel and at the camera) follows; the light comes from tables baked here along each arc (S2..S4,
+// log-interpolated) and the sun's own colour from the transmittance, exactly, per frame.
+export const SKY_ARC = [[16, 18, 0], [12, 22, 0], [9, 12, 0], [12, 20, 0], [8, 10, -10], [5, 8, 0]];
+export const SKY_IN = new Float64Array(1); // s in -1..1 (main.js from the time of day); read by skyTick()
+const ARC_K = 7, ARC_V = 9;
+const ARC = new Float32Array(NREALM * ARC_K * ARC_V); // log of S2, S3, S4 rgb per arc sample
+const BASE = new Float32Array(NREALM * 4);              // signature sun elevation, azimuth, moon elevation, star E
+const EXPO = new Float32Array(NREALM * 2);              // signature exposure (G0.x), log2 horizontal illuminance
+const ARC_P = [];                                        // atmosphere parameters per realm
+const TS1 = new Float64Array(3);
+const HE = new Float64Array(4); // horizE result, skyTick scratch (no boxed doubles per frame)
+{
+  const o = {};
+  const lum = (v) => 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+  for (let r = 0; r < NREALM; r++) {
+    const g = (k) => { const b = r * ROWF + F[k] * 4; return [TABLE[b], TABLE[b + 1], TABLE[b + 2], TABLE[b + 3]]; };
+    const s0 = g('S0'), s8 = g('S8'), A = SKY_ARC[r];
+    const P = atmoParams(g('A0'), g('A1'), g('A2'));
+    ARC_P.push(P);
+    BASE[r * 4] = s0[0]; BASE[r * 4 + 1] = s0[1]; BASE[r * 4 + 2] = s8[0]; BASE[r * 4 + 3] = s0[2];
+    EXPO[r * 2] = g('G0')[0];
+    horizE(r); EXPO[r * 2 + 1] = Math.log2(HE[0]);
+    const E = s0[2];
+    for (let k = 0; k < ARC_K; k++) {
+      const s = -1 + (2 * k) / (ARC_K - 1);
+      atmoDerive(P, s0[0] + A[0] * s, s0[1] + A[1] * s, s8[0] + A[2] * s, s8[1], s8[2] / E, o, 6, 12);
+      const kh = lum(o.skyE) / Math.max(lum(o.hor), 1e-9);
+      const b = (r * ARC_K + k) * ARC_V;
+      for (let c = 0; c < 3; c++) {
+        ARC[b + c] = Math.log(Math.max(o.skyE[c] * E, 1e-12));
+        ARC[b + 3 + c] = Math.log(Math.max(o.hor[c] * E * kh, 1e-12));
+        ARC[b + 6 + c] = Math.log(Math.max(o.sunward[c] * E * kh, 1e-12));
+      }
+    }
+  }
+}
+// horizontal illuminance (luma) of a realm's current row: sky irradiance plus the direct sun
+function horizE(r) { // into HE[0]
+  const o = r * ROWF, a = o + F.S2 * 4, b = o + F.S1 * 4;
+  HE[0] = 0.2126 * TABLE[a] + 0.7152 * TABLE[a + 1] + 0.0722 * TABLE[a + 2] + 1e-7 +
+    (0.2126 * TABLE[b] + 0.7152 * TABLE[b + 1] + 0.0722 * TABLE[b + 2]) * TABLE[o + F.S0 * 4 + 2] *
+    Math.max(Math.sin((TABLE[o + F.S0 * 4] * Math.PI) / 180), 0);
+}
+export function skyTick() {
+  const s = SKY_IN[0];
+  let f = ((s + 1) * 0.5) * (ARC_K - 1);
+  f = Math.min(Math.max(f, 0), ARC_K - 1);
+  const i0 = Math.min(Math.floor(f), ARC_K - 2), u = f - i0;
+  for (let r = 0; r < NREALM; r++) {
+    const A = SKY_ARC[r], o = r * ROWF;
+    const el = BASE[r * 4] + A[0] * s;
+    TABLE[o + F.S0 * 4] = el; TABLE[o + F.S0 * 4 + 1] = BASE[r * 4 + 1] + A[1] * s;
+    TABLE[o + F.S8 * 4] = BASE[r * 4 + 2] + A[2] * s;
+    const P = ARC_P[r];
+    TR_IN[0] = ATMO_RG + 0.002; TR_IN[1] = Math.sin((el * Math.PI) / 180); atmoTransA(P, TS1);
+    for (let c = 0; c < 3; c++) TABLE[o + F.S1 * 4 + c] = TS1[c] * P.star[c];
+    const b0 = (r * ARC_K + i0) * ARC_V, b1 = b0 + ARC_V;
+    for (let c = 0; c < 3; c++) {
+      TABLE[o + F.S2 * 4 + c] = Math.exp(ARC[b0 + c] + (ARC[b1 + c] - ARC[b0 + c]) * u);
+      TABLE[o + F.S3 * 4 + c] = Math.exp(ARC[b0 + 3 + c] + (ARC[b1 + 3 + c] - ARC[b0 + 3 + c]) * u);
+      TABLE[o + F.S4 * 4 + c] = Math.exp(ARC[b0 + 6 + c] + (ARC[b1 + 6 + c] - ARC[b0 + 6 + c]) * u);
+    }
+    // the eye adapts part of the way as the light falls or rises (a real camera would adapt fully; leaving some
+    // keeps dusk dusky and noon bright)
+    horizE(r);
+    TABLE[o + F.G0 * 4] = EXPO[r * 2] + Math.min(Math.max(0.55 * (EXPO[r * 2 + 1] - Math.log2(HE[0])), -1.5), 3.0);
   }
 }
 
