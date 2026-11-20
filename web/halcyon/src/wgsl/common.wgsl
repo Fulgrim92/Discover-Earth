@@ -10,6 +10,7 @@ struct Frame {
   row: array<vec4f, ROW>, // realm row blended at the camera
   flags: vec4f,  // x: ablation bits OFF_* (bench ?off=..., 0 in normal play), yz: cloud-shadow map texel-0 x, z,
                  // w: its texel size (fx/atmo.js; 0 = not baked yet)
+  sky: vec4f,    // x: time of day 0..1, y: star-field turn (rad), z: accumulated sun motion (deg, for re-bakes)
 }
 
 // Ablation bits (URL ?off=flora,fauna,...; main.js OFF_NAMES). A set bit switches that cost off: draws are skipped
@@ -27,6 +28,14 @@ const OFF_WATER: u32 = 512u;      // water shading in the composite (composite.w
 const OFF_RINGS: u32 = 1024u;     // rings and their sparks/guide (JS)
 const OFF_DRONE: u32 = 2048u;     // drone body, props, lights, shadow (JS)
 const OFF_MSAA: u32 = 4096u;      // opaque pass without MSAA (JS, at init)
+// terrain diagnostics (not in off=all): each isolates one structural cost of the terrain pass
+const OFF_TMAT: u32 = 8192u;      // constant albedo: no material, strata, realm-branch, coast or weather code
+const OFF_TREALM: u32 = 16384u;   // the camera's realm for every pixel: no per-pixel realmWeights / driftW / row blending
+const OFF_TFLAT: u32 = 32768u;    // terrain fs returns a flat colour at once: raster + vertex cost only
+const OFF_TGEO: u32 = 65536u;     // draw only the five finest clip levels (JS)
+const OFF_TVERT: u32 = 131072u;   // cheapest vertex path: no height fetch or morph (flat grid at y = 0)
+const OFF_SKY: u32 = 262144u;     // flat sky colour in the opaque pass
+const OFF_TGRID: u32 = 524288u;   // half-density terrain grid (112 quads per level side, 2x vertex spacing; JS, at init)
 const OFF_VEIL: u32 = 1048576u;     // the Drift veil in the cloud pass (clouds.wgsl veilMarch)
 const OFF_ATMO: u32 = 2097152u;    // the per-frame atmosphere LUT bake: baked once, then frozen (fx/atmo.js)
 fn isOff(b: u32) -> bool { return (u32(FR.flags.x) & b) != 0u; }
@@ -162,14 +171,23 @@ fn realmWeights(p0: vec2f) -> RWt {
 // light). Inside a transition zone the lookup point is displaced by a slow, time-animated flow (two octaves of
 // drifting noise, 20-40 s periods) and the weights are sharpened (w^4), so one realm's surface reaches into the
 // other in tongues and eddies that move like ink in water. One extra realmWeights, only in zone pixels.
-fn driftW(p: vec2f, rw: RWt) -> RWt {
-  if (rw.id[1] < 0) { return rw; }
+fn driftOff(p: vec2f) -> vec2f {
   let t = FR.time.x;
   let q1 = p * (1.0 / 950.0) + vec2f(t * (1.0 / 31.0), t * (1.0 / 47.0));
   let q2 = p * (1.0 / 310.0) - vec2f(t * (1.0 / 23.0), -t * (1.0 / 37.0));
   var d = 420.0 * vec2f(vn(q1, 911u), vn(q1 + vec2f(5.2, 1.7), 912u));
   d += 150.0 * vec2f(vn(q2 + d * (1.0 / 900.0), 913u), vn(q2 + vec2f(2.8, 6.1) + d * (1.0 / 900.0), 914u));
-  var r = realmWeights(p + d);
+  return d;
+}
+fn driftW(p: vec2f, rw: RWt) -> RWt {
+  if (rw.id[1] < 0) { return rw; }
+  let d = driftOff(p);
+  return driftSharpen(p, d, realmWeights(p + d));
+}
+// (clip.wgsl driftWM: the same from the baked realm map)
+fn driftSharpen(p: vec2f, d: vec2f, r0: RWt) -> RWt {
+  var r = r0;
+  let t = FR.time.x;
   // per-realm patch field (~90 m, drifting): near the middle each realm holds patches rather than both averaging
   let q3 = p * (1.0 / 90.0) + d * (1.0 / 300.0) + vec2f(t * (1.0 / 53.0), -t * (1.0 / 71.0));
   var sum = 0.0;
@@ -253,36 +271,39 @@ struct CloudU {
   camW: vec4f,  // their weights
 }
 
-// Sun transmittance through the clouds at world point p (cheap: one coverage lookup per layer).
+// Sun transmittance through the clouds at world point p: one fetch of the baked cloud-shadow map (fx/atmo.js) at
+// the point where the sun ray crosses the main layer, and for points under a cloud sea one more at p (its top) and
+// one where the ray leaves the sea. The projection height of the main layer is the camera realm's (cheap and
+// right everywhere but far across a border); beyond the map (> 12 km) the coverage field itself.
 fn cloudShadow(p: vec3f, L: vec3f, rw: RWt) -> f32 {
-  if (L.y < 0.005) { return 1.0; }
-  return cloudShadowF(p, L, bf(rw, C0), bf(rw, C1), bf(rw, C2), bf(rw, C3));
+  return cloudShadowF(p, L, FR.row[C0], FR.row[C1], FR.row[C2], FR.row[C3]);
 }
 // the same with the cloud fields given (life.wgsl passes the camera row: flora, fauna, particles, drone)
-// cost ablation: false drops cloud shadows everywhere (terrain, water glitter, life)
 fn cloudShadowF(p: vec3f, L: vec3f, c0: vec4f, c1: vec4f, c2: vec4f, c3: vec4f) -> f32 {
   if (L.y < 0.005 || isOff(OFF_CLOUDSHADOW)) { return 1.0; }
   var tr = 1.0;
   let ly = max(L.y, 0.1);
-  if (c0.x > 0.005) {
-    let mid = mix(c0.y, c0.z, 0.2);
-    if (p.y < mid) {
-      let xz = p.xz + L.xz * ((mid - p.y) / ly);
-      let uv = csmUV(xz);
-      if (csmIn(uv)) { tr = 1.0 - textureSampleLevel(csmT, atmoS, uv, 0.0).x; }
-      else { // beyond the map (> 12 km): the coverage field itself
-        let cv = cloudCov(cloudField(xz, c3.x), c0.x);
-        tr = 1.0 - sstep(0.05, 0.6, cv) * clamp(c0.w * 0.85, 0.0, 0.88);
-      }
+  let mid = mix(c0.y, c0.z, 0.2);
+  if (p.y < mid) {
+    let xz = p.xz + L.xz * ((mid - p.y) / ly);
+    let uv = csmUV(xz);
+    if (csmIn(uv)) {
+      tr = 1.0 - textureSampleLevel(csmT, atmoS, uv, 0.0).x;
+    } else if (c0.x > 0.005) {
+      let cv = cloudCov(cloudField(xz, c3.x), c0.x);
+      tr = 1.0 - sstep(0.05, 0.6, cv) * clamp(c0.w * 0.85, 0.0, 0.88);
     }
   }
-  if (c1.w > 0.005 && p.y < c2.y) {
-    // through the cloud sea: thickness above p along the sun
-    let th = (c2.y - max(p.y, c2.x)) / ly;
-    let xz = p.xz + L.xz * ((c2.y - p.y) / ly);
-    let uv = csmUV(xz);
-    let od = th * c2.z * 0.03 * select(seaCov(xz), textureSampleLevel(csmT, atmoS, uv, 0.0).y, csmIn(uv));
-    tr *= mix(1.0, max(exp(-od), 0.06), c1.w);
+  let u0 = csmUV(p.xz);
+  if (csmIn(u0)) {
+    let top = textureSampleLevel(csmT, atmoS, u0, 0.0).w;
+    if (p.y < top) {
+      // through the cloud sea: the path above p (the seas are some 40 m thick) to where the sun ray leaves it
+      let th = (top - max(p.y, top - 40.0)) / ly;
+      let us = csmUV(p.xz + L.xz * ((top - p.y) / ly));
+      let od = th * textureSampleLevel(csmT, atmoS, us, 0.0).y;
+      tr *= max(exp(-od), 0.06);
+    }
   }
   return tr;
 }
@@ -293,7 +314,8 @@ fn cloudShadowF(p: vec3f, L: vec3f, c0: vec4f, c1: vec4f, c2: vec4f, c3: vec4f) 
 // transmittance along the view; row 128 holds per-frame values (atmoInfo).
 @group(0) @binding(3) var atmoT: texture_2d<f32>;
 @group(0) @binding(4) var atmoS: sampler;
-// the cloud-shadow map (fx/atmo.js csCloudShadow): x main-layer occlusion, y cloud-sea coverage, top-down
+// the cloud-shadow map (fx/atmo.js csCloudShadow), top-down: x main-layer occlusion, y cloud-sea optical depth per
+// metre, z Drift zone weight (the veil), w cloud-sea top (m, -1000 none)
 @group(0) @binding(5) var csmT: texture_2d<f32>;
 fn csmUV(xz: vec2f) -> vec2f { return (xz - FR.flags.yz) / (FR.flags.w * f32(textureDimensions(csmT).x)); }
 fn csmIn(uv: vec2f) -> bool { return FR.flags.w > 0.0 && all(uv > vec2f(0.002)) && all(uv < vec2f(0.998)); }

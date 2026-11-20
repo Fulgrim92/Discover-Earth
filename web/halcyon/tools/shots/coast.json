@@ -1,0 +1,15 @@
+{
+  "defaults": { "w": 960, "h": 540, "t": 20, "hud": 0, "fov": 62 },
+  "shots": [
+    { "name": "coast_beach",      "params": { "realm": 0, "pos": "-858,1.7,-172", "agl": 1, "yaw": 215, "pitch": -9 } },
+    { "name": "coast_cliff_foot", "params": { "realm": 0, "pos": "-1185,4,540", "yaw": 271, "pitch": 10 } },
+    { "name": "coast_80",         "params": { "realm": 0, "pos": "-875,80,-250", "agl": 1, "yaw": 168, "pitch": -38 } },
+    { "name": "coast_rain",       "params": { "realm": 0, "pos": "300,2,-200", "agl": 1, "yaw": 205, "pitch": -24, "rain": 0.8, "wet": 1 } },
+    { "name": "coast_seq_0",      "params": { "realm": 0, "pos": "-868,18,-212", "agl": 1, "yaw": 168, "pitch": -28, "t": 20 } },
+    { "name": "coast_seq_1",      "params": { "realm": 0, "pos": "-868,18,-212", "agl": 1, "yaw": 168, "pitch": -28, "t": 21.5 } },
+    { "name": "coast_seq_2",      "params": { "realm": 0, "pos": "-868,18,-212", "agl": 1, "yaw": 168, "pitch": -28, "t": 23 } },
+    { "name": "coast_seq_3",      "params": { "realm": 0, "pos": "-868,18,-212", "agl": 1, "yaw": 168, "pitch": -28, "t": 24.5 } },
+    { "name": "coast_seq_4",      "params": { "realm": 0, "pos": "-868,18,-212", "agl": 1, "yaw": 168, "pitch": -28, "t": 26 } },
+    { "name": "coast_seq_5",      "params": { "realm": 0, "pos": "-868,18,-212", "agl": 1, "yaw": 168, "pitch": -28, "t": 27.5 } }
+  ]
+}

@@ -58,7 +58,7 @@ export function init(ctx) {
   const mod = shader(CLIP + SKY + LIFE + FLORA + base, 'herd');
   const modN = shader(CLIP + SKY + LIFE + FLORA + near, 'herd near');
   const modM = shader(CLIP + SKY + LIFE + FLORA + mirror, 'herd mirror');
-  const opaque = { targets: [{ format: 'rgba16float' }, { format: 'r16float' }], samples: ctx.msaa,
+  const opaque = { targets: [{ format: 'rgba16float' }, { format: 'rg16float' }], samples: ctx.msaa,
     depth: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' } };
   pipe = pipeline({ label: 'herd', module: mod, vs: 'vsHerd', fs: 'fsHerd', layouts: [ctx.bgl0, clip.bgl, lay], ...opaque });
   pNear = pipeline({ label: 'herd near', module: modN, vs: 'vsHerd', fs: 'fsHerd', layouts: [ctx.bgl0, clip.bgl, lay], ...opaque });
@@ -66,7 +66,7 @@ export function init(ctx) {
   pMirror = pipeline({ label: 'herd mirror', module: modM, vs: 'vsHerdMirror', fs: 'fsHerdMirror',
     layouts: [ctx.bgl0, clip.bgl, bgl('f', 'herdT'), lay], targets: [{ format: 'rgba16float', blend: over }] });
   pMurm = pipeline({ label: 'murmuration', module: mod, vs: 'vsMurm', fs: 'fsMurm', layouts: [ctx.bgl0, clip.bgl, lay],
-    targets: [{ format: 'rgba16float' }, { format: 'r16float' }], samples: ctx.msaa, cull: 'none',
+    targets: [{ format: 'rgba16float' }, { format: 'rg16float' }], samples: ctx.msaa, cull: 'none',
     depth: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' }, });
 }
 

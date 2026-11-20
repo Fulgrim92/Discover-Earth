@@ -38,6 +38,7 @@ import { G, H, fail, initDevice, Unsupported, bgl, bindGroup, tex, buffer, FRAME
   setTimerBase, tsBoth, TS_BAKE, TS_OPAQUE, TS_CLOUDS, TS_COMPOSITE, TS_FX, TS_BLOOM, TS_FINAL, TS_LIFE, TS_WEATHER,
   TS_FLORA, TS_FAUNA } from './gpu.js';
 import { TABLE, ROWF, F, realmCentre, CURATED, REALM_NAMES } from './realms.js';
+import { skyTick, SKY_IN } from './realms.js'; // the sky turns (sky programmer)
 import { heightAt, heightBatch, blendAtA, W_IN, W_NEAR, setFootprint } from './world.js';
 import { CLK, C_DT, C_TIME, C_FRAME_MS, C_PREV } from './clock.js';
 import { quatFromYawPitchRoll, quatRotate, mat4ViewRot, mat4PerspRevZ, mat4Mul, mat4Invert } from './math.js';
@@ -73,6 +74,7 @@ const P = {
   agl: num('agl', 0) > 0,
   yaw: num('yaw', 0), pitch: num('pitch', -4), fov: num('fov', 60),
   t: Q.has('t') ? num('t', 0) : -1,
+  tod: Q.has('tod') ? Math.min(Math.max(num('tod', 0), 0), 1) : -1, // time of day 0..1 pinned (captures)
   w: num('w', 0), h: num('h', 0), scale: Q.has('scale') ? Math.min(1, Math.max(0.25, num('scale', 1))) : 0,
   stereo: num('stereo', 0) > 0, hud: num('hud', 1) > 0, bench: num('bench', 0) > 0,
   quality: Q.get('quality') === 'low' ? 0 : Q.get('quality') === 'high' ? 2 : 1,
@@ -94,15 +96,16 @@ P.xrenter = P.xrmock > 0 && (P.shot || P.alloc || num('xrenter', 0) > 0);
 // bit i of Frame.flags = OFF_NAMES[i]; the same bits are named constants OFF_* in wgsl/common.wgsl
 export const OFF_NAMES = ['flora', 'fauna', 'particles', 'tshadow', 'tdetail', 'tao', 'fshadow', 'clouds', 'cloudshadow',
   'water', 'rings', 'drone', 'msaa', 'tmat', 'trealm', 'tflat', 'tgeo', 'tvert', 'sky', 'tgrid', 'veil', 'atmo']; // tmat..tgrid: terrain-art's bits
+const OFF_ALL = (1 << 13) - 1; // off=all: the original 13 costs (the terrain diagnostic bits are not costs)
 export const OFF_FLORA = 1, OFF_FAUNA = 2, OFF_PARTICLES = 4, OFF_TSHADOW = 8, OFF_TDETAIL = 16, OFF_TAO = 32,
   OFF_FSHADOW = 64, OFF_CLOUDS = 128, OFF_CLOUDSHADOW = 256, OFF_WATER = 512, OFF_RINGS = 1024, OFF_DRONE = 2048,
-  OFF_MSAA = 4096, OFF_VEIL = 1048576, OFF_ATMO = 2097152;
+  OFF_MSAA = 4096, OFF_TGEO = 65536, OFF_TGRID = 524288, OFF_VEIL = 1048576, OFF_ATMO = 2097152;
 function parseOff(list) {
   let b = 0;
   for (const w of list.split(',')) {
     const k = w.trim().toLowerCase();
     if (!k) continue;
-    if (k === 'all') { b = (1 << OFF_NAMES.length) - 1; continue; }
+    if (k === 'all') { b |= OFF_ALL; continue; }
     const i = OFF_NAMES.indexOf(k);
     if (i < 0) console.warn('[halcyon] off=: unknown name "' + k + '" (known: ' + OFF_NAMES.join(', ') + ')');
     else b |= 1 << i;
@@ -189,9 +192,9 @@ function makeTargets(w, h) {
   const t = { w, h };
   const ms = ctx.msaa > 1;
   const scene = T(w, h, 'rgba16float', RA | TB, { label: 'scene' });
-  const dist = T(w, h, 'r16float', RA | TB, { label: 'dist' });
+  const dist = T(w, h, 'rg16float', RA | TB, { label: 'dist' }); // x: distance, y: terrain coverage (deferred shading)
   t.sceneV = scene.createView(); t.distV = dist.createView();
-  const depth = T(w, h, 'depth32float', RA, { samples: ctx.msaa, label: 'depth' });
+  const depth = T(w, h, 'depth32float', RA | TB, { samples: ctx.msaa, label: 'depth' }); // read by terrain.shade
   t.compV = T(w, h, 'rgba16float', RA | TB, { label: 'comp' }).createView();
   const ca = [
     { view: t.sceneV, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } },
@@ -200,11 +203,12 @@ function makeTargets(w, h) {
   if (ms) {
     ca[0].view = T(w, h, 'rgba16float', RA, { samples: ctx.msaa, label: 'sceneMS' }).createView();
     ca[0].resolveTarget = t.sceneV; ca[0].storeOp = 'discard';
-    ca[1].view = T(w, h, 'r16float', RA, { samples: ctx.msaa, label: 'distMS' }).createView();
-    ca[1].resolveTarget = t.distV; ca[1].storeOp = 'discard';
+    ca[1].view = T(w, h, 'rg16float', RA | TB, { samples: ctx.msaa, label: 'distMS' }).createView();
+    ca[1].resolveTarget = t.distV; ca[1].storeOp = 'store'; // per-sample terrain marks for terrain.shade
   }
   const depthV = depth.createView();
-  opaqueDesc = { colorAttachments: ca, depthStencilAttachment: { view: depthV, depthClearValue: 0, depthLoadOp: 'clear', depthStoreOp: 'discard' },
+  t.distSV = ca[1].view; t.depthSV = depthV;
+  opaqueDesc = { colorAttachments: ca, depthStencilAttachment: { view: depthV, depthClearValue: 0, depthLoadOp: 'clear', depthStoreOp: 'store' },
     timestampWrites: tsBoth(TS_OPAQUE) };
   if (P.split) {
     // the same attachments in three passes: the first clears and stores, the middle loads and stores, the last
@@ -213,11 +217,12 @@ function makeTargets(w, h) {
       storeOp: last ? a.storeOp : 'store', resolveTarget: last ? a.resolveTarget : undefined });
     const mk = (k, ts) => ({
       colorAttachments: [att(ca[0], k > 0, k === 2), att(ca[1], k > 0, k === 2)],
-      depthStencilAttachment: { view: depthV, depthClearValue: 0, depthLoadOp: k > 0 ? 'load' : 'clear', depthStoreOp: k === 2 ? 'discard' : 'store' },
+      depthStencilAttachment: { view: depthV, depthClearValue: 0, depthLoadOp: k > 0 ? 'load' : 'clear', depthStoreOp: 'store' },
       timestampWrites: tsBoth(ts),
     });
     splitDesc = [mk(0, TS_OPAQUE), mk(1, TS_FLORA), mk(2, TS_FAUNA)];
   }
+  terrain.bind(ctx, t);
   t.cloudV = clouds.bind(ctx, t);
   composite.bind(ctx, t);
   rings.bind(ctx, t);
@@ -314,6 +319,7 @@ async function init() {
   const d = G.device;
   ctx.frameBuf = buffer(FRAME_FLOATS * 4, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'frame');
   const realmBuf = buffer(TABLE.byteLength, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, 'realms');
+  realmBufG = realmBuf; // rewritten each frame as the suns move (skyTime)
   G.queue.writeBuffer(realmBuf, 0, TABLE);
   ctx.bgl0 = bgl('uurfsf', 'g0'); // + the sky-view LUT and its sampler (fx/atmo.js)
   atmo.init(ctx, FO.sun, FO.flags, OFF_ATMO, realmBuf);
@@ -333,6 +339,7 @@ async function init() {
   perf.dyn.enabled = P.scale > 0 ? false : P.dynres >= 0 ? P.dynres > 0 : !P.shot && !P.alloc;
   perf.dyn.target = P.target;
   perf.dyn.timer = G.timestamp;
+  terrain.weather[0] = num('rain', 0); terrain.weather[1] = num('wet', 0); // weather stub (fx/terrain.js)
   clipmap.init(ctx); terrain.init(ctx); clouds.init(ctx); composite.init(ctx); rings.init(ctx); drone.init(ctx); post.init(ctx);
   flora.init(ctx); fauna.init(ctx); particles.init(ctx);
   if (XR.state > 0) xrfx.init(ctx);
@@ -464,6 +471,7 @@ function renderView(v, enc, target, first) {
   if (splitDesc) { p.end(); p = enc.beginRenderPass(splitDesc[2]); }
   if (!(OFF & OFF_FAUNA)) fauna.draw(ctx, p, v);
   p.end();
+  terrain.shade(ctx, enc, v); // deferred terrain shading into the resolved scene
   if (clouds.draw(ctx, enc, v)) perf.markRan(TSLOT[0], TS_WEATHER); // + the weather window bake (first view)
   composite.draw(ctx, enc, v);
   // fauna's transparent jellies + motes (off=fauna hides the jellies through the fauna row, see prepareFrame)
@@ -492,17 +500,33 @@ function keyLightDir(fr, row) {
 }
 
 // frame-wide uniforms, the drone and the rings
+// ---- the sky turns (sky programmer, DESIGN 12.1): one day every SKY_PERIOD seconds; each realm's sun and moon
+// swing along their arcs (realms.js SKY_ARC, skyTick). FR.sky: x time of day, y star-field turn (rad), z the
+// accumulated sun motion in degrees (a monotonic key for re-baking sun shadows)
+const SKY_PERIOD = 900;
+let realmBufG = null;
+const SKYM = new Float64Array(3); // previous s, accumulated motion (deg), time of day: typed, never boxed
+const SKY_TOD = Math.max(P.tod, -1); // a small int or a constant: read once
+function skyTime(fr) {
+  SKYM[2] = SKY_TOD >= 0 ? SKY_TOD : (CLK[C_TIME] / SKY_PERIOD) % 1;
+  SKY_IN[0] = -Math.sin(SKYM[2] * 2 * Math.PI); // from the signature light the sun first sinks
+  skyTick();
+  SKYM[1] += Math.abs(SKY_IN[0] - SKYM[0]) * 16; SKYM[0] = SKY_IN[0];
+  fr[FO.sky] = SKYM[2]; fr[FO.sky + 1] = SKYM[2] * 2 * Math.PI; fr[FO.sky + 2] = SKYM[1];
+}
+
 function prepareFrame() {
   const fr = ctx.frame, dt = CLK[C_DT], timeS = CLK[C_TIME];
+  skyTime(fr);
   W_IN[0] = cam[0]; W_IN[1] = cam[2]; blendAtA(rowTmp);
   for (let i = 0; i < ROWF; i++) fr[FO.row + i] = rowTmp[i];
-  const drift = 6 * Math.sin(timeS * 0.004);
+  const drift = 0; // the suns move along their arcs in the realm table now (skyTime)
   const s0 = F.S0 * 4;
   const el = ((rowTmp[s0] + drift * 0.5) * Math.PI) / 180, az = ((rowTmp[s0 + 1] + drift) * Math.PI) / 180;
   fr[FO.sun] = Math.sin(az) * Math.cos(el); fr[FO.sun + 1] = Math.sin(el); fr[FO.sun + 2] = -Math.cos(az) * Math.cos(el); fr[FO.sun + 3] = drift;
   KLS[7] = drift; keyLightDir(fr, rowTmp); // the key light is the sun or the moon (common.wgsl keyLight), FR.sun its direction
   fr[FO.time] = timeS; fr[FO.time + 1] = dt; fr[FO.time + 2] = frameNo; fr[FO.time + 3] = P.quality;
-  fr[FO.flags] = OFF;
+  fr[FO.flags] = OFF; fr[FO.mc + 19] = W_NEAR[2]; // FR.mc[4].w: the camera's nearest realm (trealm ablation)
   if (OFF & OFF_FAUNA) for (let i = 0; i < 4; i++) fr[FO.row + F.V2 * 4 + i] = 0; // no fauna anywhere (incl. jellies)
   const sim = R.sim;
   if (sim) {
@@ -525,6 +549,7 @@ function renderFrame(bakeAll) {
   terrain.setup(ctx, cam[0], cam[2]);
   atmo.bake(enc, cam); // + the cloud-shadow map window, in ctx.frame
   G.queue.writeBuffer(ctx.frameBuf, 0, ctx.frame);
+  G.queue.writeBuffer(realmBufG, 0, TABLE); // the suns moved (skyTime)
   // VR: each view renders into its own sub-image (a texture-array layer, or one half of a side-by-side texture)
   const target = XRI[0] ? null : offView || context.getCurrentTexture().createView();
   for (let i = 0; i < nViews; i++) {
@@ -619,6 +644,7 @@ function frame(now) {
     terrain.setup(ctx, cam[0], cam[2]);
     atmo.bake(enc, cam);
     G.queue.writeBuffer(ctx.frameBuf, 0, ctx.frame);
+    G.queue.writeBuffer(realmBufG, 0, TABLE);
     CMD[0] = enc.finish(); G.queue.submit(CMD); running = false;
     stagedFrame().then(shotDone);
     return;
@@ -911,6 +937,7 @@ async function stagedFrame() {
   writeView(v);
   await log('flora', (enc) => flora.prepare(ctx, enc, v));
   await log('opaque', (enc) => { const p = enc.beginRenderPass(opaqueDesc); drone.drawBody(ctx, p, v); terrain.draw(ctx, p, v); flora.draw(ctx, p, v); fauna.draw(ctx, p, v); p.end(); });
+  await log('terrain shade', (enc) => terrain.shade(ctx, enc, v));
   await log('clouds', (enc) => clouds.draw(ctx, enc, v));
   await log('composite', (enc) => composite.draw(ctx, enc, v));
   await log('particles', (enc) => particles.draw(ctx, enc, v));
