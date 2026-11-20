@@ -19,7 +19,7 @@
 //   9 giant mush    14^2 =   196 x 1440
 // Prepass: 103872 threads per view, most rejected after one hash. Accepted per view in the shots: 0.3-3k per layer.
 // Ablation (integration's off= bits, ctx.off): OFF_FLORA here; OFF_FSHADOW (common.wgsl) in floracs.wgsl.
-import { G, shader, pipeline, computePipeline, bgl, bindGroup, buffer, FO, VO } from '../gpu.js';
+import { G, shader, pipeline, computePipeline, bgl, bindGroup, buffer, FO, VO, tsBoth, TS_FPREP } from '../gpu.js';
 import { F, TABLE, ROWF, NREALM, W_IN, W_ID, W_W, realmWeightsA } from '../realms.js';
 import { heightBatch } from '../world.js';
 import { clip } from './clipmap.js';
@@ -56,11 +56,13 @@ let pPool, bgPool, poolN = 0, pStrip, pBlade, pLathe, pPlace, statBuf = null, st
 const AQ = new Float64Array(2), AH = new Float64Array(1), AGL = new Float64Array(2); // AGL[1]: frame it was computed for
 AGL[1] = -1;
 const PREP = new Float64Array(1); PREP[0] = -1; // frame the prepass last ran for (typed: no boxed double)
-const CDESC = { label: 'flora place' };
+const CDESC = { label: 'flora place', timestampWrites: undefined }; // timer set in init (gpu.js TS_FPREP)
+export const prepRan = new Uint8Array(1); // the placement prepass was encoded this frame (main.js marks it for perf)
 // ?fstat=1: log the accepted instances per layer and the vertex invocations once (debug; allocates once)
 const STAT = typeof location !== 'undefined' && /[?&]fstat=1/.test(location.search);
 
 export function init(ctx) {
+  CDESC.timestampWrites = tsBoth(TS_FPREP);
   lifefx.init(); herd.init(ctx);
   let threads = 0, recs = 0;
   const base = new Uint32Array(NLAYER), cap = new Uint32Array(NLAYER);
@@ -173,6 +175,7 @@ function placePass(ctx, enc, view) {
   PREP[0] = fno;
   if (!layers(ctx, view)) return;
   enc.clearBuffer(args);
+  prepRan[0] = 1;
   const c = enc.beginComputePass(CDESC);
   c.setPipeline(pPlace);
   c.setBindGroup(0, view.bg0); c.setBindGroup(1, clip.bg); c.setBindGroup(2, bgC);

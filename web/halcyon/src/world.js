@@ -368,7 +368,7 @@ function sec28() {
           bh = Math.max(bh, (1 + 5 * (hu8(ci, cj, 310) * (1 / 16777216)) + tl) * (SX[2] = d, SX[0] = 1, SX[1] = 0.75, sstepA(), SX[3]));
         }
       }
-      iceS += bh * zone * (1 - (SX[2] = FT[0], SX[0] = 4, SX[1] = 12, sstepA(), SX[3]));
+      iceS += bh * zone * (1 - (SX[2] = FT[0], SX[0] = 2, SX[1] = 6, sstepA(), SX[3]));
       const ca = (NI[0] = px * (1 / 1800), NI[1] = py * (1 / 1800), vnoised(315), N3[0]);
       const cc = 1 - 0.45 * ca * ca, cs = 0.95 * ca;
       const rpx = cc * px + cs * py, rpy = cc * py - cs * px;
