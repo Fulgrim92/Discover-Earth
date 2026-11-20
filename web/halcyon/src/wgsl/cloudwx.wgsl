@@ -27,7 +27,10 @@ fn sat(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }
       if (rw.id[b] >= 0 && f32(rw.id[b]) == CW.camId[a]) { own += CW.camW[a] * rw.w[b]; }
     }
   }
-  cov *= mix(0.3, 1.0, own);
+  // under a moonlit night sky (Aurora Ice) the neighbours' day clouds would read as cut-outs: drop them
+  let c5 = FR.row[S5];
+  let moonR = sstep(0.5, 0.9, c5.w) * (1.0 - sstep(0.01, 0.2, c5.z));
+  cov *= mix(mix(0.3, 0.0, moonR), 1.0, own);
   textureStore(outWx, id.xy, vec4f(cov, c0.y, max(top, c0.y + 60.0), c0.w));
   // the sea's own top and density are normalised by its weight, so the layer does not sag at realm borders
   let sw = max(c1.w, 1e-3);
