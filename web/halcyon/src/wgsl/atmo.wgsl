@@ -152,8 +152,10 @@ fn skyDir(uv: vec2f) -> vec3f {
   let c0 = bf(rw, C0);
   var occ = 0.0;
   if (c0.x > 0.005) { occ = sstep(0.05, 0.6, cloudCov(cloudField(xz, bf(rw, C3).x), c0.x)) * clamp(c0.w * 0.85, 0.0, 0.88); }
-  var sea = 0.0;
-  if (bf(rw, C1).w > 0.001) { sea = seaCov(xz); }
+  // the cloud sea: optical depth per metre of path (presence x coverage x density), and its top (-1000: none)
+  let c1w = bf(rw, C1).w;
+  var sea = 0.0; var seaTop = -1000.0;
+  if (c1w > 0.001) { let c2 = bf(rw, C2); sea = c1w * seaCov(xz) * (c2.z / c1w) * 0.03; seaTop = c2.y / c1w; }
   // z: how much this is the middle of a Drift (1 - sum w^2): the veil skips everything where it is 0
-  textureStore(csmOut, id.xy, vec4f(occ, sea, clamp(2.0 * (1.0 - dot(rw.w, rw.w)), 0.0, 1.0), 1.0));
+  textureStore(csmOut, id.xy, vec4f(occ, sea, clamp(2.0 * (1.0 - dot(rw.w, rw.w)), 0.0, 1.0), seaTop));
 }
