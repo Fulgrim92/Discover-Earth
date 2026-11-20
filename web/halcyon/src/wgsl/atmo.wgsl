@@ -138,3 +138,22 @@ fn skyDir(uv: vec2f) -> vec3f {
   let d = skyDir(uv);
   textureStore(skyOut, id.xy, skyMarch(P, r, d, Ls, Es, Lm, Em));
 }
+
+// ---- cloud-shadow map (sky programmer): the occlusion of the main layer, the cloud sea's coverage and the Drift
+// zone weight (the veil), top-down,
+// on CSM texels around the camera (window in FR.flags.yzw). cloudShadowF (common.wgsl) projects a point along the
+// sun to each layer's height and reads this instead of evaluating the coverage field per pixel.
+@group(1) @binding(5) var csmOut: texture_storage_2d<rgba16float, write>;
+@compute @workgroup_size(8, 8) fn csCloudShadow(@builtin(global_invocation_id) id: vec3u) {
+  let N = textureDimensions(csmOut);
+  if (id.x >= N.x || id.y >= N.y) { return; }
+  let xz = FR.flags.yz + (vec2f(id.xy) + 0.5) * FR.flags.w;
+  let rw = realmWeights(xz);
+  let c0 = bf(rw, C0);
+  var occ = 0.0;
+  if (c0.x > 0.005) { occ = sstep(0.05, 0.6, cloudCov(cloudField(xz, bf(rw, C3).x), c0.x)) * clamp(c0.w * 0.85, 0.0, 0.88); }
+  var sea = 0.0;
+  if (bf(rw, C1).w > 0.001) { sea = seaCov(xz); }
+  // z: how much this is the middle of a Drift (1 - sum w^2): the veil skips everything where it is 0
+  textureStore(csmOut, id.xy, vec4f(occ, sea, clamp(2.0 * (1.0 - dot(rw.w, rw.w)), 0.0, 1.0), 1.0));
+}

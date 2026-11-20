@@ -92,10 +92,10 @@ P.xrenter = P.xrmock > 0 && (P.shot || P.alloc || num('xrenter', 0) > 0);
 // ---------- ablation (?off=) ----------
 // bit i of Frame.flags = OFF_NAMES[i]; the same bits are named constants OFF_* in wgsl/common.wgsl
 export const OFF_NAMES = ['flora', 'fauna', 'particles', 'tshadow', 'tdetail', 'tao', 'fshadow', 'clouds', 'cloudshadow',
-  'water', 'rings', 'drone', 'msaa', 'veil', 'atmo'];
+  'water', 'rings', 'drone', 'msaa', 'tmat', 'trealm', 'tflat', 'tgeo', 'tvert', 'sky', 'tgrid', 'veil', 'atmo']; // tmat..tgrid: terrain-art's bits
 export const OFF_FLORA = 1, OFF_FAUNA = 2, OFF_PARTICLES = 4, OFF_TSHADOW = 8, OFF_TDETAIL = 16, OFF_TAO = 32,
   OFF_FSHADOW = 64, OFF_CLOUDS = 128, OFF_CLOUDSHADOW = 256, OFF_WATER = 512, OFF_RINGS = 1024, OFF_DRONE = 2048,
-  OFF_MSAA = 4096, OFF_VEIL = 8192, OFF_ATMO = 16384;
+  OFF_MSAA = 4096, OFF_VEIL = 1048576, OFF_ATMO = 2097152;
 function parseOff(list) {
   let b = 0;
   for (const w of list.split(',')) {
@@ -314,14 +314,14 @@ async function init() {
   ctx.frameBuf = buffer(FRAME_FLOATS * 4, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'frame');
   const realmBuf = buffer(TABLE.byteLength, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, 'realms');
   G.queue.writeBuffer(realmBuf, 0, TABLE);
-  ctx.bgl0 = bgl('uurfs', 'g0'); // + the sky-view LUT and its sampler (fx/atmo.js)
-  atmo.init(ctx, FO.sun, OFF_ATMO);
+  ctx.bgl0 = bgl('uurfsf', 'g0'); // + the sky-view LUT and its sampler (fx/atmo.js)
+  atmo.init(ctx, FO.sun, FO.flags, OFF_ATMO, realmBuf);
   ctx.linear = d.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' });
   nViews = P.stereo ? 2 : 1;
   for (let i = 0; i < 2; i++) {
     const buf = buffer(VIEW_FLOATS * 4, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'view' + i);
     ctx.views.push({
-      data: new Float32Array(VIEW_FLOATS), buf, bg0: bindGroup(ctx.bgl0, [ctx.frameBuf, buf, realmBuf, atmo.atmo.view, atmo.atmo.sampler]),
+      data: new Float32Array(VIEW_FLOATS), buf, bg0: bindGroup(ctx.bgl0, [ctx.frameBuf, buf, realmBuf, atmo.atmo.view, atmo.atmo.sampler, atmo.atmo.csm]),
       vx: 0, vy: 0, vw: 1, vh: 1, eye: i === 0 ? (P.stereo ? -0.032 : 0) : 0.032,
       // the view's own pose and projection (XR fills these from XRView; desktop/stereo from cam + eye offset)
       pose: new Float32Array(7), fovY: 1, proj: new Float32Array(16), useProj: 0, anc: new Float32Array(4),
@@ -522,8 +522,8 @@ function renderFrame(bakeAll) {
   const enc = G.device.createCommandEncoder();
   if (clipmap.update(ctx, enc, cam[0], cam[2], bakeAll) > 0) perf.markRan(slot, TS_BAKE);
   terrain.setup(ctx, cam[0], cam[2]);
+  atmo.bake(enc, cam); // + the cloud-shadow map window, in ctx.frame
   G.queue.writeBuffer(ctx.frameBuf, 0, ctx.frame);
-  atmo.bake(enc, cam);
   // VR: each view renders into its own sub-image (a texture-array layer, or one half of a side-by-side texture)
   const target = XRI[0] ? null : offView || context.getCurrentTexture().createView();
   for (let i = 0; i < nViews; i++) {
@@ -616,8 +616,8 @@ function frame(now) {
     const enc = G.device.createCommandEncoder();
     clipmap.update(ctx, enc, cam[0], cam[2], true);
     terrain.setup(ctx, cam[0], cam[2]);
-    G.queue.writeBuffer(ctx.frameBuf, 0, ctx.frame);
     atmo.bake(enc, cam);
+    G.queue.writeBuffer(ctx.frameBuf, 0, ctx.frame);
     CMD[0] = enc.finish(); G.queue.submit(CMD); running = false;
     stagedFrame().then(shotDone);
     return;

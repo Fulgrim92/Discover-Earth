@@ -8,7 +8,8 @@ struct Frame {
   lv: array<vec4f, 12>, // per clip level: texel-0 world x, z, texel size, baked flag
   mc: array<vec4f, 12>, // per clip level: mesh centre x, z, vertex spacing, 0
   row: array<vec4f, ROW>, // realm row blended at the camera
-  flags: vec4f,  // x: ablation bits OFF_* (bench ?off=..., 0 in normal play), yzw: 0
+  flags: vec4f,  // x: ablation bits OFF_* (bench ?off=..., 0 in normal play), yz: cloud-shadow map texel-0 x, z,
+                 // w: its texel size (fx/atmo.js; 0 = not baked yet)
 }
 
 // Ablation bits (URL ?off=flora,fauna,...; main.js OFF_NAMES). A set bit switches that cost off: draws are skipped
@@ -26,8 +27,8 @@ const OFF_WATER: u32 = 512u;      // water shading in the composite (composite.w
 const OFF_RINGS: u32 = 1024u;     // rings and their sparks/guide (JS)
 const OFF_DRONE: u32 = 2048u;     // drone body, props, lights, shadow (JS)
 const OFF_MSAA: u32 = 4096u;      // opaque pass without MSAA (JS, at init)
-const OFF_VEIL: u32 = 8192u;      // the Drift veil in the cloud pass (clouds.wgsl veilMarch)
-const OFF_ATMO: u32 = 16384u;     // the per-frame atmosphere LUT bake: baked once, then frozen (fx/atmo.js)
+const OFF_VEIL: u32 = 1048576u;     // the Drift veil in the cloud pass (clouds.wgsl veilMarch)
+const OFF_ATMO: u32 = 2097152u;    // the per-frame atmosphere LUT bake: baked once, then frozen (fx/atmo.js)
 fn isOff(b: u32) -> bool { return (u32(FR.flags.x) & b) != 0u; }
 struct View {
   vp: mat4x4f,   // projection * view rotation (camera-relative world)
@@ -267,15 +268,20 @@ fn cloudShadowF(p: vec3f, L: vec3f, c0: vec4f, c1: vec4f, c2: vec4f, c3: vec4f) 
     let mid = mix(c0.y, c0.z, 0.2);
     if (p.y < mid) {
       let xz = p.xz + L.xz * ((mid - p.y) / ly);
-      let cv = cloudCov(cloudField(xz, c3.x), c0.x);
-      tr = 1.0 - sstep(0.05, 0.6, cv) * clamp(c0.w * 0.85, 0.0, 0.88);
+      let uv = csmUV(xz);
+      if (csmIn(uv)) { tr = 1.0 - textureSampleLevel(csmT, atmoS, uv, 0.0).x; }
+      else { // beyond the map (> 12 km): the coverage field itself
+        let cv = cloudCov(cloudField(xz, c3.x), c0.x);
+        tr = 1.0 - sstep(0.05, 0.6, cv) * clamp(c0.w * 0.85, 0.0, 0.88);
+      }
     }
   }
   if (c1.w > 0.005 && p.y < c2.y) {
     // through the cloud sea: thickness above p along the sun
     let th = (c2.y - max(p.y, c2.x)) / ly;
     let xz = p.xz + L.xz * ((c2.y - p.y) / ly);
-    let od = th * c2.z * 0.03 * seaCov(xz);
+    let uv = csmUV(xz);
+    let od = th * c2.z * 0.03 * select(seaCov(xz), textureSampleLevel(csmT, atmoS, uv, 0.0).y, csmIn(uv));
     tr *= mix(1.0, max(exp(-od), 0.06), c1.w);
   }
   return tr;
@@ -287,6 +293,10 @@ fn cloudShadowF(p: vec3f, L: vec3f, c0: vec4f, c1: vec4f, c2: vec4f, c3: vec4f) 
 // transmittance along the view; row 128 holds per-frame values (atmoInfo).
 @group(0) @binding(3) var atmoT: texture_2d<f32>;
 @group(0) @binding(4) var atmoS: sampler;
+// the cloud-shadow map (fx/atmo.js csCloudShadow): x main-layer occlusion, y cloud-sea coverage, top-down
+@group(0) @binding(5) var csmT: texture_2d<f32>;
+fn csmUV(xz: vec2f) -> vec2f { return (xz - FR.flags.yz) / (FR.flags.w * f32(textureDimensions(csmT).x)); }
+fn csmIn(uv: vec2f) -> bool { return FR.flags.w > 0.0 && all(uv > vec2f(0.002)) && all(uv < vec2f(0.998)); }
 
 // The key light is the sun or the moon, whichever is brighter where the realms blend: each body blends its own
 // elevation across the Drift, so the sun sets and the moon rises (no disc slides across the sky); the light
