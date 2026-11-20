@@ -12,10 +12,16 @@
     { "name": "lumen_close",    "params": { "realm": 5, "pos": "0,1.3,0", "agl": 1, "yaw": 80, "pitch": -8 } },
     { "name": "jellies_giant",  "params": { "realm": 5, "pos": "200,3,-340", "agl": 1, "yaw": 32, "pitch": 16 } },
     { "name": "lumen_giants",   "params": { "realm": 5, "pos": "0,60,0", "agl": 1, "yaw": 60, "pitch": -12 } },
-    { "name": "ice_petrels",    "params": { "realm": 4, "pos": "-110,45,0", "agl": 1, "yaw": 266, "pitch": 4 } },
+    { "name": "ice_petrels",    "params": { "realm": 4, "pos": "-100,30,10", "agl": 1, "yaw": 266, "pitch": 4 } },
     { "name": "painted_gully",  "params": { "realm": 1, "pos": "0,30,0", "agl": 1, "yaw": 140, "pitch": -20 } },
     { "name": "meadow_stereo",  "params": { "realm": 0, "pos": "300,1.6,-200", "agl": 1, "yaw": 248, "pitch": -6, "stereo": 1 } },
     { "name": "meadow_low_q",   "params": { "realm": 0, "pos": "300,1.6,-200", "agl": 1, "yaw": 248, "pitch": -6, "quality": "low" } },
-    { "name": "meadow_mid",     "params": { "realm": 0, "pos": "300,40,-200", "agl": 1, "yaw": 200, "pitch": -22 } }
+    { "name": "meadow_mid",     "params": { "realm": 0, "pos": "300,40,-200", "agl": 1, "yaw": 200, "pitch": -22 } },
+    { "name": "drift_ice_5",     "params": { "realm": 0, "pos": "0,5,-3234", "agl": 1, "yaw": 0, "pitch": -8 } },
+    { "name": "drift_ice_150",   "params": { "realm": 0, "pos": "0,150,-3234", "agl": 1, "yaw": 0, "pitch": -24 } },
+    { "name": "drift_painted_5", "params": { "realm": 0, "pos": "3076,5,262", "agl": 1, "yaw": 95, "pitch": -8 } },
+    { "name": "drift_painted_150", "params": { "realm": 0, "pos": "3076,150,262", "agl": 1, "yaw": 95, "pitch": -24 } },
+    { "name": "drift_mirror_5",  "params": { "realm": 0, "pos": "-1992,4,-1708", "agl": 1, "yaw": 311, "pitch": -8 } },
+    { "name": "drift_stone_5",   "params": { "realm": 0, "pos": "142,5,3116", "agl": 1, "yaw": 177, "pitch": -6 } }
   ]
 }

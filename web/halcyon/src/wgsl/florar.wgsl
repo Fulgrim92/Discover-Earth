@@ -7,7 +7,7 @@ fn rec(ii: u32) -> Inst {
   var I: Inst;
   let a = FI[ii * 4u]; let b = FI[ii * 4u + 1u]; let c = FI[ii * 4u + 2u]; let e = FI[ii * 4u + 3u];
   I.ok = true; I.p = a.xyz; I.fade = a.w; I.g = b.xy; I.sh = b.z; I.cell = b.w; I.alb = c.xyz; I.d = c.w;
-  I.kind = bitcast<u32>(e.x); I.h = bitcast<u32>(e.y); I.x = e.z;
+  I.kind = bitcast<u32>(e.x); I.h = bitcast<u32>(e.y); I.x = e.z; I.hy = e.w;
   return I;
 }
 
@@ -89,7 +89,11 @@ fn widthAt(k: u32, j: u32) -> f32 {
   var emis = vec3f(0.0);
   let hs = pow(lscale, 0.18); let ws = pow(lscale, 0.85);
   switch kind {
-    case 0u: { H = (0.22 + 0.38 * r4 * r4 + 0.12 * r3) * hs; W = 0.022 * ws; leanM = 0.15 + 0.4 * r3; }
+    case 0u: {
+      // grazed Faroese sward: mostly short blades, taller where sheep left a patch (tall grass reads from afar)
+      let tallP = sstep(0.1, 0.55, vn(I.p.xz * (1.0 / 7.0), 815u));
+      H = mix(0.09 + 0.12 * r4 * r4 + 0.04 * r3, 0.2 + 0.35 * r4 * r4 + 0.1 * r3, tallP) * hs; W = mix(0.032, 0.022, tallP) * ws; leanM = mix(0.45, 0.2, tallP) + 0.45 * r3;
+    }
     case 1u: { H = (0.12 + 0.12 * r4) * hs; W = 0.024 * ws; leanM = 0.55 + 0.4 * r3; alb = vec3f(0.045, 0.05, 0.022) * (0.8 + 0.4 * r3); tr = 0.35; stiff = 0.3; }
     case 12u: { H = (0.12 + 0.14 * r4) * hs; W = 0.035 * ws; leanM = 0.75 + 0.4 * r3; tr = 0.2; stiff = 0.2; }
     case 2u: { H = 0.4 + 0.45 * r4; W = 0.22 + 0.16 * r3; leanM = 0.4 + 0.5 * r3; stiff = 0.4; tr = 0.35; } // a fringe card (shaped like the far tufts)
@@ -141,8 +145,9 @@ fn widthAt(k: u32, j: u32) -> f32 {
     o.wp = tip + (t1 * cx + t2 * cy) * rad;
     o.n = hn;
     o.loc = vec2f(cx, cy);
-    o.alb = I.alb;
-    o.emis = vec3f(0.0);
+    // dream hybrid toward Aurora Ice: rime on the petals, a few glinting ice crystals
+    o.alb = mix(I.alb, vec3f(0.78, 0.86, 0.95), I.hy * 0.75);
+    o.emis = vec3f(0.5, 0.8, 1.0) * I.hy * 0.035 * step(0.7, r2);
     o.prm = vec4f(I.sh, 1.0, 0.9, I.fade);
     o.shp = vec4f(0.0, r4, -1.0, 0.0);
     o.pos = VW.vp * vec4f(o.wp - cam, 1.0);
@@ -180,7 +185,16 @@ fn widthAt(k: u32, j: u32) -> f32 {
   o.n = normalize(mix(fn0, gn, select(0.55, 0.8, kind == K_TUFT)));
   // colour along the blade: dark roots, lighter tips
   var a2 = alb;
-  if (kind == K_GRASS) { a2 = mix(alb * 0.85, alb * vec3f(1.3, 1.22, 0.7), s); }
+  if (kind == K_GRASS) {
+    // green at the base, olive-straw toward the tip on about a third of the blades (dry ends, as in the photos)
+    let dry = step(0.78, r2) * sstep(0.45, 1.0, s);
+    a2 = mix(alb * 0.8, alb * vec3f(1.18, 1.12, 0.78), s);
+    a2 = mix(a2, mix(alb, vec3f(0.26, 0.23, 0.12), 0.6) * (0.85 + 0.3 * r1), dry * 0.7);
+    // dream hybrid toward the Painted Range: strata colours climb the tips in bands
+    let band = fract(I.p.y * (1.0 / 6.0) + 0.3 * r1);
+    let strata = mix(vec3f(0.55, 0.22, 0.1), vec3f(0.66, 0.46, 0.26), sstep(0.3, 0.7, band));
+    a2 = mix(a2, strata, I.hy * sstep(0.2, 0.9, s) * 0.85);
+  }
   if (kind == K_TUSSOCK) { a2 = mix(alb * 0.6, alb * vec3f(1.15, 1.1, 1.0), s); }
   if (kind == K_TUFT) {
     a2 = mix(alb * 0.72, alb * select(vec3f(1.25, 1.2, 0.75), vec3f(1.3, 1.25, 1.1), I.x < 0.0), s);
@@ -201,21 +215,22 @@ fn widthAt(k: u32, j: u32) -> f32 {
     emis = gc * pl * 0.06 * s * s;
     shp.z = W;
     o.shp = shp;
-    o.alb = gc * pl * 9.0;  // bulb emission (fragment)
+    o.alb = gc * pl * 4.0;  // bulb emission (fragment): a soft photophore, not a lamp
   } else {
     o.alb = a2;
   }
   if (kind == K_TENDRIL) {
     let gc = glowCol(I.p.xz, 1.0 - r1);
     let pl = pulseAt(I.p.xz, t + s * 0.8);
-    emis = gc * (0.5 + 2.4 * s * s * (0.35 + 0.65 * pow(0.5 + 0.5 * sin(s * 6.0 - t * 2.5 + r1 * 6.0), 2.0))) * (0.5 + 0.5 * pl);
+    emis = gc * (0.05 + 1.1 * s * s * s * (0.35 + 0.65 * pow(0.5 + 0.5 * sin(s * 6.0 - t * 2.5 + r1 * 6.0), 2.0))) * (0.5 + 0.5 * pl);
   }
   o.emis = emis;
   o.wp = pos;
   o.loc = vec2f(wj * 0.5 * sgn, y);
   if (kind != K_STALK) { o.shp = vec4f(H, W, f32(b), r1); }
   // ambient occlusion low in the sward; tufts deep in a meadow are darker at the root
-  let ao = mix(0.55, 1.0, sstep(0.0, 0.8, s));
+  // self-shadowing in the sward: the root sits in the shade of its neighbours, more so in dense tall grass
+  let ao = mix(select(0.55, 0.3, kind == K_GRASS || kind == K_TUFT), 1.0, sstep(0.0, 0.85, s));
   o.prm = vec4f(I.sh, ao, tr, I.fade);
   o.pos = VW.vp * vec4f(pos - cam, 1.0);
   return o;
@@ -439,10 +454,20 @@ struct FOut { @location(0) c: vec4f, @location(1) d: vec4f }
     // fringe of grass spikes along the top of the card; sides taper
     let u = in.loc.x / max(in.shp.y, 1e-4);
     let yv = in.loc.y / max(in.shp.x, 1e-4);
-    let fq = select(1.0, 2.2, kind == K_TUSSOCK); // near tussocks: finer blades
-    let sp = abs(sin(u * 3.1416 * 6.0 * fq + in.shp.w * 20.0)) * 0.6 + abs(sin(u * 3.1416 * 13.0 * fq + in.shp.w * 7.0)) * 0.4;
-    let top = 0.35 + 0.6 * pow(sp, 0.7);
-    alpha = aaStep(yv - top) * aaStep(abs(u) - 0.5 * (1.0 - 0.35 * yv));
+    if (kind == K_TUSSOCK) {
+      // a fan of fine tapering blades from one root (bunch grass), each with its own length
+      let th = u / (yv + 0.12) * 0.55;
+      let bi = floor(th * 9.0 + in.shp.w * 5.0);
+      let f = fract(th * 9.0 + in.shp.w * 5.0);
+      let hb = fract(sin(bi * 12.9898 + in.shp.w * 78.233) * 43758.5453);
+      let top = 0.45 + 0.55 * hb;
+      let w = 0.42 * (1.0 - yv / top);
+      alpha = aaStep(abs(f - 0.5) - w) * aaStep(yv - top) * aaStep(abs(u) - 0.5);
+    } else {
+      let sp = abs(sin(u * 3.1416 * 6.0 + in.shp.w * 20.0)) * 0.6 + abs(sin(u * 3.1416 * 13.0 + in.shp.w * 7.0)) * 0.4;
+      let top = 0.35 + 0.6 * pow(sp, 0.7);
+      alpha = aaStep(yv - top) * aaStep(abs(u) - 0.5 * (1.0 - 0.35 * yv));
+    }
   } else if (kind == K_FERN || kind == K_VINE) {
     // pinnae: comb of leaflets along the frond
     let along = in.loc.y / max(in.shp.x, 0.01);
@@ -475,10 +500,13 @@ struct FOut { @location(0) c: vec4f, @location(1) d: vec4f }
     let rim = sstep(5.3, 5.7, ring) * sstep(6.3, 5.9, ring);
     let spots = sstep(0.55, 0.8, vn(vec2f(u * 26.0, ring * 3.0), 850u)) * sstep(6.0, 7.0, ring);
     let vein = sstep(0.8, 0.98, sin(u * 6.2832 * 5.0 + ring * 0.7)) * sstep(3.0, 1.0, ring);
-    emis = in.emis * (under * gill * 4.5 + rim * 3.0 + spots * 2.2 + vein * 0.5 + 0.06);
+    // light lives in the gills under the cap (fine lamellae) and in a few soft photophores; the flesh is dim
+    let lam = 0.5 + 0.5 * sin(u * 6.2832 * 64.0);
+    emis = in.emis * (under * (0.4 + 0.6 * gill) * (0.6 + 0.4 * lam) * 3.2 + rim * 0.35 + spots * 0.7 + vein * 0.25 + 0.02);
     // translucent cap: the gill glow shows through toward the rim and at grazing angles
     let fr = pow(1.0 - abs(dot(n, V)), 2.5);
-    emis += in.emis * sstep(5.0, 5.8, ring) * sstep(6.8, 6.1, ring) * (0.15 + 0.9 * fr);
+    // translucent cap flesh: the gill light scatters through the thin margin, softly, wider at grazing angles
+    emis += in.emis * sstep(4.8, 6.0, ring) * sstep(7.4, 6.2, ring) * (0.08 + 0.45 * fr);
   } else if (kind == K_CROWN) {
     // leaf clusters: high-frequency normal noise and dark gaps
     // (trig lumps, not value noise: the fragment stays cheap)
