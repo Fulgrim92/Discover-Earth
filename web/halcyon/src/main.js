@@ -830,12 +830,15 @@ function allocFrame() {
 // adding a property to __halcyon at the start mark changes its map and deoptimises the frame loop mid-window)
 const AL_REC = { start: { frame: 0, heap: 0, t: -0.5 }, end: { frame: 0, heap: 0, t: -0.5 } };
 if (P.alloc) H.alloc = AL_REC;
+// the end heap is read when the harness reads the record, after the window (the frame loop has stopped by then):
+// performance.memory makes a new object on every read
+if (P.alloc) Object.defineProperty(AL_REC.end, 'heap', { enumerable: true, get() { if (globalThis.gc) globalThis.gc(); return HEAP(); } });
 function allocMark(which) {
-  // runs twice per test, at the edges of the measured steady state
+  // runs twice per test, at the edges of the measured steady state 
   if (globalThis.gc) { globalThis.gc(); globalThis.gc(); }
   const r = which === 'start' ? AL_REC.start : AL_REC.end;
-  r.frame = frameNo; r.heap = HEAP();
-  if (which === 'start') { r.t = performance.now(); console.log('HALCYON_ALLOC_START ' + frameNo); }
+  r.frame = frameNo;
+  if (which === 'start') { r.heap = HEAP(); r.t = performance.now(); console.log('HALCYON_ALLOC_START ' + frameNo); }
   if (H.onAlloc) H.onAlloc(which);
   // tools/alloc.mjs binds this before the page loads, so it never has to evaluate script in the page while the
   // frame loop runs (each evaluate touches the global object and deoptimises the frame loop)
