@@ -49,7 +49,7 @@ const PLATFORM = {
   'fx/particles.js:draw': 'GPURenderPassEncoder (motes + transparent fauna), when it runs',
   'fx/rings.js:pass': 'GPURenderPassEncoder (effects pass)',
   'fx/clipmap.js:bakeLevel': 'GPURenderPassEncoder x2 when a clip level re-bakes',
-  'fx/clouds.js:draw': 'GPURenderPassEncoder (clouds)',
+  'fx/clouds.js:draw': 'GPUComputePassEncoder (weather window, first view) + GPURenderPassEncoder (cloud march)',
   'perf.js:frameEnd': 'resolveQuerySet / copyBufferToBuffer argument wrappers',
   'perf.js:afterSubmit': 'mapAsync() promise + then() promise, once per 16 frames (GPU timer readback)',
   'perf.js:onMapped': 'getMappedRange() ArrayBuffer + Uint32Array view, once per 16 frames (GPU timer readback)',
@@ -256,7 +256,8 @@ async function main() {
   } finally {
     if (browser) await browser.close().catch(() => {});
     C.ch.kill('SIGKILL');
-    if (!args.includes('--keep')) rmSync(C.dir, { recursive: true, force: true });
+    // the killed browser may still be flushing its profile: retry, and never let cleanup fail the gate
+    if (!args.includes('--keep')) try { rmSync(C.dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch (e) { console.log('(could not remove ' + C.dir + ': ' + e.code + ')'); }
   }
   process.exit(fail.length ? 1 : 0);
 }

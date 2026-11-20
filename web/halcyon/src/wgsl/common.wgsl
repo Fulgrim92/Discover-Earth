@@ -151,3 +151,84 @@ fn luma(c: vec3f) -> f32 { return dot(c, vec3f(0.2126, 0.7152, 0.0722)); }
 
 // interleaved gradient noise for per-pixel jitter
 fn ign(p: vec2f) -> f32 { return fract(52.9829189 * fract(dot(p, vec2f(0.06711056, 0.00583715)))); }
+
+// ---- clouds, shared (sky/atmosphere). The volumetric clouds' coverage field and its cheap ground shadow.
+// The cloud pass bakes this field into a camera-centred weather texture every frame; terrain and water call
+// cloudShadow() directly, so the shadows on the ground come from the same field as the clouds in the sky.
+const CLOUD_WIND: vec2f = vec2f(4.2, 1.7); // m/s, one wind for the planet so the field never jumps at borders
+
+// cellular domes (1 at a cell centre, falling off as a paraboloid, smooth-min blended so outlines stay round),
+// cells of varying size: one cumulus per cell
+fn cell2(p: vec2f, sd: u32) -> f32 {
+  let i = floor(p);
+  var acc = 0.0;
+  for (var k = 0; k < 9; k++) {
+    let c = i + vec2f(f32(k % 3 - 1), f32(k / 3 - 1));
+    let ci = vec2i(c);
+    let h = hu(ci.x, ci.y, sd);
+    let r = vec2f(f32(h & 1023u), f32((h >> 10u) & 1023u)) * (1.0 / 1023.0);
+    let sz = 0.5 + 0.6 * f32((h >> 20u) & 1023u) * (1.0 / 1023.0);
+    let d = c + 0.15 + 0.7 * r - p;
+    acc += exp(-10.0 * dot(d, d) / (sz * sz));
+  }
+  return 1.0 + log(max(acc, 1e-6)) * 0.1;
+}
+
+// 2D cloud field in [0,1]: regional swell + mid-scale masses, mixed toward separate cumulus cells by c3.x
+fn cloudField(xz: vec2f, small: f32) -> f32 {
+  let q = xz - CLOUD_WIND * FR.time.x;
+  let wl = fbm(q * (1.0 / 6100.0), 3, 600u);
+  let wm = fbm(rot2(q * (1.0 / 1900.0)) * 0.5 + vec2f(31.7, -12.3), 4, 610u);
+  var ws = 0.0;
+  if (small > 0.01) {
+    let wp = q + 160.0 * vec2f(vn(q * (1.0 / 700.0), 621u), vn(q * (1.0 / 700.0) + 5.3, 622u));
+    ws = cell2(wp * (1.0 / 950.0), 640u) * 1.15 - 0.62 + fbm(q * (1.0 / 260.0), 2, 650u) * 0.22;
+  }
+  return 0.5 + wl * (0.55 - 0.3 * small) + mix(wm * 0.75, ws + wm * 0.25, small);
+}
+// coverage of the main layer from the field and the realm's cover c0.x (0 = none, 1 = overcast)
+fn cloudCov(f: f32, cover: f32) -> f32 {
+  return sstep(1.0 - cover - 0.12, 1.0 - cover + 0.36, f);
+}
+// cloud-sea coverage: nearly closed with slow drifting holes
+fn seaCov(xz: vec2f) -> f32 {
+  let q = xz - CLOUD_WIND * 0.6 * FR.time.x;
+  return sstep(-0.32, -0.08, fbm(q * (1.0 / 520.0), 3, 630u));
+}
+
+struct CloudU {
+  win: vec4f,  // weather window texel-0 x, z, texel size (m), texels
+  slab: vec4f, // main layer min base, max top, sea min base, sea max top (planet-wide bounds)
+  q: vec4f,    // primary steps, light steps, max distance (m), reflection steps
+  misc: vec4f, // half-res w, h, 1/w, 1/h
+  camId: vec4f, // realm ids blended at the camera (-1 = none)
+  camW: vec4f,  // their weights
+}
+
+// Sun transmittance through the clouds at world point p (cheap: one coverage lookup per layer).
+fn cloudShadow(p: vec3f, L: vec3f, rw: RWt) -> f32 {
+  if (L.y < 0.005) { return 1.0; }
+  return cloudShadowF(p, L, bf(rw, C0), bf(rw, C1), bf(rw, C2), bf(rw, C3));
+}
+// the same with the cloud fields given (life.wgsl passes the camera row: flora, fauna, particles, drone)
+fn cloudShadowF(p: vec3f, L: vec3f, c0: vec4f, c1: vec4f, c2: vec4f, c3: vec4f) -> f32 {
+  if (L.y < 0.005) { return 1.0; }
+  var tr = 1.0;
+  let ly = max(L.y, 0.1);
+  if (c0.x > 0.005) {
+    let mid = mix(c0.y, c0.z, 0.2);
+    if (p.y < mid) {
+      let xz = p.xz + L.xz * ((mid - p.y) / ly);
+      let cv = cloudCov(cloudField(xz, c3.x), c0.x);
+      tr = 1.0 - sstep(0.05, 0.6, cv) * clamp(c0.w * 0.85, 0.0, 0.88);
+    }
+  }
+  if (c1.w > 0.005 && p.y < c2.y) {
+    // through the cloud sea: thickness above p along the sun
+    let th = (c2.y - max(p.y, c2.x)) / ly;
+    let xz = p.xz + L.xz * ((c2.y - p.y) / ly);
+    let od = th * c2.z * 0.03 * seaCov(xz);
+    tr *= mix(1.0, max(exp(-od), 0.06), c1.w);
+  }
+  return tr;
+}

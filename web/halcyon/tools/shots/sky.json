@@ -1,0 +1,21 @@
+{
+  "defaults": { "w": 960, "h": 540, "t": 20, "hud": 0, "fov": 62 },
+  "shots": [
+    { "name": "fjord_peaks",     "params": { "realm": 0, "pos": "-600,820,900", "yaw": 40, "pitch": -7 } },
+    { "name": "fjord_below",     "params": { "realm": 0, "pos": "300,25,-200", "agl": 1, "yaw": 205, "pitch": 24 } },
+    { "name": "fjord_shafts",    "params": { "realm": 0, "pos": "300,40,-200", "agl": 1, "yaw": 248, "pitch": 6 } },
+    { "name": "painted_cumulus", "params": { "realm": 1, "pos": "0,18,0", "agl": 1, "yaw": 140, "pitch": 14 } },
+    { "name": "painted_bases",   "params": { "realm": 1, "pos": "600,1650,400", "yaw": 300, "pitch": 16 } },
+    { "name": "painted_above",   "params": { "realm": 1, "pos": "0,3700,0", "yaw": 140, "pitch": -18 } },
+    { "name": "mirror_tall",     "params": { "realm": 2, "pos": "0,1.7,0", "yaw": 110, "pitch": 4 } },
+    { "name": "mirror_away",     "params": { "realm": 2, "pos": "0,1.7,0", "yaw": 290, "pitch": 2 } },
+    { "name": "sea_above",       "params": { "realm": 3, "pos": "0,175,0", "yaw": 40, "pitch": -12 } },
+    { "name": "sea_inside",      "params": { "realm": 3, "pos": "-240,104,-300", "yaw": 67, "pitch": 2 } },
+    { "name": "sea_below",       "params": { "realm": 3, "pos": "-240,48,-300", "yaw": 230, "pitch": 26 } },
+    { "name": "sea_shafts",      "params": { "realm": 3, "pos": "-500,240,-300", "yaw": 150, "pitch": -6 } },
+    { "name": "aurora_wide",     "params": { "realm": 4, "pos": "0,20,0", "agl": 1, "yaw": 340, "pitch": 22, "fov": 90 } },
+    { "name": "aurora_lagoon",   "params": { "realm": 4, "pos": "0,6,0", "agl": 1, "yaw": 340, "pitch": 4 } },
+    { "name": "lumen_sky",       "params": { "realm": 5, "pos": "0,15,0", "agl": 1, "yaw": 40, "pitch": 14 } },
+    { "name": "lumen_veils",     "params": { "realm": 5, "pos": "-800,380,800", "agl": 1, "yaw": 75, "pitch": 6 } }
+  ]
+}

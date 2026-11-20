@@ -85,6 +85,8 @@ fn ggxD(n: vec3f, h: vec3f, rough: f32) -> f32 {
   if (L.y > -0.05) {
     let jit = ign(in.pos.xy);
     sh = sunShadow(in.wp + vec3f(0.0, 0.05, 0.0), L, max(dist, 30.0), rowv(S6).y, jit, 12);
+    // cloud shadow as on the terrain below (camera row's cloud fields; the drone is always near the camera)
+    if (sh > 0.02) { sh *= cloudShadowF(in.wp, L, rowv(C0), rowv(C1), rowv(C2), rowv(C3)); }
   }
   let I = rowv(S3).w;
   let zen = rowv(S2).rgb * I; let hor = rowv(S3).rgb * I;

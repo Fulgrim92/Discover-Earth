@@ -5,42 +5,61 @@
 @group(2) @binding(2) var cloudT: texture_2d<f32>;
 @group(2) @binding(3) var linS: sampler;
 
-// ---- cloud sea slab (Stone Forest), with sun shadows from the pillars ----
-fn cloudSea(col: vec3f, ro: vec3f, d: vec3f, tScene: f32, jit: f32) -> vec3f {
-  let c1 = rowv(C1); let c2 = rowv(C2);
-  if (c1.w < 0.01) { return col; }
-  let tm = FR.time.x;
-  var top = c2.y;
-  let base = c2.x;
-  var t0 = 0.0; var t1 = tScene;
-  var surf = false;
-  if (ro.y > top) {
-    if (d.y >= 0.0) { return col; }
-    var tt = (top - ro.y) / d.y;
-    let P0 = ro + d * tt;
-    let tn = top + 9.0 * fbm(P0.xz * (1.0 / 160.0) + vec2f(tm * 0.004, 0.0), 4, 520u) - 4.0;
-    tt = (tn - ro.y) / d.y;
-    if (tt > tScene) { return col; }
-    t0 = tt; surf = true;
-  } else if (ro.y < base && d.y <= 0.0) { return col; }
-  if (d.y > 0.0 && ro.y <= top) { t1 = min(t1, (top - ro.y) / d.y); }
-  let inside = max(t1 - t0, 0.0);
-  let od = inside * c2.z * 0.03 * c1.w;
-  let tr = exp(-od);
-  let L = FR.sun.xyz;
-  let sc = sunCol();
-  let I = rowv(S3).w;
-  let amb = mix(rowv(S3).rgb, rowv(S2).rgb, 0.5) * I;
-  var sea = c1.rgb * (amb * 0.9 + sc * 0.25);
-  if (surf) {
-    let P = ro + d * t0;
-    let g = vnoised(P.xz * (1.0 / 60.0) + vec2f(tm * 0.01, 0.0), 530u).yz * 0.6 + vnoised(P.xz * (1.0 / 18.0), 531u).yz * 0.25;
-    let N = normalize(vec3f(-g.x, 1.0, -g.y));
-    let sh = sunShadow(P + vec3f(0.0, 2.0, 0.0), L, t0, 0.05, jit, 18);
-    let wrap = clamp((dot(N, L) + 0.4) / 1.4, 0.0, 1.0);
-    sea = c1.rgb * (sc * wrap * (0.25 + 0.75 * sh) * 0.85 + amb * (0.8 + 0.2 * N.y));
+@group(2) @binding(4) var cloudR: texture_2d<f32>;
+@group(2) @binding(5) var cloudD: texture_2d<f32>;
+
+// ---- clouds: depth-aware upsample of the half-res cloud pass (front clouds + clouds in the mirror) ----
+var<private> gRC: vec4f; // mirrored clouds for this pixel, read by reflectRay's sky branch
+
+struct CUp { front: vec4f, refl: vec4f }
+// 3x3 half-res neighbourhood: a small Gaussian (it also averages out the march jitter) times a depth weight
+fn cloudUp(pix: vec2f, dist: f32) -> CUp {
+  let hs = vec2i(textureDimensions(cloudT));
+  let ic = vec2i(floor(pix * 0.5));
+  var o: CUp;
+  o.front = vec4f(0.0); o.refl = vec4f(0.0);
+  var ws = 0.0; var best = 1e9;
+  var nf = vec4f(0.0); var nr = vec4f(0.0);
+  for (var k = 0; k < 9; k++) {
+    let off = vec2i(k % 3 - 1, k / 3 - 1);
+    let q = clamp(ic + off, vec2i(0), hs - 1);
+    let dp = ((vec2f(q) + 0.5) * 2.0 - pix) * 0.5;
+    let wb = exp(-dot(dp, dp) * 1.1);
+    let dq = textureLoad(cloudD, q, 0).x;
+    let rel = abs(dq - dist) / max(min(dq, dist), 1.0);
+    let wd = 1.0 / (1.0 + rel * 24.0);
+    let w = wb * wd * wd;
+    let cf = textureLoad(cloudT, q, 0); let cr = textureLoad(cloudR, q, 0);
+    o.front += cf * w; o.refl += cr * w; ws += w;
+    if (rel < best) { best = rel; nf = cf; nr = cr; }
   }
-  return col * tr + sea * (1.0 - tr) * c1.w + col * (1.0 - tr) * (1.0 - c1.w);
+  if (ws < 0.01) { o.front = nf; o.refl = nr; } else { o.front /= ws; o.refl /= ws; }
+  return o;
+}
+
+// screen-space sun shafts: radial march toward the sun over the open sky left by clouds and terrain
+fn sunShafts(uv: vec2f, jit: f32) -> f32 {
+  let L = FR.sun.xyz;
+  if (L.y < -0.04) { return 0.0; }
+  let cs = VW.vp * vec4f(L * 1000.0, 1.0);
+  if (cs.w <= 0.0) { return 0.0; }
+  let su = vec2f(cs.x / cs.w * 0.5 + 0.5, 0.5 - cs.y / cs.w * 0.5);
+  var dl = su - uv;
+  let len = length(dl * vec2f(VW.size.x * VW.size.w, 1.0));
+  if (len > 1.4) { dl *= 1.4 / len; }
+  let NS = 20;
+  let st = dl / f32(NS);
+  var p = uv + st * jit;
+  var acc = 0.0; var wsum = 0.0; var dec = 1.0;
+  for (var i = 0; i < NS; i++) {
+    let q = clamp(p, vec2f(0.001), vec2f(0.999));
+    let sky = sstep(30000.0, 55000.0, textureSampleLevel(distT, linS, q, 0.0).x);
+    let cl = textureSampleLevel(cloudT, linS, q, 0.0).a;
+    acc += sky * (1.0 - cl) * dec; wsum += dec;
+    dec *= 0.95;
+    p += st;
+  }
+  return acc / wsum;
 }
 
 // ---- water ----
@@ -127,8 +146,7 @@ fn reflectRay(P: vec3f, R: vec3f, rw: RWt, pix: f32) -> vec3f {
     c = applyFog(c, P, R, t);
   } else {
     c = skyFull(R, pix);
-    let cl = cloudLayer(P, R, 1e9);
-    c = c * cl.a + cl.rgb;
+    c = c * (1.0 - gRC.a) + gRC.rgb; // clouds in the mirror (marched by the cloud pass)
   }
   return c;
 }
@@ -150,6 +168,9 @@ struct VO { @builtin(position) pos: vec4f }
   let pix = 2.0 * VW.fwd.w * VW.size.w;
   let jit = ign(in.pos.xy);
   var dist = textureLoad(distT, px, 0).x;
+  var cu = cloudUp(in.pos.xy, dist);
+  if (VW.cam.w == 9.0) { cu.front = vec4f(0.0); cu.refl = vec4f(0.0); } // dbg=9: no clouds
+  gRC = cu.refl;
   let isSky = dist > 50000.0;
   if (isSky) { dist = 1e9; }
   var col = textureLoad(sceneT, px, 0).rgb;
@@ -194,7 +215,7 @@ struct VO { @builtin(position) pos: vec4f }
       let a2 = r0 * r0 * r0 * r0 + WVAR * 2.0;
       let nh = max(dot(n, hv), 0.0);
       let dd = nh * nh * (a2 - 1.0) + 1.0;
-      rc += sunCol() * min(a2 / (PI * dd * dd) * 0.25, 60.0) * sstep(0.0, 0.05, L.y);
+      rc += sunCol() * min(a2 / (PI * dd * dd) * 0.25, 60.0) * sstep(0.0, 0.05, L.y) * cloudShadow(P, L, rw);
       // refraction + absorption
       // water depth from the height clipmap (r16 scene depth is too coarse for 4 cm of water)
       let depth = max(-heightAny(P.xz), 0.0);
@@ -226,14 +247,23 @@ struct VO { @builtin(position) pos: vec4f }
 
   // fog over the visible distance (sky gets it toward the horizon only)
   if ((!isSky || tEnd < 1e8) && VW.cam.w != 8.0) { col = applyFog(col, ro, d, tEnd); }
-  // cloud sea slab
-  { col = cloudSea(col, ro, d, tEnd, jit); }
-  // high clouds in front of whatever we hit
-  let cl = cloudLayer(ro, d, tEnd);
-  if (cl.a < 1.0) {
-    let cP = (rowv(C0).y - ro.y) / d.y;
-    let fogged = applyFog(cl.rgb / max(1.0 - cl.a, 1e-3), ro, d, max(cP, 0.0));
-    col = col * cl.a + fogged * (1.0 - cl.a);
+  // under the cloud sea: the sky light is mostly gone (sun is handled by cloudShadow in the terrain)
+  let c1 = rowv(C1);
+  if (c1.w > 0.01 && !isSky) {
+    let P = ro + d * tEnd;
+    let sb = rowv(C2).x / c1.w;
+    let us = sstep(sb + 25.0, sb - 15.0, P.y) * c1.w;
+    col *= mix(vec3f(1.0), vec3f(0.5, 0.56, 0.52), us);
+  }
+  // volumetric clouds in front of whatever we hit (aerial perspective is already in them)
+  col = col * (1.0 - cu.front.a) + cu.front.rgb;
+  // sun shafts: in-scattered sun along open lines of sight toward the sun, scaled by the air in front
+  let mu = dot(d, FR.sun.xyz);
+  let ph = hg(mu, 0.8) * 0.5;
+  if (ph > 0.004 && VW.cam.w != 8.0) {
+    let air = 1.0 - exp(-min(tEnd, 30000.0) * (rowv(F0).w * 3.0 + rowv(F1).w * 0.2));
+    let sh = sunShafts(uv, jit);
+    col += sunCol() * sh * ph * sstep(0.004, 0.03, ph) * air * rowv(F2).w * 0.35;
   }
   return vec4f(col, 1.0);
 }

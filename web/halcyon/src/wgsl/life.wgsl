@@ -41,11 +41,17 @@ fn lfFogT(ro: vec3f, d: vec3f, t: f32) -> vec3f {
   return applyFog(vec3f(1.0), ro, d, t) - applyFog(vec3f(0.0), ro, d, t);
 }
 
-// cheap sun shadow for small things: fewer steps than the terrain, same march
+// cheap sun shadow for small things: fewer steps than the terrain, same march, times the cloud shadow that the
+// terrain gets (common.wgsl cloudShadow, here with the camera row's cloud fields; skipped where already shadowed)
 fn lfShadow(p: vec3f, dist: f32, jit: f32, steps: i32) -> f32 {
   let L = FR.sun.xyz;
   if (L.y < -0.03) { return 0.0; }
-  return sunShadow(p, L, dist, rowv(S6).y, jit, steps);
+  let sh = sunShadow(p, L, dist, rowv(S6).y, jit, steps);
+  if (sh < 0.02) { return sh; }
+  return sh * lfCloudShadow(p);
+}
+fn lfCloudShadow(p: vec3f) -> f32 {
+  return cloudShadowF(p, FR.sun.xyz, rowv(C0), rowv(C1), rowv(C2), rowv(C3));
 }
 
 fn lfRand(h: u32, k: u32) -> f32 { return f32(hu(i32(h), i32(k), 0x51u) >> 8u) * (1.0 / 16777216.0); }

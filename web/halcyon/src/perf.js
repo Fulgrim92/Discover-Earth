@@ -8,7 +8,7 @@
 // per READ_EVERY frames (about 4 times a second at 60 Hz), never per frame. Without timestamp-query the frame
 // delta drives the controller instead.
 import { CLK, C_DT, C_FRAME_MS } from './clock.js';
-import { G, TS, TS_N, TS_SLOTS, TS_PER_FRAME, TS_PASSES } from './gpu.js';
+import { G, TS, TS_N, TS_SLOTS, TS_PER_FRAME, TS_PASSES, TS_ONCE } from './gpu.js';
 
 export const READ_EVERY = TS_SLOTS / 2;
 const HALF_Q = READ_EVERY * TS_PER_FRAME;   // queries per half ring
@@ -81,7 +81,8 @@ function onMapped(h) {
     for (let i = 0; i < TS_N; i++) {
       let ms = 0;
       if (P.ran[slot * TS_N + i]) {
-        for (let v = 0; v < nv; v++) {
+        const nvi = (TS_ONCE >> i) & 1 ? 1 : nv; // once-per-frame passes live in view 0's block
+        for (let v = 0; v < nvi; v++) {
           const o = (k * TS_PER_FRAME + v * TS_N * 2 + i * 2) * 2;
           const b = q[o + 1] * 4294967296 + q[o], e = q[o + 3] * 4294967296 + q[o + 2];
           const d = (e - b) * 1e-6;

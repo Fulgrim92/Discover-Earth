@@ -15,9 +15,9 @@
 //   alloc=1          zero-allocation gate hooks (tools/alloc.mjs): warm=<frames>, frames=<frames>
 //   dynres=0|1, target=<gpu ms>, hdr=1, stereo=1, scale=<fixed internal scale>, quality=low|high, hud=0, audio=1
 // Debug: dbg=1 no water, 2 terrain albedo, 3 sun shadow, 4 terrain normal, 5 water reflection only, 6 water
-// refraction only, 7 water normal, 8 no fog. staged=1 (+verbose=1) times each pass of a static shot separately.
+// refraction only, 7 water normal, 8 no fog, 9 no clouds. staged=1 (+verbose=1) times each pass of a static shot separately.
 import { G, H, fail, initDevice, Unsupported, bgl, bindGroup, tex, buffer, FRAME_FLOATS, VIEW_FLOATS, FO, VO,
-  setTimerBase, tsBoth, TS_BAKE, TS_OPAQUE, TS_CLOUDS, TS_COMPOSITE, TS_FX, TS_BLOOM, TS_FINAL, TS_LIFE } from './gpu.js';
+  setTimerBase, tsBoth, TS_BAKE, TS_OPAQUE, TS_CLOUDS, TS_COMPOSITE, TS_FX, TS_BLOOM, TS_FINAL, TS_LIFE, TS_WEATHER } from './gpu.js';
 import { TABLE, ROWF, F, realmCentre, CURATED, REALM_NAMES } from './realms.js';
 import { heightAt, heightBatch, blendAtA, W_IN, W_NEAR } from './world.js';
 import { CLK, C_DT, C_TIME, C_FRAME_MS, C_PREV } from './clock.js';
@@ -362,7 +362,7 @@ function renderView(v, enc, target, first) {
   terrain.draw(ctx, p, v);
   flora.draw(ctx, p, v); fauna.draw(ctx, p, v);
   p.end();
-  clouds.draw(ctx, enc, v);
+  if (clouds.draw(ctx, enc, v)) perf.markRan(TSLOT[0], TS_WEATHER); // + the weather window bake (first view)
   composite.draw(ctx, enc, v);
   if (particles.draw(ctx, enc, v)) perf.markRan(TSLOT[0], TS_LIFE); // fauna's transparent jellies + motes
   rings.pass(ctx, enc, v, drone.drawFx);
@@ -406,7 +406,7 @@ function renderFrame(bakeAll) {
   }
   perf.markRan(slot, TS_OPAQUE); perf.markRan(slot, TS_COMPOSITE); perf.markRan(slot, TS_FX);
   perf.markRan(slot, TS_BLOOM); perf.markRan(slot, TS_FINAL);
-  if (clouds.clouds.enabled) perf.markRan(slot, TS_CLOUDS);
+  perf.markRan(slot, TS_CLOUDS);
   perf.frameEnd(enc, slot);
   CMD[0] = enc.finish();
   G.queue.submit(CMD);
@@ -615,6 +615,7 @@ async function stagedFrame() {
   viewFromCam(v);
   writeView(v);
   await log('opaque', (enc) => { const p = enc.beginRenderPass(opaqueDesc); drone.drawBody(ctx, p, v); terrain.draw(ctx, p, v); flora.draw(ctx, p, v); fauna.draw(ctx, p, v); p.end(); });
+  await log('clouds', (enc) => clouds.draw(ctx, enc, v));
   await log('composite', (enc) => composite.draw(ctx, enc, v));
   await log('particles', (enc) => particles.draw(ctx, enc, v));
   await log('fx', (enc) => rings.pass(ctx, enc, v, drone.drawFx));

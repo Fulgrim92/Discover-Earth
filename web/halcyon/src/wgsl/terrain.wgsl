@@ -629,6 +629,7 @@ fn strataAt(s: f32) -> vec3f {
     var steps = i32(mix(22.0, 10.0, sstep(400.0, 4000.0, dist)));
     if (q < 0.5) { steps = steps / 2 + 1; }
     sh = sunShadow(p + gn * (0.3 + dist * 0.002), L, dist, S6v.y, jit, steps);
+    sh *= cloudShadow(p, L, rw); // cloud shadows (common.wgsl, same coverage field as the cloud pass)
   }
   // occlusion from the baked ring concavity at three scales
   let occ = max(ca, 0.0) * 0.9 + max(cb, 0.0) * 1.6 + max(cc, 0.0) * 2.2;
