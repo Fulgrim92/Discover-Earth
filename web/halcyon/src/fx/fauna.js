@@ -15,7 +15,7 @@ import LIFE from '../wgsl/life.wgsl';
 import FAUNA from '../wgsl/fauna.wgsl';
 
 const BIRD_VERTS = 384, JELLY_VERTS = 1488;
-const BIRDS = [216, 108, 117];
+const BIRDS = new Uint16Array([216, 108, 117]);
 let pBird, pMirror, pJelly;
 export const faunaT = { bgl: null };
 

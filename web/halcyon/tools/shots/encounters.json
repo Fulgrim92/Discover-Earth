@@ -1,0 +1,22 @@
+{
+  "defaults": { "w": 960, "h": 540, "t": 20, "hud": 0, "fov": 62 },
+  "shots": [
+    { "name": "orca_build",      "params": { "realm": 0, "pos": "-260,14,100", "yaw": 210, "pitch": -7, "enc": "orca", "et": 12 } },
+    { "name": "orca_peak",       "params": { "realm": 0, "pos": "-260,14,100", "yaw": 210, "pitch": -12, "enc": "orca", "et": 41 } },
+    { "name": "orca_close",      "params": { "realm": 0, "pos": "-260,6,100", "yaw": 210, "pitch": -14, "fov": 40, "enc": "orca", "et": 47 } },
+    { "name": "murm_build",      "params": { "realm": 0, "pos": "300,40,-200", "agl": 1, "yaw": 248, "pitch": 4, "enc": "murmuration", "et": 10 } },
+    { "name": "murm_peak",       "params": { "realm": 0, "pos": "300,40,-200", "agl": 1, "yaw": 248, "pitch": 4, "enc": "murmuration", "et": 38 } },
+    { "name": "murm_fold",       "params": { "realm": 0, "pos": "300,40,-200", "agl": 1, "yaw": 248, "pitch": 4, "enc": "murmuration", "et": 53 } },
+    { "name": "flamingo_build",  "params": { "realm": 2, "pos": "-260,2.5,-80", "yaw": 120, "pitch": -4, "enc": "flamingo", "et": 4 } },
+    { "name": "flamingo_peak",   "params": { "realm": 2, "pos": "-260,2.5,-80", "yaw": 120, "pitch": 2, "enc": "flamingo", "et": 9.5 } },
+    { "name": "flamingo_close",  "params": { "realm": 2, "pos": "-260,2.5,-80", "yaw": 120, "pitch": 0, "fov": 20, "enc": "flamingo", "et": 9.5 } },
+    { "name": "breach_build",    "params": { "realm": 4, "pos": "-260,6,-20", "yaw": 270, "pitch": -2, "enc": "breach", "et": 6.2 } },
+    { "name": "breach_peak",     "params": { "realm": 4, "pos": "-260,6,-20", "yaw": 270, "pitch": 3, "enc": "breach", "et": 21.1 } },
+    { "name": "breach_close",    "params": { "realm": 4, "pos": "-260,6,-20", "yaw": 270, "pitch": 1, "fov": 22, "enc": "breach", "et": 21.1 } },
+    { "name": "jelly_build",     "params": { "realm": 5, "pos": "0,40,0", "agl": 1, "yaw": 60, "pitch": 6, "enc": "jelly", "et": 10 } },
+    { "name": "jelly_peak",      "params": { "realm": 5, "pos": "0,40,0", "agl": 1, "yaw": 60, "pitch": 6, "enc": "jelly", "et": 35 } },
+    { "name": "giants_close",    "params": { "realm": 5, "pos": "0,260,0", "agl": 1, "yaw": 60, "pitch": -9, "fov": 26, "enc": "giants", "et": 110 } },
+    { "name": "giants_build",    "params": { "realm": 5, "pos": "0,60,0", "agl": 1, "yaw": 60, "pitch": -2, "enc": "giants", "et": 40 } },
+    { "name": "giants_peak",     "params": { "realm": 5, "pos": "0,60,0", "agl": 1, "yaw": 60, "pitch": -2, "enc": "giants", "et": 110 } }
+  ]
+}

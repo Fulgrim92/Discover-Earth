@@ -24,6 +24,7 @@ import { F, TABLE, ROWF, NREALM, W_IN, W_ID, W_W, realmWeightsA } from '../realm
 import { heightBatch } from '../world.js';
 import { clip } from './clipmap.js';
 import * as herd from './herd.js';
+import * as lifefx from './lifefx.js';
 import CLIP from '../wgsl/clip.wgsl';
 import SKY from '../wgsl/sky.wgsl';
 import LIFE from '../wgsl/life.wgsl';
@@ -60,7 +61,7 @@ const CDESC = { label: 'flora place' };
 const STAT = typeof location !== 'undefined' && /[?&]fstat=1/.test(location.search);
 
 export function init(ctx) {
-  herd.init(ctx);
+  lifefx.init(); herd.init(ctx);
   let threads = 0, recs = 0;
   const base = new Uint32Array(NLAYER), cap = new Uint32Array(NLAYER);
   for (let i = 0; i < NLAYER; i++) {
@@ -157,6 +158,7 @@ function layers(ctx, view) {
 // offset, inside the cull margin)
 export function prepare(ctx, enc, view) {
   lifePresent(ctx, view); // page code, kept out of the platform-registered prepass below
+  lifefx.update(ctx, view);                                     // encounter slots, ripple sources
   if (!((ctx.off | 0) & OFF_FAUNA_H)) herd.update(ctx, view); // ground animals: homes and drone reaction
   placePass(ctx, enc, view);
 }
