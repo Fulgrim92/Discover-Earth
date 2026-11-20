@@ -154,6 +154,29 @@ fn bird(ii: u32) -> Bird {
     B.flapA = 0.65 * sstep(0.35, 0.75, sin(t * 0.37 + lfRand(hb, 7u) * 6.2832));
     }
   }
+  // reaction to the drone (the shared head anchor; closed-form, so it is the same in both eyes and every frame)
+  let D = VW.anc.xyz;
+  var esc = 0.0;
+  if (g == 1u && fi == 0u && k == 0u && B.pet < 0.5) {
+    // the curious one: every 75 s one seabird of the nearest colony flies alongside the drone for about 16 s
+    let ph = fract(t / 75.0 + lfRand(hc, 9u));
+    esc = sstep(0.0, 0.04, ph) * (1.0 - sstep(0.2, 0.25, ph));
+    let fw = normalize(vec3f(VW.fwd.x, 0.0, VW.fwd.z) + vec3f(1e-4, 0.0, 0.0));
+    let sd = normalize(cross(fw, vec3f(0.0, 1.0, 0.0)));
+    let ep = D + sd * (7.0 + 1.5 * sin(t * 0.31)) + vec3f(0.0, 1.5 + 0.8 * sin(t * 0.7), 0.0) + fw * (3.0 * sin(t * 0.23));
+    B.p = mix(B.p, ep, esc);
+    B.fwd = normalize(mix(B.fwd, fw, esc));
+    B.up = normalize(mix(B.up, vec3f(0.0, 1.0, 0.0) + sd * 0.15 * sin(t * 0.5), esc));
+    B.flapA = mix(B.flapA, 0.15 + 0.55 * sstep(0.3, 0.8, sin(t * 0.6)), esc);
+  }
+  // the rest of the flock lifts and wheels away from a drone that comes within about 70 m, then settles back
+  let dv = B.p - D; let dd = length(dv) + 1e-3;
+  let rep = sstep(70.0, 12.0, dd) * (1.0 - esc);
+  let away = dv / dd;
+  let wheel = normalize(cross(vec3f(0.0, 1.0, 0.0), away) + vec3f(1e-4, 0.0, 0.0));
+  B.p += (away * 26.0 + vec3f(0.0, 16.0, 0.0) + wheel * 12.0 * select(-1.0, 1.0, (hc & 1u) == 1u)) * rep;
+  B.fwd = normalize(mix(B.fwd, normalize(away + vec3f(0.0, 0.5, 0.0)), rep * 0.7));
+  B.flapA = mix(B.flapA, 0.85, rep);
   let d = length(B.p - VW.anc.xyz);
   B.size *= sstep(1500.0, 1000.0, d);
   if (B.size < 0.01) { return B; }
@@ -365,6 +388,19 @@ fn jelly(ii: u32) -> Jelly {
   if (k > 0.45) { J.col = vec3f(0.35, 0.6, 1.0); }
   if (k > 0.75) { J.col = vec3f(0.95, 0.35, 0.9); }
   if (k > 0.92) { J.col = vec3f(1.0, 0.65, 0.25); }
+  // jelly gathering (encounter type 5): the swarm drifts together into a slow rising spiral and pulses in step
+  let ge = lfEnc(5.0);
+  if (ge.w > 0.0) {
+    let gw = sstep(0.0, 25.0, ge.x) * (1.0 - sstep(ge.y - 15.0, ge.y, ge.x));
+    let E = lfEncPos(5.0);
+    let fl = f32(li % 25u);
+    let ga = fl * 2.4 + t * 0.06;
+    let gp = E + vec3f(cos(ga) * (10.0 + 7.0 * sqrt(fl)), 25.0 + fl * 4.0 + 3.0 * sin(t * 0.2 + fl), sin(ga) * (10.0 + 7.0 * sqrt(fl)));
+    J.p = mix(J.p, gp, gw);
+    J.vel = mix(J.vel, vec3f(-sin(ga), 0.05, cos(ga)) * 0.6, gw);
+    let fs = fract(t / 4.5 - fl * 0.02);
+    J.c = mix(J.c, sstep(0.0, 0.22, fs) * sstep(1.0, 0.3, fs), gw);
+  }
   let cam = VW.cam.xyz;
   let d = length(J.p - cam);
   if (length(J.p - VW.anc.xyz) > 1300.0 || !lfVisible(J.p - cam - vec3f(0.0, J.R * 1.5, 0.0), J.R * 4.0)) { return J; }

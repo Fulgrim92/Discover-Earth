@@ -13,8 +13,8 @@
     { "name": "breach_build",    "params": { "realm": 4, "pos": "-20,5,-20", "yaw": 270, "pitch": -2, "enc": "breach", "et": 6.2 } },
     { "name": "breach_peak",     "params": { "realm": 4, "pos": "-20,5,-20", "yaw": 270, "pitch": 3, "enc": "breach", "et": 21.1 } },
     { "name": "breach_close",    "params": { "realm": 4, "pos": "-20,5,-20", "yaw": 270, "pitch": 1, "fov": 22, "enc": "breach", "et": 21.1 } },
-    { "name": "jelly_build",     "params": { "realm": 5, "pos": "0,40,0", "agl": 1, "yaw": 60, "pitch": 6, "enc": "jelly", "et": 10 } },
-    { "name": "jelly_peak",      "params": { "realm": 5, "pos": "0,40,0", "agl": 1, "yaw": 60, "pitch": 6, "enc": "jelly", "et": 35 } },
+    { "name": "jelly_build",     "params": { "realm": 5, "pos": "0,40,0", "agl": 1, "yaw": 60, "pitch": 14, "enc": "jelly", "et": 10 } },
+    { "name": "jelly_peak",      "params": { "realm": 5, "pos": "0,40,0", "agl": 1, "yaw": 60, "pitch": 14, "enc": "jelly", "et": 35 } },
     { "name": "giants_close",    "params": { "realm": 5, "pos": "0,260,0", "agl": 1, "yaw": 60, "pitch": -9, "fov": 26, "enc": "giants", "et": 110 } },
     { "name": "giants_build",    "params": { "realm": 5, "pos": "0,60,0", "agl": 1, "yaw": 60, "pitch": -2, "enc": "giants", "et": 40 } },
     { "name": "giants_peak",     "params": { "realm": 5, "pos": "0,60,0", "agl": 1, "yaw": 60, "pitch": -2, "enc": "giants", "et": 110 } }

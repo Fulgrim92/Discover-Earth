@@ -13,6 +13,8 @@ import CLIP from '../wgsl/clip.wgsl';
 import SKY from '../wgsl/sky.wgsl';
 import LIFE from '../wgsl/life.wgsl';
 import FAUNA from '../wgsl/fauna.wgsl';
+import LFXW from '../wgsl/lifefx.wgsl';
+import { lifeFx, init as lifeInit } from './lifefx.js';
 
 const BIRD_VERTS = 384, JELLY_VERTS = 1488;
 const BIRDS = new Uint16Array([216, 108, 117]);
@@ -20,7 +22,8 @@ let pBird, pMirror, pJelly;
 export const faunaT = { bgl: null };
 
 export function init(ctx) {
-  const mod = shader(CLIP + SKY + LIFE + FAUNA, 'fauna');
+  lifeInit(); // encounter slots (jelly gathering) at group 3 of the jelly pipeline
+  const mod = shader(CLIP + SKY + LIFE + '@group(3) @binding(0) var<uniform> LFX: LifeFx;\n' + LFXW + FAUNA, 'fauna');
   faunaT.bgl = bgl('f', 'lifeT');
   const targets = [{ format: 'rgba16float' }, { format: 'r16float' }];
   pBird = pipeline({ label: 'birds', module: mod, vs: 'vsBird', fs: 'fsBird', layouts: [ctx.bgl0, clip.bgl], targets, samples: ctx.msaa,
@@ -29,7 +32,7 @@ export function init(ctx) {
   const over = { color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' }, alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' } };
   const pre = { color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' }, alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' } };
   pMirror = pipeline({ label: 'bird mirror', module: mod, vs: 'vsBirdMirror', fs: 'fsBirdMirror', layouts: lay, targets: [{ format: 'rgba16float', blend: over }] });
-  pJelly = pipeline({ label: 'jellies', module: mod, vs: 'vsJelly', fs: 'fsJelly', layouts: lay, targets: [{ format: 'rgba16float', blend: pre }] });
+  pJelly = pipeline({ label: 'jellies', module: mod, vs: 'vsJelly', fs: 'fsJelly', layouts: [ctx.bgl0, clip.bgl, faunaT.bgl, lifeFx.bgl], targets: [{ format: 'rgba16float', blend: pre }] });
 }
 
 // opaque pass: birds
@@ -53,7 +56,7 @@ export function draw(ctx, pass, view) {
 export function drawTransparent(ctx, pass, view) {
   const fr = ctx.frame, v2 = F.V2 * 4;
   if (LMAX[v2] > 0.002 && fr[FO.row + F.M4 * 4 + 1] > 0.2) { pass.setPipeline(pMirror); pass.draw(BIRD_VERTS, BIRDS[0], 0, 0); }
-  if (LMAX[v2 + 3] > 0.002) { pass.setPipeline(pJelly); pass.draw(JELLY_VERTS, 25, 0, 3 << 16); }
+  if (LMAX[v2 + 3] > 0.002) { pass.setPipeline(pJelly); pass.setBindGroup(3, lifeFx.bg); pass.draw(JELLY_VERTS, 25, 0, 3 << 16); }
 }
 
 export function anyTransparent(ctx) {
