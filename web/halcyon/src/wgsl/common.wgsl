@@ -26,6 +26,14 @@ const OFF_WATER: u32 = 512u;      // water shading in the composite (composite.w
 const OFF_RINGS: u32 = 1024u;     // rings and their sparks/guide (JS)
 const OFF_DRONE: u32 = 2048u;     // drone body, props, lights, shadow (JS)
 const OFF_MSAA: u32 = 4096u;      // opaque pass without MSAA (JS, at init)
+// terrain diagnostics (not in off=all): each isolates one structural cost of the terrain pass
+const OFF_TMAT: u32 = 8192u;      // constant albedo: no material, strata, realm-branch, coast or weather code
+const OFF_TREALM: u32 = 16384u;   // the camera's realm for every pixel: no per-pixel realmWeights / driftW / row blending
+const OFF_TFLAT: u32 = 32768u;    // terrain fs returns a flat colour at once: raster + vertex cost only
+const OFF_TGEO: u32 = 65536u;     // draw only the five finest clip levels (JS)
+const OFF_TVERT: u32 = 131072u;   // cheapest vertex path: no height fetch or morph (flat grid at y = 0)
+const OFF_SKY: u32 = 262144u;     // flat sky colour in the opaque pass
+const OFF_TGRID: u32 = 524288u;   // half-density terrain grid (112 quads per level side, 2x vertex spacing; JS, at init)
 fn isOff(b: u32) -> bool { return (u32(FR.flags.x) & b) != 0u; }
 struct View {
   vp: mat4x4f,   // projection * view rotation (camera-relative world)

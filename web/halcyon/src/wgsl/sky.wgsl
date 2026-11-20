@@ -353,7 +353,7 @@ struct SkyF { @location(0) c: vec4f, @location(1) d: vec4f }
   let d = viewRay(in.pos.xy);
   let pix = 2.0 * VW.fwd.w * VW.size.w;
   var o: SkyF;
-  o.c = vec4f(skyFull(d, pix), 1.0);
+  if (isOff(OFF_SKY)) { o.c = vec4f(0.4, 0.5, 0.7, 1.0); } else { o.c = vec4f(skyFull(d, pix), 1.0); }
   o.d = vec4f(60000.0, 0.0, 0.0, 1.0);
   return o;
 }

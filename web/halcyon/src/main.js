@@ -83,16 +83,17 @@ P.xrenter = P.xrmock > 0 && (P.shot || P.alloc || num('xrenter', 0) > 0);
 // ---------- ablation (?off=) ----------
 // bit i of Frame.flags = OFF_NAMES[i]; the same bits are named constants OFF_* in wgsl/common.wgsl
 export const OFF_NAMES = ['flora', 'fauna', 'particles', 'tshadow', 'tdetail', 'tao', 'fshadow', 'clouds', 'cloudshadow',
-  'water', 'rings', 'drone', 'msaa'];
+  'water', 'rings', 'drone', 'msaa', 'tmat', 'trealm', 'tflat', 'tgeo', 'tvert', 'sky', 'tgrid'];
+const OFF_ALL = (1 << 13) - 1; // off=all: the original 13 costs (the terrain diagnostic bits below are not costs)
 export const OFF_FLORA = 1, OFF_FAUNA = 2, OFF_PARTICLES = 4, OFF_TSHADOW = 8, OFF_TDETAIL = 16, OFF_TAO = 32,
   OFF_FSHADOW = 64, OFF_CLOUDS = 128, OFF_CLOUDSHADOW = 256, OFF_WATER = 512, OFF_RINGS = 1024, OFF_DRONE = 2048,
-  OFF_MSAA = 4096;
+  OFF_MSAA = 4096, OFF_TGEO = 65536, OFF_TGRID = 524288;
 function parseOff(list) {
   let b = 0;
   for (const w of list.split(',')) {
     const k = w.trim().toLowerCase();
     if (!k) continue;
-    if (k === 'all') { b = (1 << OFF_NAMES.length) - 1; continue; }
+    if (k === 'all') { b |= OFF_ALL; continue; }
     const i = OFF_NAMES.indexOf(k);
     if (i < 0) console.warn('[halcyon] off=: unknown name "' + k + '" (known: ' + OFF_NAMES.join(', ') + ')');
     else b |= 1 << i;
@@ -460,7 +461,7 @@ function prepareFrame() {
   const el = ((rowTmp[s0] + drift * 0.5) * Math.PI) / 180, az = ((rowTmp[s0 + 1] + drift) * Math.PI) / 180;
   fr[FO.sun] = Math.sin(az) * Math.cos(el); fr[FO.sun + 1] = Math.sin(el); fr[FO.sun + 2] = -Math.cos(az) * Math.cos(el); fr[FO.sun + 3] = drift;
   fr[FO.time] = timeS; fr[FO.time + 1] = dt; fr[FO.time + 2] = frameNo; fr[FO.time + 3] = P.quality;
-  fr[FO.flags] = OFF;
+  fr[FO.flags] = OFF; fr[FO.flags + 1] = W_NEAR[2]; // + the camera's nearest realm (trealm ablation)
   if (OFF & OFF_FAUNA) for (let i = 0; i < 4; i++) fr[FO.row + F.V2 * 4 + i] = 0; // no fauna anywhere (incl. jellies)
   const sim = R.sim;
   if (sim) {

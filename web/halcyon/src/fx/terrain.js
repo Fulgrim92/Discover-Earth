@@ -27,7 +27,7 @@ function buildIndices(Gq, hole, dx, dz) {
 
 export function init(ctx) {
   const d = G.device;
-  if (ctx.quality === 0) { GQ = 112; K = 4; }
+  if (ctx.quality === 0 || (ctx.off & 524288)) { GQ = 112; K = 4; } // low quality, or off=tgrid
   ctx.frame[FO.misc] = LEVELS; ctx.frame[FO.misc + 1] = GQ; ctx.frame[FO.misc + 2] = K;
   for (let v = 0; v < 10; v++) {
     const arr = v === 9 ? buildIndices(GQ, false, 0, 0) : buildIndices(GQ, true, (v % 3) - 1, ((v / 3) | 0) - 1);
@@ -77,7 +77,8 @@ export function draw(ctx, pass, view) {
   pass.setPipeline(pTerrain);
   pass.setBindGroup(0, view.bg0);
   pass.setBindGroup(1, clip.bg);
-  for (let i = 0; i < LEVELS; i++) {
+  const nl = ctx.off & 65536 ? 5 : LEVELS; // off=tgeo
+  for (let i = 0; i < nl; i++) {
     const v = variant[i];
     pass.setIndexBuffer(ib[v], 'uint32');
     pass.drawIndexed(ibCount[v], 1, 0, 0, i);
