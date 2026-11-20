@@ -500,13 +500,18 @@ struct FOut { @location(0) c: vec4f, @location(1) d: vec4f }
     let rim = sstep(5.3, 5.7, ring) * sstep(6.3, 5.9, ring);
     let spots = sstep(0.55, 0.8, vn(vec2f(u * 26.0, ring * 3.0), 850u)) * sstep(6.0, 7.0, ring);
     let vein = sstep(0.8, 0.98, sin(u * 6.2832 * 5.0 + ring * 0.7)) * sstep(3.0, 1.0, ring);
+    // fungal flesh: radial fibres and blotches on the cap, darker toward its crown (no flat fill)
+    let fib = 0.5 + 0.5 * sin(u * 6.2832 * 90.0 + vn(vec2f(u * 20.0, ring * 2.0), 852u) * 3.0);
+    let blot = vn(vec2f(u * 8.0, ring * 1.5), 853u);
+    alb = alb * (0.55 + 0.5 * fib) * (0.75 + 0.5 * blot) * mix(1.0, 0.6, sstep(6.5, 8.0, ring));
+    ao = mix(0.35, 1.0, sstep(0.5, 3.0, ring)) * mix(1.0, 0.5, under);
     // light lives in the gills under the cap (fine lamellae) and in a few soft photophores; the flesh is dim
     let lam = 0.5 + 0.5 * sin(u * 6.2832 * 64.0);
     emis = in.emis * (under * (0.4 + 0.6 * gill) * (0.6 + 0.4 * lam) * 3.2 + rim * 0.35 + spots * 0.7 + vein * 0.25 + 0.02);
     // translucent cap: the gill glow shows through toward the rim and at grazing angles
     let fr = pow(1.0 - abs(dot(n, V)), 2.5);
     // translucent cap flesh: the gill light scatters through the thin margin, softly, wider at grazing angles
-    emis += in.emis * sstep(4.8, 6.0, ring) * sstep(7.4, 6.2, ring) * (0.08 + 0.45 * fr);
+    emis += in.emis * sstep(5.0, 5.5, ring) * sstep(6.3, 5.7, ring) * (0.04 + 0.3 * fr);
   } else if (kind == K_CROWN) {
     // leaf clusters: high-frequency normal noise and dark gaps
     // (trig lumps, not value noise: the fragment stays cheap)
