@@ -405,6 +405,9 @@ fn realmTone(id: i32) -> vec3f {
   return mix(a, b, sat(s7.w * 4.0) * 0.6);
 }
 fn veilAt(p: vec3f, tm: f32) -> vec4f {
+  // outside the Drift zones (almost everywhere) one fetch of the baked zone weight is all a sample costs
+  let uv = csmUV(p.xz);
+  if (csmIn(uv) && textureSampleLevel(csmT, atmoS, uv, 0.0).z < 0.015) { return vec4f(0.0); }
   let rw = realmWeights(p.xz);
   let z = sat(2.0 * (1.0 - dot(rw.w, rw.w)));
   if (z < 0.02) { return vec4f(0.0); }

@@ -21,7 +21,7 @@ fn cloudUp(pix: vec2f, dist: f32) -> CUp {
   let ic = vec2i(floor(pix / S));
   var o: CUp;
   o.front = vec4f(0.0); o.refl = vec4f(0.0);
-  var ws = 0.0; var best = 1e9;
+  var ws = 0.0; var wr = 0.0; var best = 1e9;
   var nf = vec4f(0.0); var nr = vec4f(0.0);
   for (var k = 0; k < 9; k++) {
     let off = vec2i(k % 3 - 1, k / 3 - 1);
@@ -32,11 +32,16 @@ fn cloudUp(pix: vec2f, dist: f32) -> CUp {
     let rel = abs(dq - dist) / max(min(dq, dist), 1.0);
     let wd = 1.0 - sstep(0.08, 0.45, rel);
     let w = wb * wd * wd;
+    // the mirrored clouds hardly depend on how far the water is: along grazing water the depth of neighbouring
+    // rows differs a lot, and the depth weight made the reflection nearest-neighbour blocky (Aurora Ice); only a
+    // jump to land or sky rejects a tap here
+    let wrf = wb * (1.0 - sstep(0.7, 3.0, rel));
     let cf = textureLoad(cloudT, q, 0); let cr = textureLoad(cloudR, q, 0);
-    o.front += cf * w; o.refl += cr * w; ws += w;
+    o.front += cf * w; o.refl += cr * wrf; ws += w; wr += wrf;
     if (rel < best) { best = rel; nf = cf; nr = cr; }
   }
-  if (ws < 0.01) { o.front = nf; o.refl = nr; } else { o.front /= ws; o.refl /= ws; }
+  if (ws < 0.01) { o.front = nf; } else { o.front /= ws; }
+  if (wr < 0.01) { o.refl = nr; } else { o.refl /= wr; }
   return o;
 }
 
