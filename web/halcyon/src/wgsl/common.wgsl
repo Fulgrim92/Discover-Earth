@@ -10,7 +10,9 @@ struct Frame {
   row: array<vec4f, ROW>, // realm row blended at the camera
   flags: vec4f,  // x: ablation bits OFF_* (bench ?off=..., 0 in normal play), yz: cloud-shadow map texel-0 x, z,
                  // w: its texel size (fx/atmo.js; 0 = not baked yet)
-  sky: vec4f,    // x: time of day 0..1, y: star-field turn (rad), z: accumulated sun motion (deg, for re-bakes)
+  sky: vec4f,    // x: time of day 0..1, y: star-field turn (rad), z: accumulated sun motion (deg, for re-bakes),
+                 // w: visible precipitation at the camera 0..1 (weather.js)
+  wx: vec4f,     // xyz: camera velocity (m/s), w: precipitation kind at the camera (0 rain, 1 virga, 2 snow, 3 spores)
 }
 
 // Ablation bits (URL ?off=flora,fauna,...; main.js OFF_NAMES). A set bit switches that cost off: draws are skipped
@@ -29,6 +31,7 @@ const OFF_RINGS: u32 = 1024u;     // rings and their sparks/guide (JS)
 const OFF_DRONE: u32 = 2048u;     // drone body, props, lights, shadow (JS)
 const OFF_MSAA: u32 = 4096u;      // opaque pass without MSAA (JS, at init)
 const OFF_VEIL: u32 = 1048576u;     // the Drift veil in the cloud pass (clouds.wgsl veilMarch)
+const OFF_RAIN: u32 = 4194304u;    // rain shafts, lightning and the rain around the camera (clouds, composite)
 const OFF_ATMO: u32 = 2097152u;    // the per-frame atmosphere LUT bake: baked once, then frozen (fx/atmo.js)
 fn isOff(b: u32) -> bool { return (u32(FR.flags.x) & b) != 0u; }
 struct View {
@@ -252,6 +255,7 @@ struct CloudU {
   misc: vec4f, // half-res w, h, 1/w, 1/h
   camId: vec4f, // realm ids blended at the camera (-1 = none)
   camW: vec4f,  // their weights
+  bolt: vec4f,  // lightning: x, z, intensity (0 none), seconds into the flash (weather.js)
 }
 
 // Sun transmittance through the clouds at world point p: one fetch of the baked cloud-shadow map (fx/atmo.js) at
@@ -327,4 +331,43 @@ fn keyLight(s0: vec4f, s1: vec4f, s8: vec4f, drift: f32) -> KL {
   o.dir = normalize(sd * ws + md * wm);
   o.col = sc + mc;
   return o;
+}
+
+// ---- weather (sky programmer, DESIGN 12.1; mirrored in weather.js) ----
+// One deterministic field drifting with the wind: wxCell > 0.28 is a rain squall, < -0.22 clear sky, between them
+// building cumulus; fog banks have their own slower field. What falls depends on the realm (wxLiquid: rain on the
+// ground; wxPrecip: what you see fall; wxKind: 0 rain, 1 virga, 2 snow, 3 spores).
+// WX_OFS places the field so every realm's curated views are fair at t = 20 s (the captures), squalls nearby
+const WX_OFS: vec2f = vec2f(-12644.0, 110304.0);
+fn wxCell(xz: vec2f) -> f32 {
+  let q = xz - CLOUD_WIND * FR.time.x + WX_OFS;
+  return vn(q * (1.0 / 6500.0), 720u) * 0.65 + vn(q * (1.0 / 2300.0), 721u) * 0.35;
+}
+fn wxStorm(n: f32) -> f32 { return sstep(0.28, 0.58, n); }
+fn wxClear(n: f32) -> f32 { return sstep(0.22, 0.52, -n); }
+fn wxFogBank(xz: vec2f) -> f32 {
+  let q = xz - CLOUD_WIND * 0.5 * FR.time.x;
+  return sstep(0.3, 0.62, vn(q * (1.0 / 5200.0) + vec2f(40.0, -7.0), 730u));
+}
+fn wxLiquid(id: i32) -> f32 { return select(select(select(0.0, 0.85, id == 3), 0.55, id == 2), 1.0, id == 0); }
+fn wxPrecip(id: i32) -> f32 { return select(select(select(0.7, 0.85, id == 3 || id == 4), 0.55, id == 2), 1.0, id == 0); }
+fn wxKind(id: i32) -> i32 { return select(select(select(0, 3, id == 5), 2, id == 4), 1, id == 1); }
+// Rain intensity 0..1 falling on the ground at xz (terrain-art: wet ground; 0 where it snows or nothing falls)
+fn rainAtW(xz: vec2f, rw: RWt) -> f32 {
+  let s = wxStorm(wxCell(xz));
+  if (s <= 0.0) { return 0.0; }
+  var a = 0.0;
+  for (var i = 0; i < 4; i++) { if (rw.id[i] >= 0) { a += rw.w[i] * wxLiquid(rw.id[i]); } }
+  return s * a;
+}
+fn rainAt(xz: vec2f) -> f32 {
+  if (wxStorm(wxCell(xz)) <= 0.0) { return 0.0; }
+  return rainAtW(xz, realmWeights(xz));
+}
+// Wetness 0..1: rain now or in the last ~10 minutes (the squall has moved on downwind; puddles dry slowly)
+fn wetAtW(xz: vec2f, rw: RWt) -> f32 {
+  let w0 = rainAtW(xz, rw);
+  let w1 = rainAtW(xz + CLOUD_WIND * 240.0, rw) * 0.8;
+  let w2 = rainAtW(xz + CLOUD_WIND * 600.0, rw) * 0.45;
+  return max(w0, max(w1, w2));
 }

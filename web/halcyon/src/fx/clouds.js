@@ -7,6 +7,7 @@
 // 16 density probe at the camera realm's mid-layer.
 // Zero per-frame allocations: descriptors, bind groups and the uniform block are built here once.
 import { G, fail, shader, bgl, bindGroup, tex, buffer, pipeline, tsBoth, TS_CLOUDS, TS_WEATHER } from '../gpu.js';
+import { WX_BOLT } from '../weather.js';
 import { clip } from './clipmap.js';
 import { TABLE, ROWF, F, NREALM, realmWeightsA, W_IN, W_ID, W_W } from '../realms.js';
 import CLIP from '../wgsl/clip.wgsl';
@@ -21,7 +22,7 @@ export const clouds = { view: null, reflView: null, distView: null, w: 1, h: 1 }
 const U = GPUTextureUsage;
 let pMarch, blMarch, bgMarch = null, pWeather, bgWeather, cuBuf, wxV, wyV, baseV, detV, marchDesc, wxDesc;
 let WN = 512, WTEX = 128;
-const CU = new Float32Array(24);
+const CU = new Float32Array(28);
 
 function layout(entries, label) { return G.device.createBindGroupLayout({ entries, label }); }
 const CS = () => GPUShaderStage.COMPUTE;
@@ -44,7 +45,7 @@ export function init(ctx) {
   if (hi <= lo) { lo = 0; hi = 0; }
   if (shi <= slo) { slo = 0; shi = 0; }
   CU[4] = lo; CU[5] = hi; CU[6] = slo; CU[7] = shi;
-  cuBuf = buffer(96, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'cloudU');
+  cuBuf = buffer(112, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'cloudU');
 
   // ---- noise textures, baked once ----
   const base = tex(BASE_N, BASE_N, 'rgba8unorm', U.STORAGE_BINDING | U.TEXTURE_BINDING, { layers: BASE_N, dim: '3d', mips: BASE_MIPS, label: 'cloudBase' });
@@ -130,6 +131,7 @@ export function prepare(view) {
   // W_IN + realmWeightsA: passing the doubles as arguments would box them every frame
   W_IN[0] = d[32]; W_IN[1] = d[34]; realmWeightsA();
   for (let i = 0; i < 4; i++) { CU[16 + i] = W_ID[i]; CU[20 + i] = W_W[i]; }
+  CU.set(WX_BOLT, 24); // lightning (weather.js, set in prepareFrame)
   G.queue.writeBuffer(cuBuf, 0, CU);
 }
 

@@ -1,0 +1,10 @@
+{
+  "defaults": { "w": 1920, "h": 1080, "t": 20, "hud": 0, "fov": 70 },
+  "shots": [
+    { "name": "wx_home_squall_rainbow", "params": { "realm": 0, "t": 960, "pos": "-5422,120,2936", "agl": 1, "yaw": 68, "pitch": 10 } },
+    { "name": "wx_home_in_rain",        "params": { "realm": 0, "t": 960, "pos": "-1250,12,1250", "agl": 1, "yaw": 68, "pitch": 4 } },
+    { "name": "wx_ice_snow_shower",     "params": { "realm": 4, "t": 1980, "pos": "3828,150,-1314", "agl": 1, "yaw": 68, "pitch": 6 } },
+    { "name": "wx_ice_in_snow",         "params": { "realm": 4, "t": 1980, "pos": "8000,12,-3000", "agl": 1, "yaw": 68, "pitch": 3 } },
+    { "name": "wx_lumen_spores",        "params": { "realm": 5, "t": 1260, "pos": "11229,150,-6039", "agl": 1, "yaw": 250, "pitch": 6 } }
+  ]
+}
