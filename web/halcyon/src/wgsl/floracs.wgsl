@@ -31,5 +31,5 @@
   FI[o] = vec4f(I.p, I.fade);
   FI[o + 1u] = vec4f(I.g, I2.sh, I.cell);
   FI[o + 2u] = vec4f(I.alb, I.d);
-  FI[o + 3u] = vec4f(bitcast<f32>(I.kind), bitcast<f32>(I.h), I.x, 0.0);
+  FI[o + 3u] = vec4f(bitcast<f32>(I.kind), bitcast<f32>(I.h), I.x, I.hy);
 }

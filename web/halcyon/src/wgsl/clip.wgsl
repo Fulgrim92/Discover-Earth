@@ -3,6 +3,8 @@
 @group(1) @binding(1) var clipA: texture_2d_array<f32>;
 @group(1) @binding(2) var clipB: texture_2d_array<f32>;
 @group(1) @binding(3) var clipSm: sampler;
+@group(1) @binding(4) var clipSh: texture_2d_array<f32>; // shade: sun shadow, sky visibility, nL, nM (bake.wgsl)
+fn clipSH(i: u32, p: vec2f) -> vec4f { return textureSampleLevel(clipSh, clipSm, clipUV(i, p), i, 0.0); }
 
 fn nLevels() -> u32 { return u32(FR.misc.x); }
 
