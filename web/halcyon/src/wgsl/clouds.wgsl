@@ -303,6 +303,9 @@ fn marchAll(ro: vec3f, d: vec3f, tmax: f32, n: i32, nl: i32, jit: f32) -> vec4f 
   var ms: MS;
   gCLok = false;
   ms.scat = vec3f(0.0); ms.T = 1.0; ms.tw = 0.0; ms.ww = 0.0; ms.nd = 0; ms.it = 0; ms.cap = n;
+  // a nearly transparent deck (Aurora Ice's veil of cloud) never turns a ray opaque: it would spend the whole budget
+  // on clouds that barely show, so the budget follows the camera realm's cloud opacity
+  ms.cap = max(i32(f32(n) * mix(0.45, 1.0, sstep(0.03, 0.4, rowv(C0).w))), 8);
   let maxD = min(tmax, CU.q.z);
   let sS = slab(ro, d, CU.slab.z, CU.slab.w, min(maxD, 9000.0));
   let sM = slab(ro, d, CU.slab.x, CU.slab.y, maxD);
@@ -395,7 +398,8 @@ struct CF { @location(0) front: vec4f, @location(1) refl: vec4f, @location(2) di
 // ---- the veil (DESIGN 11.1): thin luminous mist in the middle of a Drift, carrying both realms' colours ----
 // Densest where two realms weigh the same (1 - sum w^2), hugging the ground with a faint tall tail so that from
 // outside the zone it reads as a soft glowing seam of weather between the worlds. Each realm's colour (its sunward
-// horizon tone and its night light) shows in slow drifting tongues. 10 samples, densest near the camera.
+// horizon tone and its night light) shows in slow drifting tongues. 8 samples, densest near the camera, only on
+// rays that meet a zone.
 const VEIL_D: f32 = 0.0008;      // extinction per m at the heart of a Drift, at the ground
 fn realmTone(id: i32) -> vec3f {
   let s4 = RT[u32(id) * ROW + S4].rgb;
@@ -404,17 +408,26 @@ fn realmTone(id: i32) -> vec3f {
   let b = s7.rgb / max(luma(s7.rgb), 1e-4);
   return mix(a, b, sat(s7.w * 4.0) * 0.6);
 }
-fn veilAt(p: vec3f, tm: f32) -> vec4f {
-  // outside the Drift zones (almost everywhere) one fetch of the baked zone weight is all a sample costs
-  let uv = csmUV(p.xz);
-  if (csmIn(uv) && textureSampleLevel(csmT, atmoS, uv, 0.0).z < 0.015) { return vec4f(0.0); }
-  let rw = realmWeights(p.xz);
-  let z = sat(2.0 * (1.0 - dot(rw.w, rw.w)));
-  if (z < 0.02) { return vec4f(0.0); }
+// the baked Drift zone weight (fx/atmo.js cloud-shadow map .z), or the realm blend itself beyond the map
+fn veilZone(xz: vec2f) -> f32 {
+  let uv = csmUV(xz);
+  if (csmIn(uv)) { return textureSampleLevel(csmT, atmoS, uv, 0.0).z; }
+  let rw = realmWeights(xz);
+  return sat(2.0 * (1.0 - dot(rw.w, rw.w)));
+}
+// density only (per m): the zone weight from the map, drifting noise, hugging the ground
+fn veilDens(p: vec3f, tm: f32) -> f32 {
+  let z = veilZone(p.xz);
+  if (z < 0.02) { return 0.0; }
   let q = p.xz * (1.0 / 380.0) + vec2f(tm * 0.011, -tm * 0.007);
   let n = fbm(q, 3, 640u) * 0.5 + 0.5;
   let ha = max(p.y - heightAny(p.xz), 0.0);
-  let dens = VEIL_D * z * z * (0.3 + 0.7 * n) * (exp(-ha / 160.0) + 0.12 * exp(-ha / 900.0));
+  return VEIL_D * z * z * (0.3 + 0.7 * n) * (exp(-ha / 160.0) + 0.12 * exp(-ha / 900.0));
+}
+// the realms' colours in slow tongues, once per ray at its densest sample
+fn veilTone(p: vec3f, tm: f32) -> vec3f {
+  let rw = realmWeights(p.xz);
+  let q = p.xz * (1.0 / 380.0) + vec2f(tm * 0.011, -tm * 0.007);
   let n2 = fbm(q * 2.3 + 11.0, 2, 641u);
   var col = vec3f(0.0); var ws = 0.0;
   for (var i = 0; i < 4; i++) {
@@ -422,28 +435,37 @@ fn veilAt(p: vec3f, tm: f32) -> vec4f {
     let w = pow(rw.w[i], 1.0 + 2.0 * sat(0.5 + n2 * select(1.0, -1.0, (i & 1) == 1)));
     col += realmTone(rw.id[i]) * w; ws += w;
   }
-  return vec4f(col / max(ws, 1e-4), dens);
+  return col / max(ws, 1e-4);
 }
 fn veilMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
   if (isOff(OFF_VEIL)) { return vec4f(0.0); } // ablation (common.wgsl)
   let tEnd = min(tmax, 9000.0);
-  let N = 10;
-  var T = 1.0; var acc = vec3f(0.0);
+  // outside the Drift zones (nearly every ray): four fetches of the baked zone weight along the ray, then nothing
+  var zm = veilZone(ro.xz);
+  zm = max(zm, veilZone(ro.xz + d.xz * (tEnd * 0.3)));
+  zm = max(zm, veilZone(ro.xz + d.xz * (tEnd * 0.62)));
+  zm = max(zm, veilZone(ro.xz + d.xz * tEnd));
+  if (zm < 0.015) { return vec4f(0.0); }
+  let N = 8;
+  var T = 1.0; var acc = 0.0;
   let tm = FR.time.x;
-  let sc = luma(sunCol());
-  let ph = hg(dot(d, FR.sun.xyz), 0.6) * 4.0 * PI;
-  // it glows a little above the light around it: sky light, key light (forward scattered) and its own shine
-  let lit = luma(mix(rowv(S3).rgb, rowv(S2).rgb, 0.5)) * 1.3 + sc * (0.05 + 0.04 * ph);
-  var t0 = 0.0;
+  var t0 = 0.0; var best = -1.0; var bt = 0.0;
   for (var i = 0; i < N; i++) {
     let u = f32(i + 1) / f32(N);
     let t1 = tEnd * u * u;
-    let v = veilAt(ro + d * mix(t0, t1, jit), tm);
-    if (v.a > 0.0) {
-      let a = 1.0 - exp(-v.a * (t1 - t0));
-      acc += T * v.rgb * lit * a; T *= 1.0 - a;
+    let tm1 = mix(t0, t1, jit);
+    let dn = veilDens(ro + d * tm1, tm);
+    if (dn > 0.0) {
+      let a = 1.0 - exp(-dn * (t1 - t0));
+      acc += T * a; T *= 1.0 - a;
+      if (dn > best) { best = dn; bt = tm1; }
     }
     t0 = t1;
   }
-  return vec4f(acc, 1.0 - T);
+  if (best <= 0.0) { return vec4f(0.0); }
+  // it glows a little above the light around it: sky light, key light (forward scattered) and its own shine
+  let sc = luma(sunCol());
+  let ph = hg(dot(d, FR.sun.xyz), 0.6) * 4.0 * PI;
+  let lit = luma(mix(rowv(S3).rgb, rowv(S2).rgb, 0.5)) * 1.3 + sc * (0.05 + 0.04 * ph);
+  return vec4f(veilTone(ro + d * bt, tm) * lit * acc, 1.0 - T);
 }
