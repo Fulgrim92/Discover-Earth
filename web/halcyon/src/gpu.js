@@ -40,10 +40,10 @@ export async function initDevice(opts) {
 // Each timed pass names a slot in TS_PASSES. Modules put tsBoth/tsBegin/tsEnd(slot) into their pass descriptors
 // at init (undefined when the feature is missing, which WebGPU treats as absent). The objects are mutated in place
 // by setTimerBase() before each view, so no descriptor is rebuilt per frame. perf.js resolves and reads them back.
-export const TS_BAKE = 0, TS_OPAQUE = 1, TS_CLOUDS = 2, TS_COMPOSITE = 3, TS_FX = 4, TS_BLOOM = 5, TS_FINAL = 6, TS_N = 7;
-export const TS_PASSES = ['bake', 'opaque', 'clouds', 'composite', 'fx', 'bloom', 'final'];
+export const TS_BAKE = 0, TS_OPAQUE = 1, TS_CLOUDS = 2, TS_COMPOSITE = 3, TS_FX = 4, TS_BLOOM = 5, TS_FINAL = 6, TS_LIFE = 7, TS_N = 8;
+export const TS_PASSES = ['bake', 'opaque', 'clouds', 'composite', 'fx', 'bloom', 'final', 'life'];
 export const TS_SLOTS = 32;                 // frames in the query ring
-export const TS_PER_FRAME = 32;             // passes x (begin, end) x 2 views = 28, padded: resolve offsets must be 256-byte aligned
+export const TS_PER_FRAME = 32;             // passes x (begin, end) x 2 views = 32 (keep <= 32 or grow it in 256-byte steps): resolve offsets must be 256-byte aligned
 export const TS = { set: null, both: [], begin: [], end: [] };
 
 function initTimestamps() {

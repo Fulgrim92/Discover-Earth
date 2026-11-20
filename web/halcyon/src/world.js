@@ -87,9 +87,51 @@ function cellPt(ci, cj, s) {
   CP[0] = (ci + 0.2 + 0.6 * (hu8(ci, cj, s) * (1 / 16777216))) * cell;
   CP[1] = (cj + 0.2 + 0.6 * (hu8(ci, cj, s + 1) * (1 / 16777216))) * cell;
 }
+// strata surface offset (terrfn.wgsl strataTilt). Inlined in heightCore; this wrapper is for other callers.
+export function strataTilt(px, py) {
+  return 0.035 * (px * 0.83 + py * 0.55) + 80 * (NI[0] = px * (1 / 1900), NI[1] = py * (1 / 1900), vnoised(34), N3[0]) + 18 * (NI[0] = px * (1 / 560), NI[1] = py * (1 / 560), vnoised(35), N3[0]);
+}
+// pillar cluster strength (terrfn.wgsl pillarCluster): PC = [qx, qy] -> PC[2]
+const PC = new Float64Array(3);
+function pillarCluster() {
+  const qx = PC[0], qy = PC[1];
+  const a = (NI[0] = qx * (1 / 760), NI[1] = qy * (1 / 760), vnoised(140), N3[0]) + 0.5 * (NI[0] = qx * (1 / 270), NI[1] = qy * (1 / 270), vnoised(141), N3[0]);
+  const rg = 1 - Math.abs((NI[0] = qx * (1 / 1300) + 4.1, NI[1] = qy * (1 / 1300) + 2.7, vnoised(142), N3[0]));
+  PC[2] = Math.max((SX[2] = a, SX[0] = 0.05, SX[1] = 0.5, sstepA(), SX[3]), (SX[2] = rg, SX[0] = 0.86, SX[1] = 0.97, sstepA(), SX[3]) * (SX[2] = a, SX[0] = -0.45, SX[1] = -0.1, sstepA(), SX[3]) * 0.8);
+}
+// rounded tree crowns (terrfn.wgsl crowns): CR = [px, py] -> CR[2]
+const CR = new Float64Array(3);
+function crowns() {
+  const px = CR[0], py = CR[1];
+  const c = 5.5;
+  const gx = Math.floor(px / c), gy = Math.floor(py / c);
+  let m = 0;
+  for (let j = -1; j <= 1; j++) {
+    for (let i = -1; i <= 1; i++) {
+      const ci = gx + i, cj = gy + j;
+      CP[2] = c; cellPt(ci, cj, 160);
+      const r = c * (0.62 + 0.35 * (hu8(ci, cj, 162) * (1 / 16777216)));
+      const d = Math.sqrt((px - CP[0]) * (px - CP[0]) + (py - CP[1]) * (py - CP[1])) / r;
+      const k = Math.max(0, 1 - d * d);
+      m = Math.max(m, Math.sqrt(k) * (2.2 + 2.6 * (hu8(ci, cj, 163) * (1 / 16777216))));
+    }
+  }
+  CR[2] = m;
+}
+// hexagon frame distance (terrfn.wgsl hexD): HX = [vx, vy] -> HX[2]
+const HX = new Float64Array(3);
+function hexD(ci, cj) {
+  const vx = HX[0], vy = HX[1];
+  let ux = (hu8(ci, cj, 97) * (1 / 16777216)) - 0.5 + 1e-3, uy = (hu8(ci, cj, 98) * (1 / 16777216)) - 0.5;
+  const ul = Math.sqrt(ux * ux + uy * uy); ux /= ul; uy /= ul;
+  const ax = Math.abs(vx * ux + vy * uy), ay = Math.abs(vy * ux - vx * uy);
+  HX[2] = Math.max(ax * 0.8660254 + ay * 0.5, ay) * 1.1547005;
+}
+
 // Terrain height (m) at world (x, z). Matches the GPU bake to centimetres.
 // heightCore: (HQ[0], HQ[1]) -> HQ[2], split into per-feature sections so each stays small enough for V8 to
-// inline its helpers (one huge function ran out of inlining budget and boxed every sstep/len result); heightAt is the convenient (boxing) wrapper for cold callers.
+// inline its helpers (one huge function ran out of inlining budget and boxed every sstep/len result); heightAt is
+// the convenient (boxing) wrapper for cold callers.
 const HQ = new Float64Array(4); // x, z -> height; [3] = base noise hn for the sections
 export function heightAt(x, z) { HQ[0] = x; HQ[1] = z; heightCore(); return HQ[2]; }
 function sec16() {
@@ -98,22 +140,40 @@ function sec16() {
   if (T[16] > 0.001) {
     const cell = T[17];
     const gx = Math.floor(px / cell), gy = Math.floor(py / cell);
-    const wob = 0.1 * (NI[0] = px * (1 / 13), NI[1] = py * (1 / 13), vnoised(61), N3[0]) + 0.06 * (NI[0] = px * (1 / 4.5), NI[1] = py * (1 / 4.5), vnoised(62), N3[0]);
-    let best = 0, bm = 0;
+    const wob = 0.05 * (NI[0] = px * (1 / 13), NI[1] = py * (1 / 13), vnoised(61), N3[0]) + 0.03 * (NI[0] = px * (1 / 4.5), NI[1] = py * (1 / 4.5), vnoised(62), N3[0]);
+    let best = 0, bf1 = 0;
     for (let j = -1; j <= 1; j++) {
       for (let i = -1; i <= 1; i++) {
         const ci = gx + i, cj = gy + j;
-        if ((hu8(ci, cj, 63) * (1 / 16777216)) > 0.62) continue;
         CP[2] = cell; cellPt(ci, cj, 64);
-        const r = T[19] * cell * (0.5 + 0.5 * (hu8(ci, cj, 66) * (1 / 16777216)));
-        const d = Math.sqrt((px - CP[0]) * (px - CP[0]) + (py - CP[1]) * (py - CP[1])) / r + wob;
-        const ht = T[18] * (0.35 + 0.65 * (hu8(ci, cj, 67) * (1 / 16777216)));
-        const m = (SX[2] = d, SX[0] = 1, SX[1] = 0.9, sstepA(), SX[3]);
-        const fq = ht * 0.013 + d * 3; const v = m * ht * (1 - 0.06 * (SX[2] = d, SX[0] = 0.55, SX[1] = 0.95, sstepA(), SX[3])) * (1 - 0.1 * (SX[2] = d, SX[0] = 0.7, SX[1] = 0.97, sstepA(), SX[3]) * (SX[2] = fq - Math.floor(fq), SX[0] = 0.3, SX[1] = 0.7, sstepA(), SX[3]));
-        if (v > best) { best = v; bm = m; }
+        const ptx = CP[0], pty = CP[1];
+        const clu = (PC[0] = ptx, PC[1] = pty, pillarCluster(), PC[2]);
+        if ((hu8(ci, cj, 63) * (1 / 16777216)) > 0.04 + 0.9 * clu) continue;
+        const giant = (hu8(ci, cj, 70) * (1 / 16777216)) < 0.07 ? 1.35 : 1;
+        const rb = T[19] * cell * (0.55 + 0.55 * (hu8(ci, cj, 66) * (1 / 16777216))) * (0.8 + 0.3 * clu) * giant;
+        const ht = Math.min(T[18] * (0.25 + 0.75 * clu) * (0.7 + 0.45 * (hu8(ci, cj, 67) * (1 / 16777216))) * giant, rb * 14);
+        const rt = rb - Math.max(rb * (0.15 + 0.25 * (hu8(ci, cj, 68) * (1 / 16777216))), ht * (1 / 45));
+        const lx = ((hu8(ci, cj, 69) * (1 / 16777216)) - 0.5) * 0.7 * (rb - rt), ly = ((hu8(ci, cj, 71) * (1 / 16777216)) - 0.5) * 0.7 * (rb - rt);
+        const dvx = px - ptx, dvy = py - pty;
+        const dl = Math.sqrt(dvx * dvx + dvy * dvy);
+        const dm = Math.max(dl, 1e-3);
+        const dx = dvx / dm, dy = dvy / dm;
+        const flute = 0.045 * (NI[0] = dx * 5 + (ci & 63) * 7, NI[1] = dy * 5 + (cj & 63) * 7, vnoised(72), N3[0]) + 0.02 * (NI[0] = dx * 13, NI[1] = dy * 13, vnoised(73), N3[0]) + wob;
+        const db = dl / rb + flute;
+        if (db >= 1) continue;
+        const dt = Math.sqrt((dvx - lx) * (dvx - lx) + (dvy - ly) * (dvy - ly)) / rt + flute;
+        let f = 1;
+        if (dt > 1) f = (1 - db) / Math.max((1 - db) + (dt - 1), 1e-4);
+        let v = ht * f;
+        const lst = 26 + 10 * (hu8(ci, cj, 74) * (1 / 16777216));
+        const tw = 0.4 * (SX[2] = f, SX[0] = 0.02, SX[1] = 0.3, sstepA(), SX[3]) * (SX[2] = f, SX[0] = 0.995, SX[1] = 0.9, sstepA(), SX[3]);
+        v = (v * (1 - tw) + ((TR[0] = v, TR[1] = lst, TR[2] = 0.6, terrace(), TR[3])) * tw);
+        if (v > best) { best = v; bf1 = f; }
       }
     }
-    const can = bm * (4 + 3 * (NI[0] = px * (1 / 6), NI[1] = py * (1 / 6), vnoised(68), N3[0]) + 2 * (NI[0] = px * (1 / 2.3), NI[1] = py * (1 / 2.3), vnoised(69), N3[0]));
+    const top = (SX[2] = bf1, SX[0] = 0.93, SX[1] = 1, sstepA(), SX[3]) * (SX[2] = best, SX[0] = 1, SX[1] = 20, sstepA(), SX[3]);
+    let can = 0;
+    if (top > 0.001) can = (CR[0] = px, CR[1] = py, crowns(), CR[2]) * top;
     h += T[16] * (best + can);
   }
   HQ[2] = h;
@@ -147,6 +207,13 @@ function sec22() {
       }
     }
     cm *= 1 + 0.14 * (NI[0] = px * (1 / 55), NI[1] = py * (1 / 55), vnoised(76), N3[0]);
+    if (cm > 0.05) {
+      const rqx = px * (1 / 140) + 0.35 * (NI[0] = px * (1 / 330), NI[1] = py * (1 / 330), vnoised(77), N3[0]);
+      const rqy = py * (1 / 140) + 0.35 * (NI[0] = px * (1 / 330) + 5, NI[1] = py * (1 / 330) + 3, vnoised(78), N3[0]);
+      const rg = (NI[0] = rqx, NI[1] = rqy, rfbm(4, 150), FB[0]);
+      cm += (rg - 0.42) * 46 * (SX[2] = cm, SX[0] = 0.5, SX[1] = 70, sstepA(), SX[3]) + 3 * (NI[0] = px * (1 / 17), NI[1] = py * (1 / 17), fbm(2, 155), FB[0]) * (SX[2] = cm, SX[0] = 0.2, SX[1] = 6, sstepA(), SX[3]);
+      cm = Math.max(cm, 0);
+    }
     h += T[22] * cm;
   }
   HQ[2] = h;
@@ -198,11 +265,16 @@ function sec32() {
     for (let j = -1; j <= 1; j++) {
       for (let i = -1; i <= 1; i++) {
         const ci = gx + i, cj = gy + j;
-        if ((hu8(ci, cj, 91) * (1 / 16777216)) > 0.32) continue;
         CP[2] = cell; cellPt(ci, cj, 92);
-        const r = 2.5 + 4.5 * (hu8(ci, cj, 94) * (1 / 16777216));
-        const k = Math.max(0, 1 - Math.sqrt((px - CP[0]) * (px - CP[0]) + (py - CP[1]) * (py - CP[1])) / r);
-        const c = T[34] * (0.3 + 0.7 * (hu8(ci, cj, 95) * (1 / 16777216))) * k * (0.4 + 0.6 * k);
+        const ptx = CP[0], pty = CP[1];
+        const cl = (SX[2] = (NI[0] = ptx * (1 / 420), NI[1] = pty * (1 / 420), vnoised(93), N3[0]), SX[0] = 0.05, SX[1] = 0.45, sstepA(), SX[3]);
+        if ((hu8(ci, cj, 91) * (1 / 16777216)) > 0.03 + 0.75 * cl) continue;
+        const spire = (hu8(ci, cj, 96) * (1 / 16777216)) < 0.12 * cl ? 2 : 1;
+        const r = (2.5 + 4.5 * (hu8(ci, cj, 94) * (1 / 16777216))) * spire;
+        const k = 1 - (HX[0] = px - ptx, HX[1] = py - pty, hexD(ci, cj), HX[2]) / r;
+        if (k <= 0) continue;
+        const H = T[34] * (0.25 + 0.75 * (hu8(ci, cj, 95) * (1 / 16777216))) * (0.4 + 0.6 * cl) * spire * spire;
+        const c = H * Math.min(k * 2.8, 0.7 + (k - 0.25) * 0.4);
         if (c > cm) cm = c;
       }
     }
@@ -218,10 +290,10 @@ function sec28() {
   if (T[28] > 0.001 && glac > 0.001) {
     const ax = px * (1 / 900), ay = py * (1 / 900);
     const cqx = px * (1 / 240) + 0.7 * (NI[0] = ax, NI[1] = ay, vnoised(86), N3[0]), cqy = py * (1 / 240) + 0.7 * (NI[0] = ax + 3, NI[1] = ay + 1, vnoised(87), N3[0]);
-    const c1 = 1 - (SX[2] = Math.abs((NI[0] = cqx, NI[1] = cqy, vnoised(88), N3[0])), SX[0] = 0, SX[1] = 0.06, sstepA(), SX[3]);
-    const c2 = 1 - (SX[2] = Math.abs((NI[0] = cqx * 2.3 + 1.7, NI[1] = cqy * 2.3 + 4.1, vnoised(89), N3[0])), SX[0] = 0, SX[1] = 0.07, sstepA(), SX[3]);
+    const c1 = 1 - (SX[2] = Math.abs((NI[0] = cqx, NI[1] = cqy, vnoised(88), N3[0])), SX[0] = 0, SX[1] = 0.018, sstepA(), SX[3]);
+    const c2 = 1 - (SX[2] = Math.abs((NI[0] = cqx * 2.3 + 1.7, NI[1] = cqy * 2.3 + 4.1, vnoised(89), N3[0])), SX[0] = 0, SX[1] = 0.022, sstepA(), SX[3]);
     const cr = Math.max(c1, c2 * 0.8) * glac;
-    h -= T[28] * cr * 9;
+    h -= T[28] * cr * 14;
   }
   HQ[2] = h;
 }
@@ -235,16 +307,19 @@ function sec30() {
       const cell = 70;
       const gx = Math.floor(px / cell), gy = Math.floor(py / cell);
       let bh = -100;
-      const wob = 0.2 * (NI[0] = px * (1 / 9), NI[1] = py * (1 / 9), vnoised(96), N3[0]);
+      const wob = 0.06 * (NI[0] = px * (1 / 9), NI[1] = py * (1 / 9), vnoised(96), N3[0]);
       for (let j = -1; j <= 1; j++) {
         for (let i = -1; i <= 1; i++) {
           const ci = gx + i, cj = gy + j;
           if ((hu8(ci, cj, 97) * (1 / 16777216)) > 0.3) continue;
           CP[2] = cell; cellPt(ci, cj, 98);
           const r = 9 + 16 * (hu8(ci, cj, 100) * (1 / 16777216));
-          const d = Math.sqrt((px - CP[0]) * (px - CP[0]) + (py - CP[1]) * (py - CP[1])) / r + wob;
-          const b = (SX[2] = d, SX[0] = 1, SX[1] = 0.75, sstepA(), SX[3]);
-          const top = (1.5 + 8 * (hu8(ci, cj, 104) * (1 / 16777216))) * b - 6 * (1 - b);
+          const d = (HX[0] = px - CP[0], HX[1] = py - CP[1], hexD(ci, cj + 7), HX[2]) / r + wob;
+          const tilt = ((px - CP[0]) * ((hu8(ci, cj, 101) * (1 / 16777216)) - 0.5) + (py - CP[1]) * ((hu8(ci, cj, 102) * (1 / 16777216)) - 0.5)) * 0.18;
+          let b = (1 - d) * 3.5; b = b < 0 ? 0 : b > 1 ? 1 : b;
+          const ht = 1.5 + 8 * (hu8(ci, cj, 104) * (1 / 16777216)) + tilt;
+          const shelf = -1.4 - 4 * Math.max(d - 1, 0);
+          const top = ht * b + shelf * (1 - b);
           if (top > bh) bh = top;
         }
       }
@@ -261,21 +336,21 @@ function sec31() {
   if (T[31] > 0.001) {
     const low = (SX[2] = hn, SX[0] = 0.42, SX[1] = 0.22, sstepA(), SX[3]);
     if (low > 0.001) {
-      const cell = 520;
+      const cell = 900;
       const gx = Math.floor(px / cell), gy = Math.floor(py / cell);
       let best = 9;
       for (let j = -1; j <= 1; j++) {
         for (let i = -1; i <= 1; i++) {
           const ci = gx + i, cj = gy + j;
-          if ((hu8(ci, cj, 105) * (1 / 16777216)) > 0.6) continue;
+          if ((hu8(ci, cj, 105) * (1 / 16777216)) > 0.42) continue;
           CP[2] = cell; cellPt(ci, cj, 106);
-          const r = 30 + 60 * (hu8(ci, cj, 108) * (1 / 16777216));
+          const r = 60 + 80 * (hu8(ci, cj, 108) * (1 / 16777216));
           best = Math.min(best, Math.sqrt((px - CP[0]) * (px - CP[0]) + (py - CP[1]) * (py - CP[1])) / r);
         }
       }
       const pm = (SX[2] = best, SX[0] = 1, SX[1] = 0.85, sstepA(), SX[3]);
-      const rim = (SX[2] = best, SX[0] = 1.35, SX[1] = 1, sstepA(), SX[3]) * (SX[2] = best, SX[0] = 0.85, SX[1] = 1, sstepA(), SX[3]);
-      h += T[31] * low * (rim * 0.8 - pm * 2);
+      const rim = (SX[2] = best, SX[0] = 1.3, SX[1] = 1, sstepA(), SX[3]) * (SX[2] = best, SX[0] = 0.85, SX[1] = 1, sstepA(), SX[3]);
+      h += T[31] * low * (rim * 0.6 - pm * 1.5);
     }
   }
   HQ[2] = h;
@@ -303,8 +378,12 @@ function heightCore() {
   h += T[2];
   if (T[35] > 0.001) h += T[35] * (SX[2] = h + 14 * (NI[0] = px * (1 / 260), NI[1] = py * (1 / 260), vnoised(33), N3[0]), SX[0] = -4, SX[1] = 22, sstepA(), SX[3]);
   if (T[12] > 0.001) {
-    const j = 5 * (NI[0] = px * (1 / 170), NI[1] = py * (1 / 170), vnoised(31), N3[0]);
-    h = (h * (1 - T[12]) + ((TR[0] = h + j, TR[1] = T[13], TR[2] = 0.55, terrace(), TR[3]) - j) * T[12]);
+    const j = 0.035 * (px * 0.83 + py * 0.55) + 80 * (NI[0] = px * (1 / 1900), NI[1] = py * (1 / 1900), vnoised(34), N3[0]) + 18 * (NI[0] = px * (1 / 560), NI[1] = py * (1 / 560), vnoised(35), N3[0]);
+    const s1 = h - j;
+    const k = Math.floor(s1 / T[13]);
+    const hs = (TR[0] = s1, TR[1] = T[13], TR[2] = 0.3 + 0.45 * (hu8(k, 17, 33) * (1 / 16777216)), terrace(), TR[3]);
+    const hs2 = (TR[0] = hs, TR[1] = T[13] * 0.29, TR[2] = 0.6, terrace(), TR[3]);
+    h = (h * (1 - T[12]) + ((hs * (1 - 0.45) + hs2 * 0.45) + j) * T[12]);
   }
   if (T[14] > 0.001) {
     const j = 4 * (NI[0] = px * (1 / 90), NI[1] = py * (1 / 90), vnoised(32), N3[0]);

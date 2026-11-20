@@ -1,0 +1,17 @@
+{
+  "defaults": { "w": 960, "h": 540, "t": 20, "hud": 0, "fov": 62 },
+  "shots": [
+    { "name": "meadow_backlit", "params": { "realm": 0, "pos": "300,1.6,-200", "agl": 1, "yaw": 248, "pitch": -6 } },
+    { "name": "flower_drift",   "params": { "realm": 0, "pos": "300,1.2,-200", "agl": 1, "yaw": 120, "pitch": -18 } },
+    { "name": "painted_tussock","params": { "realm": 1, "pos": "0,1.5,0", "agl": 1, "yaw": 140, "pitch": -6 } },
+    { "name": "mirror_flock",   "params": { "realm": 2, "pos": "262,1.7,-688", "yaw": 330, "pitch": 4 } },
+    { "name": "pillar_top",     "params": { "realm": 3, "pos": "-188,7,24", "agl": 1, "yaw": 95, "pitch": -12 } },
+    { "name": "ice_shards",     "params": { "realm": 4, "pos": "-245,1.4,-352", "agl": 1, "yaw": 265, "pitch": -8 } },
+    { "name": "lumen_wide",     "params": { "realm": 5, "pos": "0,4,0", "agl": 1, "yaw": 40, "pitch": 2 } },
+    { "name": "lumen_close",    "params": { "realm": 5, "pos": "0,1.3,0", "agl": 1, "yaw": 80, "pitch": -8 } },
+    { "name": "jellies_giant",  "params": { "realm": 5, "pos": "200,3,-340", "agl": 1, "yaw": 32, "pitch": 16 } },
+    { "name": "meadow_stereo",  "params": { "realm": 0, "pos": "300,1.6,-200", "agl": 1, "yaw": 248, "pitch": -6, "stereo": 1 } },
+    { "name": "meadow_low_q",   "params": { "realm": 0, "pos": "300,1.6,-200", "agl": 1, "yaw": 248, "pitch": -6, "quality": "low" } },
+    { "name": "meadow_mid",     "params": { "realm": 0, "pos": "300,40,-200", "agl": 1, "yaw": 200, "pitch": -22 } }
+  ]
+}

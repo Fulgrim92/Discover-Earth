@@ -17,7 +17,7 @@
 // Debug: dbg=1 no water, 2 terrain albedo, 3 sun shadow, 4 terrain normal, 5 water reflection only, 6 water
 // refraction only, 7 water normal, 8 no fog. staged=1 (+verbose=1) times each pass of a static shot separately.
 import { G, H, fail, initDevice, Unsupported, bgl, bindGroup, tex, buffer, FRAME_FLOATS, VIEW_FLOATS, FO, VO,
-  setTimerBase, tsBoth, TS_BAKE, TS_OPAQUE, TS_CLOUDS, TS_COMPOSITE, TS_FX, TS_BLOOM, TS_FINAL } from './gpu.js';
+  setTimerBase, tsBoth, TS_BAKE, TS_OPAQUE, TS_CLOUDS, TS_COMPOSITE, TS_FX, TS_BLOOM, TS_FINAL, TS_LIFE } from './gpu.js';
 import { TABLE, ROWF, F, realmCentre, CURATED, REALM_NAMES } from './realms.js';
 import { heightAt, heightBatch, blendAtA, W_IN, W_NEAR } from './world.js';
 import { CLK, C_DT, C_TIME, C_FRAME_MS, C_PREV } from './clock.js';
@@ -33,6 +33,9 @@ import { createSim } from './sim/index.js';
 import { createPlayer, simState } from './script.js';
 import * as perf from './perf.js';
 import { startOverlay, showMessage, benchPanel } from './ui.js';
+import * as flora from './fx/flora.js';
+import * as fauna from './fx/fauna.js';
+import * as particles from './fx/particles.js';
 
 export const world = { heightAt, heightBatch, CURATED };
 
@@ -150,6 +153,7 @@ function makeTargets(w, h) {
   composite.bind(ctx, t);
   rings.bind(ctx, t);
   post.bind(ctx, t);
+  particles.bind(ctx, t);
   return t;
 }
 
@@ -253,6 +257,7 @@ async function init() {
   perf.dyn.enabled = P.scale > 0 ? false : P.dynres >= 0 ? P.dynres > 0 : !P.shot && !P.bench && !P.alloc;
   perf.dyn.target = P.target;
   clipmap.init(ctx); terrain.init(ctx); clouds.init(ctx); composite.init(ctx); rings.init(ctx); drone.init(ctx); post.init(ctx);
+  flora.init(ctx); fauna.init(ctx); particles.init(ctx);
   layoutViews();
   initCamera();
 
@@ -349,14 +354,17 @@ function writeView(v) {
 
 // one view: opaque -> clouds -> composite -> effects (drone, rings) -> post into its viewport of `target`.
 // Independent of the canvas: target view, viewport and matrices all come in through `v` and `target`.
+const TSLOT = new Int32Array(1); // this frame's GPU timer slot
 function renderView(v, enc, target, first) {
   writeView(v);
   const p = enc.beginRenderPass(opaqueDesc);
   drone.drawBody(ctx, p, v);
   terrain.draw(ctx, p, v);
+  flora.draw(ctx, p, v); fauna.draw(ctx, p, v);
   p.end();
   clouds.draw(ctx, enc, v);
   composite.draw(ctx, enc, v);
+  if (particles.draw(ctx, enc, v)) perf.markRan(TSLOT[0], TS_LIFE); // fauna's transparent jellies + motes
   rings.pass(ctx, enc, v, drone.drawFx);
   post.draw(ctx, enc, v, target, first);
 }
@@ -383,6 +391,7 @@ function renderFrame(bakeAll) {
   prepareFrame();
   if (R.sim) rings.upload(); // writeBuffer: platform calls stay in renderFrame
   const slot = perf.frameBegin(frameNo, nViews);
+  TSLOT[0] = slot;
   setTimerBase(slot, 0);
   const enc = G.device.createCommandEncoder();
   if (clipmap.update(ctx, enc, cam[0], cam[2], bakeAll) > 0) perf.markRan(slot, TS_BAKE);
@@ -605,8 +614,9 @@ async function stagedFrame() {
   };
   viewFromCam(v);
   writeView(v);
-  await log('opaque', (enc) => { const p = enc.beginRenderPass(opaqueDesc); drone.drawBody(ctx, p, v); terrain.draw(ctx, p, v); p.end(); });
+  await log('opaque', (enc) => { const p = enc.beginRenderPass(opaqueDesc); drone.drawBody(ctx, p, v); terrain.draw(ctx, p, v); flora.draw(ctx, p, v); fauna.draw(ctx, p, v); p.end(); });
   await log('composite', (enc) => composite.draw(ctx, enc, v));
+  await log('particles', (enc) => particles.draw(ctx, enc, v));
   await log('fx', (enc) => rings.pass(ctx, enc, v, drone.drawFx));
   await log('post', (enc) => post.draw(ctx, enc, v, offView, true));
 }

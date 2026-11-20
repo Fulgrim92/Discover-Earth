@@ -142,11 +142,14 @@ function march(st, tx, tz, s, r, cell, clrLo, clrHi, arrive, maxSteps) {
       if (y < need) y = need;
     }
     // gentle climb / descent (<= ~12 deg, so a GPS-mode pilot at sport speed can follow it within 3.5 m/s descent)
-    // where the terrain allows; terrain clearance wins over the slope
+    // where the terrain allows; terrain clearance wins over the slope on the way up. On the way down the slope
+    // limit wins over MAX_CLR: where the ground falls away faster (a cliff, a fjord edge) the line stays high and
+    // descends at 0.3 (GPS Normal: 3 m/s down at 10 m/s, full stick) instead of dropping 45 m to hug the ground.
     const dyMax = 0.21 * s;
     if (y > st.y + dyMax && y - (st.y + dyMax) < 12) y = st.y + dyMax;
     if (y < st.y - dyMax) y = st.y - dyMax;
-    y = clamp(y, g + MIN_CLR, g + MAX_CLR);
+    if (y < g + MIN_CLR) y = g + MIN_CLR;
+    if (y > g + MAX_CLR) y = Math.max(g + MAX_CLR, st.y - 0.3 * s);
     st.x = nx; st.z = nz; st.y = y;
     if (!push(st, nx, nz, r, cell)) return;
   }
