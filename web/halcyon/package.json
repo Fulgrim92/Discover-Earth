@@ -1,0 +1,13 @@
+{
+  "name": "halcyon",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "shot": "node tools/shot.mjs tools/shots/realms.json"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

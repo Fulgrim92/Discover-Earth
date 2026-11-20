@@ -1,0 +1,2 @@
+{ "defaults": { "w": 960, "h": 540, "t": 20, "hud": 0 },
+  "shots": [ { "name": "q_home", "params": { "realm": 0, "pos": "0,60,0", "agl": 1, "yaw": 250, "pitch": -6 } } ] }
