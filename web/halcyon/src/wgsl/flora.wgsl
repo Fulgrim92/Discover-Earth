@@ -175,7 +175,11 @@ fn place(L: u32, li: u32) -> Inst {
     let nM = fbm(p2 * (1.0 / 41.0), 2, 210u);
     let veg = sstep(0.22, 0.08, slope) * sstep(-0.1, 0.4, nM + 0.25) * select(1.0, 0.0, y < 1.0);
     keep = veg * (0.06 + 0.9 * gully(p2));
-    alb = mix(vec3f(0.36, 0.28, 0.13), vec3f(0.22, 0.24, 0.16), lfRand(h, 7u));
+    // sagebrush-like grey-green shrubs (I.x = -1) and dry bunch grass (I.x = -2), measured-range albedos
+    let sage = lfRand(h, 8u) < 0.6;
+    alb = select(mix(vec3f(0.24, 0.2, 0.11), vec3f(0.2, 0.19, 0.12), lfRand(h, 7u)), mix(vec3f(0.13, 0.14, 0.1), vec3f(0.16, 0.16, 0.12), lfRand(h, 7u)), sage);
+    I.x = select(-2.0, -1.0, sage);
+    keep *= 0.55;                                                   // sparse: desert plants keep their distance
   } else if (kind == K_GRASS || kind == K_FLOWER || kind == K_TUFT) {
     let nM = fbm(p2 * (1.0 / 41.0), 2, 210u);
     let rockT = sstep(0.2 + 0.1 * nM, 0.36 + 0.1 * nM, slope);

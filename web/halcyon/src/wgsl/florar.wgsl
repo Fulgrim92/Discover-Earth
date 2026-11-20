@@ -160,6 +160,14 @@ fn widthAt(k: u32, j: u32) -> f32 {
   var s = f32(j) / 3.0;
   var wj = widthAt(kind, j) * W;
   if (j == 3u) { wj = select(0.0, W * 0.8, kind == K_TUFT || kind == K_TUSSOCK); }
+  let dryC = kind == K_TUFT && I.x < 0.0;                         // Painted Range: sage shrub (-1) or bunch grass (-2)
+  if (dryC) {
+    let sage = I.x > -1.5;
+    let pr = select(vec4f(0.35, 0.7, 0.9, 1.0), vec4f(0.55, 1.0, 0.9, 0.5), sage);
+    W = select(0.3 + 0.12 * r3, 0.45 + 0.2 * r3, sage) * min(max(1.0, I.d / 28.0), 2.4) * sizeF;
+    H = select(0.32 + 0.2 * r4, 0.32 + 0.25 * r4, sage) * min(max(1.0, I.d / 28.0), 2.4) * sizeF;
+    wj = pr[j] * W;
+  }
   var y = 0.0;
   var hz = vec2f(0.0);
   var shp = vec4f(0.0);
@@ -197,7 +205,7 @@ fn widthAt(k: u32, j: u32) -> f32 {
   }
   if (kind == K_TUSSOCK) { a2 = mix(alb * 0.6, alb * vec3f(1.15, 1.1, 1.0), s); }
   if (kind == K_TUFT) {
-    a2 = mix(alb * 0.72, alb * select(vec3f(1.25, 1.2, 0.75), vec3f(1.3, 1.25, 1.1), I.x < 0.0), s);
+    a2 = mix(alb * 0.72, alb * select(vec3f(1.25, 1.2, 0.75), vec3f(1.08, 1.06, 1.02), I.x < 0.0), s);
     if (I.x >= 1.0 && b == 0u) {
       // a flower drift seen from afar: blossom colour on the tips of one card
       let code = floor(I.x);
@@ -227,11 +235,14 @@ fn widthAt(k: u32, j: u32) -> f32 {
   o.emis = emis;
   o.wp = pos;
   o.loc = vec2f(wj * 0.5 * sgn, y);
-  if (kind != K_STALK) { o.shp = vec4f(H, W, f32(b), r1); }
+  if (kind != K_STALK) { o.shp = vec4f(H, W, f32(b) + select(0.0, 100.0, dryC && I.x > -1.5), r1); }
   // ambient occlusion low in the sward; tufts deep in a meadow are darker at the root
   // self-shadowing in the sward: the root sits in the shade of its neighbours, more so in dense tall grass
   let ao = mix(select(0.55, 0.3, kind == K_GRASS || kind == K_TUFT), 1.0, sstep(0.0, 0.85, s));
-  o.prm = vec4f(I.sh, ao, tr, I.fade);
+  // on a slope facing away from the sun the ground itself hides it: whatever stands low on it is in shade
+  let gshade = sstep(-0.04, 0.12, dot(gn, FR.sun.xyz));
+  o.prm = vec4f(I.sh * gshade, ao * select(1.0, 0.85, dryC), select(tr, 0.12, dryC), I.fade);
+  if (dryC && I.x < -1.5) { o.kind = K_TUSSOCK; }                 // bunch grass: the fan of fine blades
   o.pos = VW.vp * vec4f(pos - cam, 1.0);
   return o;
 }
@@ -480,9 +491,18 @@ struct FOut { @location(0) c: vec4f, @location(1) d: vec4f }
       let w = 0.42 * (1.0 - yv / top);
       alpha = aaStep(abs(f - 0.5) - w) * aaStep(yv - top) * aaStep(abs(u) - 0.5);
     } else {
-      let sp = abs(sin(u * 3.1416 * 6.0 + in.shp.w * 20.0)) * 0.6 + abs(sin(u * 3.1416 * 13.0 + in.shp.w * 7.0)) * 0.4;
-      let top = 0.35 + 0.6 * pow(sp, 0.7);
-      alpha = aaStep(yv - top) * aaStep(abs(u) - 0.5 * (1.0 - 0.35 * yv));
+      if (in.shp.z >= 100.0) {
+        // sage shrub: a rounded dome with a scalloped, leafy edge and a few gaps between the twigs
+        let q = vec2f(u * 2.0, (yv - 0.42) / 0.58);
+        let a = atan2(q.y, q.x);
+        let edge = 1.0 - 0.09 * abs(sin(a * 7.0 + in.shp.w * 9.0)) - 0.06 * abs(sin(a * 17.0 + in.shp.w * 3.0));
+        let gap = vn(vec2f(u * 9.0, yv * 7.0) + in.shp.w * 13.0, 977u);
+        alpha = aaStep(length(q) - edge) * aaStep(gap - 0.55) * aaStep(-yv);
+      } else {
+        let sp = abs(sin(u * 3.1416 * 6.0 + in.shp.w * 20.0)) * 0.6 + abs(sin(u * 3.1416 * 13.0 + in.shp.w * 7.0)) * 0.4;
+        let top = 0.35 + 0.6 * pow(sp, 0.7);
+        alpha = aaStep(yv - top) * aaStep(abs(u) - 0.5 * (1.0 - 0.35 * yv));
+      }
     }
   } else if (kind == K_FERN || kind == K_VINE) {
     // pinnae: comb of leaflets along the frond
