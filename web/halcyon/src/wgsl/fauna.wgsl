@@ -625,6 +625,24 @@ struct SV { @builtin(position) pos: vec4f, @location(0) wp: vec3f, @location(1) 
     let a = LFX.enc[s1 * 2]; let b = LFX.enc[s1 * 2 + 1];
     let rel = t - b.x;
     let H = a.yw; let dir = lfDir(s1);
+    if (src < 6u && j >= 12u) {
+      // orca wake: foam streaks on the water behind each orca while its back is at the surface
+      let k = f32(src);
+      let f = fract(rel / 7.0 + k * 0.23);
+      let bump = select(0.0, sin(3.1416 * f / 0.4), f < 0.4);
+      if (bump < 0.15) { return o; }
+      let al = rel * 3.5 - 60.0 + (f32((src * 37u) % 11u) - 5.0) * 2.2;
+      let w = f32(j - 12u);
+      let back = 1.5 + w * 2.2;
+      let side = vec2f(-dir.y, dir.x);
+      let c = vec2f(H.x, H.y) + dir * (al - back) + side * (k - 2.0) * 7.0;
+      let co = vec2f(f32(vi & 1u), f32(vi >> 1u)) * 2.0 - 1.0;
+      let len = 1.6 + 0.4 * w; let wid = 0.45 + 0.35 * w;          // the wake widens behind
+      let q = c + dir * co.y * len + side * co.x * wid;
+      o.wp = vec3f(q.x, 0.04, q.y); o.uv = co; o.a = 0.42 * bump * (1.0 - w * 0.2); o.mist = 3.0;
+      o.pos = VW.vp * vec4f(o.wp - VW.cam.xyz, 1.0);
+      return o;
+    }
     if (src < 6u) {
       let k = f32(src);
       let m = floor(rel / 7.0 + k * 0.23 - 0.05);
@@ -662,6 +680,15 @@ struct SV { @builtin(position) pos: vec4f, @location(0) wp: vec3f, @location(1) 
     let B = bird((1u << 16u) | (src - 25u));
     if (B.dv < 0.0) { return o; }
     age = B.dv; P = vec3f(B.p.x, 0.0, B.p.z); S = 0.45;
+    if (j == 15u) {
+      // the dive's ring spreading on the water (flat, thin, fading)
+      if (age > 2.5) { return o; }
+      let co = vec2f(f32(vi & 1u), f32(vi >> 1u)) * 2.0 - 1.0;
+      let R = 0.3 + 1.5 * age;
+      o.wp = vec3f(P.x + co.x * R, 0.03, P.z + co.y * R); o.uv = co; o.a = 0.5 * sstep(2.5, 0.3, age); o.mist = 2.0;
+      o.pos = VW.vp * vec4f(o.wp - VW.cam.xyz, 1.0);
+      return o;
+    }
   }
   let life = select(2.2, 4.0, blow) * select(1.0, 1.3, S > 2.0);
   if (age < 0.0 || age > life) { return o; }
@@ -698,12 +725,14 @@ struct SV { @builtin(position) pos: vec4f, @location(0) wp: vec3f, @location(1) 
   let dist = length(in.wp - cam);
   let sd = textureLoad(sceneDist, vec2i(in.pos.xy), 0).x;
   let vis = clamp((sd - dist) / 1.5, 0.0, 1.0);
-  let a = in.a * (1.0 - r2) * (1.0 - r2) * vis * mix(1.0, 0.6, in.mist);
+  var a = in.a * (1.0 - r2) * (1.0 - r2) * vis * mix(1.0, 0.6, min(in.mist, 1.0));
+  if (in.mist > 1.5 && in.mist < 2.5) { let rr = sqrt(r2); a = in.a * vis * (exp(-pow((rr - 0.86) / 0.06, 2.0)) + 0.4 * exp(-pow((rr - 0.62) / 0.05, 2.0))); }
+  if (in.mist > 2.5) { a = in.a * vis * (1.0 - r2) * (0.6 + 0.4 * sin(in.uv.y * 9.0 + in.uv.x * 3.0)); }
   if (a <= 0.002) { discard; }
   // white water: sun (or moon) light scattered forward and back, plus the sky
   let L = FR.sun.xyz; let V = normalize(cam - in.wp);
   let fwd = pow(max(dot(-V, L), 0.0), 4.0);
-  let c = sunCol() * max(L.y + 0.15, 0.0) * (0.5 + 1.5 * fwd) + lfAmb(1.0, vec3f(0.85, 0.88, 0.9)) * mix(2.2, 1.0, in.mist); // foam is brighter than mist
+  let c = sunCol() * max(L.y + 0.15, 0.0) * (0.5 + 1.5 * fwd) + lfAmb(1.0, vec3f(0.85, 0.88, 0.9)) * mix(2.2, 1.0, min(in.mist, 1.0)); // foam is brighter than mist
   let fg = lfFogT(cam, -V, dist);
   return vec4f(c * a * fg, a);
 }
