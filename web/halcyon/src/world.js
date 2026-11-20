@@ -344,6 +344,10 @@ function sec28() {
     h = h * (1 - ow) + (0.5 + 0.12 * h) * ow;
     const lgw = (SX[2] = fb, SX[0] = -34, SX[1] = -14, sstepA(), SX[3]) * (1 - gF) * (1 - inl) * T[29];
     h = h * (1 - lgw) + Math.min(h, -5 + 0.1 * fb) * lgw;
+    const fqx = px - W_NEAR[0] + 60, fqy = py - W_NEAR[1] - 100, fax = Math.abs(fqx) - 230 > 0 ? Math.abs(fqx) - 230 : 0;
+    const fd = Math.sqrt(fax * fax + fqy * fqy) + 25 * (NI[0] = px * (1 / 120), NI[1] = py * (1 / 120), vnoised(319), N3[0]);
+    const fw = (SX[2] = fd, SX[0] = 175, SX[1] = 90, sstepA(), SX[3]) * T[29];
+    h = h * (1 - fw) + Math.min(h, -18 + 3 * (NI[0] = px * (1 / 90), NI[1] = py * (1 / 90), vnoised(320), N3[0])) * fw;
     const nwx = px * (1 / 1100) + 0.45 * (NI[0] = px * (1 / 2600), NI[1] = py * (1 / 2600), vnoised(312), N3[0]);
     const nwy = py * (1 / 1100) + 0.45 * (NI[0] = px * (1 / 2600) + 7, NI[1] = py * (1 / 2600) + 3, vnoised(313), N3[0]);
     const nr = 1 - Math.abs((NI[0] = nwx, NI[1] = nwy, vnoised(311), N3[0]));
@@ -403,7 +407,7 @@ function sec30() {
           const tilt = ((px - CP[0]) * ((hu8(ci, cj, 101) * (1 / 16777216)) - 0.5) + (py - CP[1]) * ((hu8(ci, cj, 102) * (1 / 16777216)) - 0.5)) * 0.18;
           let b = (1 - d) * 3.5; b = b < 0 ? 0 : b > 1 ? 1 : b;
           const ht = 1 + r * (0.12 + 0.3 * (hu8(ci, cj, 104) * (1 / 16777216))) + tilt;
-          const shelf = -1.4 - 4 * Math.max(d - 1, 0);
+          const shelf = -1.4 - 4 * Math.max(d - 1, 0) - 40 * Math.max(d - 1.25, 0);
           const top = ht * b + shelf * (1 - b);
           if (top > bh) bh = top;
         }

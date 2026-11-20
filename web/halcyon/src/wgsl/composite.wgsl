@@ -201,6 +201,9 @@ struct VO { @builtin(position) pos: vec4f }
       let w0 = bf(rwd, W0); let w1 = bf(rwd, W1); let w2 = bf(rwd, W2);
       let foot = tw * pix / max(-d.y, 0.05);
       var n = waveN(P.xz, w0.w, foot);
+      // splashes, wakes and ripples from living things (fx/lifefx.js; a zero stub until it is wired, see composite.js)
+      let lf = lfWater(P.xz, FR.time.x);
+      n = normalize(n + vec3f(-lf.x, 0.0, -lf.y));
       let V = -d;
       // Mirror Salt: raised polygon rims of salt just under the sheet, seen with a few cm of parallax;
       // the meniscus over each rim breaks the mirror slightly
@@ -250,7 +253,7 @@ struct VO { @builtin(position) pos: vec4f }
       let foamAmt = rowv(G3).w;
       let fz = sstep(1.2, 0.0, depth + 0.3 * vn(P.xz * 0.3 + vec2f(FR.time.x * 0.3, 0.0), 550u));
       let fn1 = sstep(0.1, 0.6, vn(P.xz * 1.7 + vec2f(0.0, FR.time.x * 0.5), 551u) * 0.5 + 0.5 * fz);
-      let foam = fz * fn1 * foamAmt * bf(rw, G3).w;
+      let foam = max(fz * fn1 * foamAmt * bf(rw, G3).w, clamp(lf.z, 0.0, 1.0));
       wcol = mix(wcol, vec3f(0.8) * (sunCol() * 0.25 + mix(rowv(S3).rgb, rowv(S2).rgb, 0.5) * I), foam * 0.6);
       col = mix(wcol, rc, refl * (1.0 - foam));
       if (VW.cam.w == 5.0) { col = rc; }

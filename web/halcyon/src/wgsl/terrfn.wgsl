@@ -314,6 +314,11 @@ fn terrainEval(p: vec2f, t: TP, masks: bool) -> TerrOut {
     h = mix(h, 0.5 + 0.12 * h, ow);
     // proglacial lagoon hugging a calving front
     h = mix(h, min(h, -5.0 + 0.1 * fb), sstep(-34.0, -14.0, fb) * (1.0 - gF) * (1.0 - inl) * t.t7.y);
+    // fjord arm near the realm centre (whales surface here): ~600 x 300 m, 15-21 m deep, running east to the calving
+    // front at its head; a capsule with a noisy shore, carved before the ice so the tongue still ends over it
+    let fq = p - NEAR_SITE - vec2f(-60.0, 100.0);
+    let fd = length(vec2f(max(abs(fq.x) - 230.0, 0.0), fq.y)) + 25.0 * vn(p * (1.0 / 120.0), 319u);
+    h = mix(h, min(h, -18.0 + 3.0 * vn(p * (1.0 / 90.0), 320u)), sstep(175.0, 90.0, fd) * t.t7.y);
     // nunatak ridges: long sharp rock crests that stand 30-60 m out of the ice
     let nw = p * (1.0 / 1100.0) + 0.45 * vec2f(vn(p * (1.0 / 2600.0), 312u), vn(p * (1.0 / 2600.0) + vec2f(7.0, 3.0), 313u));
     let nr = 1.0 - abs(vn(nw, 311u));
@@ -380,7 +385,7 @@ fn terrainEval(p: vec2f, t: TP, masks: bool) -> TerrOut {
           let tilt = dot(p - pt, vec2f(hf(ci, cj, 101u) - 0.5, hf(ci, cj, 102u) - 0.5)) * 0.18;
           let b = clamp((1.0 - d) * 3.5, 0.0, 1.0);
           let ht = 1.0 + r * (0.12 + 0.3 * hf(ci, cj, 104u)) + tilt;
-          let shelf = -1.4 - 4.0 * max(d - 1.0, 0.0);
+          let shelf = -1.4 - 4.0 * max(d - 1.0, 0.0) - 40.0 * max(d - 1.25, 0.0); // then drops to deep water
           let top = ht * b + shelf * (1.0 - b);
           if (top > bh) { bh = top; bmk = select(0.45 * sstep(2.1, 1.0, d), 0.5 + 0.5 * b, d < 1.0); }
         }
@@ -458,6 +463,9 @@ fn terrainEval(p: vec2f, t: TP, masks: bool) -> TerrOut {
   return o;
 }
 
+var<private> NEAR_SITE: vec2f; // nearest realm site of the current terrainAt (site-anchored features)
 fn terrainAt(p: vec2f, masks: bool) -> TerrOut {
-  return terrainEval(p, terrParams(realmWeights(p)), masks);
+  let r = realmWeights(p);
+  NEAR_SITE = r.near.xy;
+  return terrainEval(p, terrParams(r), masks);
 }
