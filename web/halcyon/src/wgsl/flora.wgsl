@@ -66,6 +66,12 @@ fn kindRadius(k: u32) -> f32 {
   }
 }
 
+// terrain mask mA.y = pillar top height / 600 m over the pillar footprint (0 off pillars); canopy rises ~5 m above
+fn onPillarTop(m: f32, y: f32) -> f32 {
+  let top = m * 600.0;
+  return select(0.0, 1.0, top > 1.0 && y > top - 2.5);
+}
+
 fn place(L: u32, li: u32) -> Inst {
   var I: Inst; I.ok = false;
   let la = LA[L]; let lb = LB[L];
@@ -139,7 +145,7 @@ fn place(L: u32, li: u32) -> Inst {
     else { kind = K_TUSSOCK; keep = isl * 0.28 * sstep(0.4, 0.2, slope); alb = mix(vec3f(0.26, 0.2, 0.09), vec3f(0.14, 0.16, 0.06), lfRand(h, 7u)); }
   } else if (kind == K_FERN) {
     I.mA = clipMA(lv, p2);
-    keep = sstep(0.42, 0.25, slope) * mix(0.55, 0.9, sstep(0.97, 1.0, I.mA.y)) * sstep(0.0, 1.0, y);
+    keep = sstep(0.42, 0.25, slope) * mix(0.55, 0.9, onPillarTop(I.mA.y, y)) * sstep(0.0, 1.0, y);
     alb = rowv(M0).rgb * mix(vec3f(0.45, 0.55, 0.38), vec3f(0.8, 0.78, 0.5), lfRand(h, 7u));
   } else if (kind == K_STALK || kind == K_TENDRIL) {
     I.mB = clipMB(lv, p2); I.mA = clipMA(lv, p2);
@@ -151,7 +157,7 @@ fn place(L: u32, li: u32) -> Inst {
     keep = (0.04 + 0.22 * pch) * sstep(0.1, 0.0, I.mB.y) * sstep(0.5, 1.5, y) * sstep(0.35, 0.2, slope);
   } else if (kind == K_CROWN) {
     I.mA = clipMA(lv, p2);
-    keep = sstep(0.32, 0.18, slope) * mix(0.35, 0.95, sstep(0.97, 1.0, I.mA.y)) * sstep(0.5, 2.0, y);
+    keep = sstep(0.32, 0.18, slope) * mix(0.35, 0.95, onPillarTop(I.mA.y, y)) * sstep(0.5, 2.0, y);
     alb = rowv(M0).rgb * mix(vec3f(0.4, 0.5, 0.36), vec3f(0.75, 0.75, 0.48), lfRand(h, 7u));
   } else if (kind == K_CRYSTAL) {
     I.mB = clipMB(lv, p2);
