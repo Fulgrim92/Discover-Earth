@@ -8,7 +8,7 @@ import { v as DV } from '../sim/drone.js';
 export { ENC, DIR, PH } from '../encounters.js';
 
 const RIP = new Float32Array(64);
-const IMG = new Float32Array(160);         // enc (64) | rip (64) | ph (32): 640 bytes
+const IMG = new Float32Array(176);         // enc (64) | rip (64) | ph (32) | dir (16): 704 bytes
 export const lifeFx = { buf: null, bgl: null, bg: null };
 
 export function init() {
@@ -58,6 +58,6 @@ export function update(ctx, view) {
       }
     }
   }
-  IMG.set(ENC, 0); IMG.set(RIP, 64); IMG.set(PH, 128);
+  IMG.set(ENC, 0); IMG.set(RIP, 64); IMG.set(PH, 128); IMG.set(DIR, 160);
   G.queue.writeBuffer(lifeFx.buf, 0, IMG);
 }

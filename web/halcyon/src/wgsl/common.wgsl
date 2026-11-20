@@ -10,6 +10,7 @@ struct Frame {
   row: array<vec4f, ROW>, // realm row blended at the camera
   flags: vec4f,  // x: ablation bits OFF_* (bench ?off=..., 0 in normal play), yz: cloud-shadow map texel-0 x, z,
                  // w: its texel size (fx/atmo.js; 0 = not baked yet)
+  sky: vec4f,    // x: time of day 0..1, y: star-field turn (rad), z: accumulated sun motion (deg, for re-bakes)
 }
 
 // Ablation bits (URL ?off=flora,fauna,...; main.js OFF_NAMES). A set bit switches that cost off: draws are skipped
@@ -270,36 +271,39 @@ struct CloudU {
   camW: vec4f,  // their weights
 }
 
-// Sun transmittance through the clouds at world point p (cheap: one coverage lookup per layer).
+// Sun transmittance through the clouds at world point p: one fetch of the baked cloud-shadow map (fx/atmo.js) at
+// the point where the sun ray crosses the main layer, and for points under a cloud sea one more at p (its top) and
+// one where the ray leaves the sea. The projection height of the main layer is the camera realm's (cheap and
+// right everywhere but far across a border); beyond the map (> 12 km) the coverage field itself.
 fn cloudShadow(p: vec3f, L: vec3f, rw: RWt) -> f32 {
-  if (L.y < 0.005) { return 1.0; }
-  return cloudShadowF(p, L, bf(rw, C0), bf(rw, C1), bf(rw, C2), bf(rw, C3));
+  return cloudShadowF(p, L, FR.row[C0], FR.row[C1], FR.row[C2], FR.row[C3]);
 }
 // the same with the cloud fields given (life.wgsl passes the camera row: flora, fauna, particles, drone)
-// cost ablation: false drops cloud shadows everywhere (terrain, water glitter, life)
 fn cloudShadowF(p: vec3f, L: vec3f, c0: vec4f, c1: vec4f, c2: vec4f, c3: vec4f) -> f32 {
   if (L.y < 0.005 || isOff(OFF_CLOUDSHADOW)) { return 1.0; }
   var tr = 1.0;
   let ly = max(L.y, 0.1);
-  if (c0.x > 0.005) {
-    let mid = mix(c0.y, c0.z, 0.2);
-    if (p.y < mid) {
-      let xz = p.xz + L.xz * ((mid - p.y) / ly);
-      let uv = csmUV(xz);
-      if (csmIn(uv)) { tr = 1.0 - textureSampleLevel(csmT, atmoS, uv, 0.0).x; }
-      else { // beyond the map (> 12 km): the coverage field itself
-        let cv = cloudCov(cloudField(xz, c3.x), c0.x);
-        tr = 1.0 - sstep(0.05, 0.6, cv) * clamp(c0.w * 0.85, 0.0, 0.88);
-      }
+  let mid = mix(c0.y, c0.z, 0.2);
+  if (p.y < mid) {
+    let xz = p.xz + L.xz * ((mid - p.y) / ly);
+    let uv = csmUV(xz);
+    if (csmIn(uv)) {
+      tr = 1.0 - textureSampleLevel(csmT, atmoS, uv, 0.0).x;
+    } else if (c0.x > 0.005) {
+      let cv = cloudCov(cloudField(xz, c3.x), c0.x);
+      tr = 1.0 - sstep(0.05, 0.6, cv) * clamp(c0.w * 0.85, 0.0, 0.88);
     }
   }
-  if (c1.w > 0.005 && p.y < c2.y) {
-    // through the cloud sea: thickness above p along the sun
-    let th = (c2.y - max(p.y, c2.x)) / ly;
-    let xz = p.xz + L.xz * ((c2.y - p.y) / ly);
-    let uv = csmUV(xz);
-    let od = th * c2.z * 0.03 * select(seaCov(xz), textureSampleLevel(csmT, atmoS, uv, 0.0).y, csmIn(uv));
-    tr *= mix(1.0, max(exp(-od), 0.06), c1.w);
+  let u0 = csmUV(p.xz);
+  if (csmIn(u0)) {
+    let top = textureSampleLevel(csmT, atmoS, u0, 0.0).w;
+    if (p.y < top) {
+      // through the cloud sea: the path above p (the seas are some 40 m thick) to where the sun ray leaves it
+      let th = (top - max(p.y, top - 40.0)) / ly;
+      let us = csmUV(p.xz + L.xz * ((top - p.y) / ly));
+      let od = th * textureSampleLevel(csmT, atmoS, us, 0.0).y;
+      tr *= max(exp(-od), 0.06);
+    }
   }
   return tr;
 }
@@ -310,7 +314,8 @@ fn cloudShadowF(p: vec3f, L: vec3f, c0: vec4f, c1: vec4f, c2: vec4f, c3: vec4f) 
 // transmittance along the view; row 128 holds per-frame values (atmoInfo).
 @group(0) @binding(3) var atmoT: texture_2d<f32>;
 @group(0) @binding(4) var atmoS: sampler;
-// the cloud-shadow map (fx/atmo.js csCloudShadow): x main-layer occlusion, y cloud-sea coverage, top-down
+// the cloud-shadow map (fx/atmo.js csCloudShadow), top-down: x main-layer occlusion, y cloud-sea optical depth per
+// metre, z Drift zone weight (the veil), w cloud-sea top (m, -1000 none)
 @group(0) @binding(5) var csmT: texture_2d<f32>;
 fn csmUV(xz: vec2f) -> vec2f { return (xz - FR.flags.yz) / (FR.flags.w * f32(textureDimensions(csmT).x)); }
 fn csmIn(uv: vec2f) -> bool { return FR.flags.w > 0.0 && all(uv > vec2f(0.002)) && all(uv < vec2f(0.998)); }

@@ -3,6 +3,7 @@
 // fx/lifefx.js) before including this file.
 //   enc[2s]   = type, x, y, z        enc[2s+1] = t0, duration, seed, intensity     (8 slots; type 0 = empty)
 //   rip[i]    = x, z, t0, strength   (16 sources; strength 0 = unused)
+//   dir[s/2]  = travel direction of slot s in .xy (even s) or .zw (odd s); lfDir(s)
 //   ph[s]     = end of cue, end of build-up, end of peak, end of afterimage (seconds after t0)
 // Encounter type ids (src/encounters.js is the director and the list):
 //   living world 1 orca pod, 2 murmuration, 3 flamingo take-off, 4 whale breach, 5 jelly gathering, 6 giants,
@@ -10,7 +11,7 @@
 //   sky          16 meteor, 17 aurora surge, 18 eclipse (ringed giant), 19 lunar eclipse, 20 Milky Way night,
 //                21 Brocken spectre, 22 rainbow squall, 23 dry thunderstorm, 24 far rain shaft, 25 both skies (Drift)
 //   water/ground 32 calving wave, 33 geyser, 34 cloud-sea waterfall, 35 flash flood, 36 wave set, 37 dust devil
-struct LifeFx { enc: array<vec4f, 16>, rip: array<vec4f, 16>, ph: array<vec4f, 8> }
+struct LifeFx { enc: array<vec4f, 16>, rip: array<vec4f, 16>, ph: array<vec4f, 8>, dir: array<vec4f, 4> }
 
 // water-side helper: slope of the ring waves (dh/dx, dh/dz) and foam 0..1 at p, time t
 fn lfRipple(p: vec2f, t: f32) -> vec3f {
@@ -68,3 +69,4 @@ fn lfPhase(s: i32) -> vec4f {
   if (rel < p.z) { return vec4f(2.0, (rel - p.y) / max(p.z - p.y, 1e-3), rel, b.w); }
   return vec4f(3.0, (rel - p.z) / max(p.w - p.z, 1e-3), rel, b.w);
 }
+fn lfDir(s: i32) -> vec2f { let d = LFX.dir[s / 2]; return select(d.xy, d.zw, (s & 1) == 1); }

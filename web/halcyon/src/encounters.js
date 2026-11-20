@@ -102,7 +102,7 @@ function ih(a, b, c) {
 
 // query: a URLSearchParams-like object or null; seed: world seed (integer)
 export function init(query, seed) {
-  ST.fill(0); ST[0] = -1; ST[1] = -1; ST[6] = seed | 0 || 1; ENC.fill(0); PH.fill(0); DIR.fill(0); CUE.fill(0);
+  ST.fill(0); ST[0] = -1; ST[1] = -1; ST[6] = (seed & 0x3fffffff) || 1; ENC.fill(0); PH.fill(0); DIR.fill(0); CUE.fill(0);
   lastSig = 0;
   const e = query && query.get ? query.get('enc') : null;
   if (e === 'off') ST[5] = 1;
@@ -147,7 +147,7 @@ function site(ty, k, forced) {
   let ha = 0;
   if (sp > 2) ha = Math.max(-cone, Math.min(cone, Math.atan2(fx * vz - fz * vx, fx * vx + fz * vz)));
   for (let i = 0; i < 7; i++) {
-    const r = ih(ST[6], k * 16 + i, ty);
+    const r = ih(ST[6] | 0, k * 16 + i, ty);
     const a = forced ? 0 : 0.5 * ha + 0.5 * ((r & 1023) / 1023 * 2 - 1) * cone;
     const dd = D * (forced ? 1 : 0.8 + 0.4 * ((r >>> 10) & 1023) / 1023);
     const ca = Math.cos(a), sa = Math.sin(a);
@@ -192,7 +192,7 @@ function pick(rare, k) {
     wOf(ty); tot += ST[11];
   }
   if (tot <= 0) return 0;
-  let u = (ih(ST[6], k, 0x7177 + rare) & 65535) / 65536 * tot;
+  let u = (ih(ST[6] | 0, k, 0x7177 + rare) & 65535) / 65536 * tot;
   for (let ty = 1; ty < NTYPE; ty++) {
     if (!ENABLED[ty] || RARE[ty] !== rare || REALM[ty] < -1) continue;
     wOf(ty); u -= ST[11];
@@ -227,7 +227,7 @@ export function update() {
   }
   if (ST[3] > 0) { cueOut(); return; } // a forced capture keeps the director quiet
   const n = ST[2] | 0;
-  if (ST[0] < 0) { ST[0] = t + 25 + 30 * (ih(ST[6], 1, 3) & 1023) / 1023; ST[1] = t + 240 + 180 * (ih(ST[6], 2, 3) & 1023) / 1023; }
+  if (ST[0] < 0) { ST[0] = t + 25 + 30 * (ih(ST[6] | 0, 1, 3) & 1023) / 1023; ST[1] = t + 240 + 180 * (ih(ST[6] | 0, 2, 3) & 1023) / 1023; }
   const s = ST[9] | 0;
   if (s >= 0 && t >= ST[1] && !tryStart(s, 1, n)) ST[1] = t + 8;      // nothing rare fits here now: retry soon
   else if (s >= 0 && t >= ST[0] && !tryStart(s, 0, n)) ST[0] = t + 5;
@@ -240,9 +240,9 @@ function tryStart(s, rare, n) {
   const ty = pick(rare, n * 2 + rare);
   // never two peaks at once: the new peak must begin after every active peak ends
   if (!ty || t + PC[ty * 3 + 1] <= ST[8] || !site(ty, n, 0)) return 0;
-  ST[10] = t; place(s, ty, ih(ST[6], n, 0x5eed) & 65535);
-  ST[0] = t + 40 + 50 * (ih(ST[6], n + 1, 0xc0) & 1023) / 1023;
-  if (rare) ST[1] = t + 300 + 180 * (ih(ST[6], n + 1, 0xa7) & 1023) / 1023;
+  ST[10] = t; place(s, ty, ih(ST[6] | 0, n, 0x5eed) & 65535);
+  ST[0] = t + 40 + 50 * (ih(ST[6] | 0, n + 1, 0xc0) & 1023) / 1023;
+  if (rare) ST[1] = t + 300 + 180 * (ih(ST[6] | 0, n + 1, 0xa7) & 1023) / 1023;
   return 1;
 }
 
