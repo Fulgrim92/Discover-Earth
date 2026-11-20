@@ -2,7 +2,7 @@
 // transmittance LUT and the sky-view LUT every shader reads through group 0 (common.wgsl atmoT / atmoS).
 // Cost: 64x32x16 + 256x128x24 samples, two small dispatches (well under 0.1 ms on the reference GPU).
 // Zero per-frame allocations: descriptors and bind groups are built once.
-import { G, fail, shader, tex, buffer } from '../gpu.js';
+import { G, fail, shader, tex, buffer, tsBoth, TS_ATMO } from '../gpu.js';
 import ATMO from '../wgsl/atmo.wgsl';
 
 export const atmo = { view: null, sampler: null, csm: null };
@@ -17,6 +17,7 @@ let CTX = null, SO = 0, FL = 0, OFFB = 0, baked = false;
 // sunOfs: FO.sun in the frame uniforms (FR.sun.w is the drift); flagsOfs: FO.flags (yzw: the cloud-shadow map's
 // origin and texel size); offBit: OFF_ATMO; realmBuf: the realm table (the shadow map blends realms)
 export function init(ctx, sunOfs, flagsOfs, offBit, realmBuf) {
+  BDESC.timestampWrites = tsBoth(TS_ATMO); // perf timer (terrain-art: every pass in a frame is timed)
   CTX = ctx; SO = sunOfs; FL = flagsOfs; OFFB = offBit;
   const d = G.device;
   const U = GPUTextureUsage;
@@ -62,12 +63,13 @@ export function init(ctx, sunOfs, flagsOfs, offBit, realmBuf) {
 // once per frame (all views and both XR eyes share it), before the frame uniforms are uploaded (it sets the
 // shadow map's window in them) and before any view draws. cam: main.js cam (x, y, z in m); arrays only, a double
 // argument would be boxed every frame. off=atmo: bake the LUTs once, then keep them (bench ablation)
+const BDESC = { label: 'atmo', timestampWrites: undefined };
 export function bake(enc, cam) {
   const fr = CTX.frame;
   fr[FL + 1] = Math.round(cam[0] / CSM_T) * CSM_T - CSM_N * 0.5 * CSM_T;
   fr[FL + 2] = Math.round(cam[2] / CSM_T) * CSM_T - CSM_N * 0.5 * CSM_T;
   fr[FL + 3] = CSM_T;
-  const c = enc.beginComputePass();
+  const c = enc.beginComputePass(BDESC);
   // cloud shadows move with the wind: every frame (0.26 M texels, one coverage lookup each)
   c.setBindGroup(0, bgF2); c.setPipeline(pC); c.setBindGroup(1, bgC); c.dispatchWorkgroups(CSM_N / 8, CSM_N / 8);
   if (baked && (CTX.off & OFFB)) { c.end(); return; }

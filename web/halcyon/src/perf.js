@@ -7,7 +7,7 @@
 // getMappedRange() returns a fresh ArrayBuffer: those are platform allocations we cannot avoid, so they happen once
 // per READ_EVERY frames (about 4 times a second at 60 Hz), never per frame. Without timestamp-query the frame
 // delta drives the controller instead.
-import { G, TS, TS_N, TS_SLOTS, TS_PER_FRAME, TS_PASSES, TS_ONCE } from './gpu.js';
+import { G, TS, TS_N, TS_SLOTS, TS_PER_FRAME, TS_PASSES, TS_ONCE, TS_FRAME_Q } from './gpu.js';
 import { dyn } from './dynres.js';
 
 export const READ_EVERY = TS_SLOTS / 2;
@@ -20,11 +20,11 @@ const P = {
   frameOfSlot: new Int32Array(TS_SLOTS), views: new Uint8Array(TS_SLOTS), ran: new Uint8Array(TS_SLOTS * TS_N),
 };
 // latest per-frame GPU timings (ms): pass i of the most recent complete frame, plus totals
-export const gpuMs = new Float64Array(TS_N + 1);  // [passes..., total]
+export const gpuMs = new Float64Array(TS_N + 2);  // [passes..., sum of passes, whole frame (first pass begin -> last pass end)]
 export const stats = { gpuFrames: 0, lastGpuFrame: -1, readbacks: 0, dropped: 0, invalid: 0, lastBad: new Float64Array(3) };
 
-// bench recording: per frame [cpu frame delta ms, cpu work ms, gpu total ms, gpu pass ms x TS_N]
-export const REC_W = 3 + TS_N;
+// bench recording: per frame [cpu frame delta ms, cpu work ms, gpu frame ms, gpu sum of passes ms, gpu pass ms x TS_N]
+export const REC_W = 4 + TS_N;
 let rec = null, recN = 0, recMax = 0;
 const recFrameIdx = new Int32Array(1); // frame index of record 0
 
@@ -45,6 +45,7 @@ function onMapped1() { onMapped(1); }
 // call once per frame before encoding: which passes will run, and in how many views
 export function frameBegin(frameNo, nViews) {
   const slot = frameNo % TS_SLOTS;
+  if (GD.on) guardBegin();
   P.frameOfSlot[slot] = frameNo; P.views[slot] = nViews;
   for (let i = 0; i < TS_N; i++) P.ran[slot * TS_N + i] = 0;
   return slot;
@@ -53,6 +54,7 @@ export function markRan(slot, pass) { P.ran[slot * TS_N + pass] = 1; }
 
 // after the last pass of the frame: resolve this slot, and when a half of the ring is complete, copy it out
 export function frameEnd(enc, slot) {
+  if (GD.on) guardEnd(slot);
   if (!P.resolve) return;
   enc.resolveQuerySet(TS.set, slot * TS_PER_FRAME, TS_PER_FRAME, P.resolve, slot * TS_PER_FRAME * 8);
   if ((slot + 1) % READ_EVERY !== 0) return;
@@ -96,17 +98,23 @@ function onMapped(h) {
       gpuMs[i] = ms; total += ms;
     }
     gpuMs[TS_N] = total;
+    // the frame bracket (gpu.js tsFrameOpen/Close): what the GPU spent on the frame, gaps between passes included
+    const of = (k * TS_PER_FRAME + TS_FRAME_Q) * 2;
+    const fb = q[of + 1] * 4294967296 + q[of], fe = q[of + 3] * 4294967296 + q[of + 2];
+    const fms = (fe - fb) * 1e-6;
+    if (fms >= 0 && fms < 60000 && fms >= total * 0.999) gpuMs[TS_N + 1] = fms;
+    else { ok = 0; stats.lastBad[0] = TS_N; stats.lastBad[1] = fb; stats.lastBad[2] = fe; }
     if (!ok) { stats.invalid++; continue; }
     const f = P.frameOfSlot[slot];
     if (f > stats.lastGpuFrame) stats.lastGpuFrame = f;
     stats.gpuFrames++;
-    dyn.sample(total, f);
+    dyn.sample(fms, f);
     if (rec) {
       const r = f - recFrameIdx[0];
       if (r >= 0 && r < recMax) {
         const o = r * REC_W;
-        rec[o + 2] = total;
-        for (let i = 0; i < TS_N; i++) rec[o + 3 + i] = gpuMs[i];
+        rec[o + 2] = fms; rec[o + 3] = total;
+        for (let i = 0; i < TS_N; i++) rec[o + 4 + i] = gpuMs[i];
       }
     }
   }
@@ -140,17 +148,68 @@ function summarise(col) {
 // (end of bench only: allocates)
 export function benchReport(meta) {
   const passes = {};
-  for (let i = 0; i < TS_N; i++) { const s = summarise(3 + i); if (s && s.max > 0) passes[TS_PASSES[i]] = s; }
+  for (let i = 0; i < TS_N; i++) { const s = summarise(4 + i); if (s && s.max > 0) passes[TS_PASSES[i]] = s; }
+  const errors = timerErrors();
+  for (const e of errors) console.error('HALCYON_BENCH timer: ' + e);
+  const frame = G.timestamp ? summarise(2) : null;
   return Object.assign({
     frames: recN,
     frameMs: summarise(0), cpuMs: summarise(1),
-    gpuMs: G.timestamp ? summarise(2) : null, gpuPassMs: G.timestamp ? passes : null,
+    // gpuFrameMs: the whole frame on the GPU (one timestamp pair: start of the first pass, end of the last), the
+    // headline and what dynres reads. gpuPassSumMs: the sum of the timed passes; the difference is GPU time between
+    // passes (barriers, copies, clears outside passes). gpuMs is kept as an alias of gpuFrameMs.
+    gpuFrameMs: frame, gpuMs: frame, gpuPassSumMs: G.timestamp ? summarise(3) : null, gpuPassMs: G.timestamp ? passes : null,
     timer: G.timestamp ? 'timestamp-query' : 'none (frame delta only)',
+    timerOk: errors.length === 0, timerErrors: errors,
     timerReadbacks: stats.readbacks, timerDropped: stats.dropped, timerInvalidFrames: stats.invalid, timerFrames: stats.gpuFrames,
-    timerLastBad: stats.invalid ? { pass: TS_PASSES[stats.lastBad[0]], begin: stats.lastBad[1], end: stats.lastBad[2] } : null,
+    timerLastBad: stats.invalid ? { pass: stats.lastBad[0] < TS_N ? TS_PASSES[stats.lastBad[0]] : 'frame', begin: stats.lastBad[1], end: stats.lastBad[2] } : null,
     dynres: { enabled: dyn.enabled, target: dyn.target, finalScale: dyn.scale, changes: dyn.changes, minScale: dyn.minSeen, meanScale: dyn.meanScale() },
   }, meta);
 }
+
+// ------------------------------------------------------------------------------------------------ pass guard
+// ?bench=1 only: every render/compute pass begun between frameBegin and frameEnd must be timed, either by its own
+// timestampWrites or by lying inside an open bracket (a begin-only ... end-only pair of the same slot); a timed slot
+// must be marked as ran (else its time is dropped from the report) and a slot marked as ran must have been timed. A
+// violation is an error in the bench report (timerErrors, timerOk false) and fails tools/bench.mjs.
+const GD = { on: false, active: false, frame: 0, open: new Uint8Array(TS_N), used: new Uint8Array(TS_N), errors: new Map() };
+function guardErr(msg) { GD.errors.set(msg, (GD.errors.get(msg) || 0) + 1); }
+function guardPass(desc) {
+  if (!GD.active) return;
+  const tw = desc && desc.timestampWrites;
+  if (tw) {
+    const hasB = tw.beginningOfPassWriteIndex !== undefined, hasE = tw.endOfPassWriteIndex !== undefined;
+    const q = (hasB ? tw.beginningOfPassWriteIndex : tw.endOfPassWriteIndex) % TS_PER_FRAME;
+    if (q >= TS_FRAME_Q) { GD.frame = hasB ? 1 : 2; return; }
+    const i = (q % (TS_N * 2)) >> 1;
+    GD.used[i] = 1;
+    if (hasB && !hasE) GD.open[i] = 1; else if (hasE && !hasB) GD.open[i] = 0;
+  } else {
+    let any = 0;
+    for (let i = 0; i < TS_N; i++) any |= GD.open[i];
+    if (!any) guardErr('untimed pass "' + ((desc && desc.label) || '(no label)') + '"');
+  }
+  if (GD.frame !== 1) guardErr('pass "' + ((desc && desc.label) || '(no label)') + '" outside the frame bracket');
+}
+function guardBegin() { GD.active = true; GD.frame = 0; GD.open.fill(0); GD.used.fill(0); }
+function guardEnd(slot) {
+  GD.active = false;
+  if (GD.frame !== 2) guardErr('frame bracket not closed');
+  for (let i = 0; i < TS_N; i++) {
+    const ran = P.ran[slot * TS_N + i];
+    if (GD.open[i]) guardErr('timer bracket ' + TS_PASSES[i] + ' left open');
+    if (GD.used[i] && !ran) guardErr('pass ' + TS_PASSES[i] + ' is timed but not marked as ran: its time is dropped (perf.markRan)');
+    if (!GD.used[i] && ran) guardErr('pass ' + TS_PASSES[i] + ' is marked as ran but wrote no timestamps');
+  }
+}
+export function guardInstall() {
+  if (!G.timestamp || GD.on || typeof GPUCommandEncoder === 'undefined') return;
+  GD.on = true;
+  const E = GPUCommandEncoder.prototype, rp = E.beginRenderPass, cp = E.beginComputePass;
+  E.beginRenderPass = function (d) { guardPass(d); return rp.call(this, d); };
+  E.beginComputePass = function (d) { guardPass(d); return cp.call(this, d); };
+}
+function timerErrors() { const a = []; for (const [m, n] of GD.errors) a.push(m + ' (' + n + ' frames)'); return a; }
 
 // ------------------------------------------------------------------------------------------------ dynamic resolution
 // The controller lives in dynres.js (no GPU imports, so tools/dyntest.mjs runs it in node with synthetic timings).

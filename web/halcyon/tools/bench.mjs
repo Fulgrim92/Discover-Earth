@@ -75,8 +75,9 @@ else {
   if (!statOk(r.frameMs)) fail.push('frameMs malformed');
   if (!statOk(r.cpuMs)) fail.push('cpuMs malformed');
   if (r.timer) {
-    if (!statOk(r.gpuMs)) fail.push('gpuMs malformed');
-    for (const p of ['opaque', 'composite', 'fx', 'bloom', 'final']) if (!r.gpuPassMs || !statOk(r.gpuPassMs[p])) fail.push('no GPU timings for pass ' + p);
+    if (!statOk(r.gpuFrameMs)) fail.push('gpuFrameMs malformed');
+    if (!r.timerOk) fail.push('GPU timer: ' + (r.timerErrors || ['timerOk false']).join('; '));
+    for (const p of ['opaque', 'tshade', 'composite', 'fx', 'bloom', 'final', 'atmo']) if (!r.gpuPassMs || !statOk(r.gpuPassMs[p])) fail.push('no GPU timings for pass ' + p);
     if (!(r.timerReadbacks > 0)) fail.push('timer never read back');
   }
   await writeFile(path.join(outDir, 'bench.json'), JSON.stringify(r, null, 2) + '\n');

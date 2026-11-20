@@ -100,9 +100,10 @@ export function benchPanel(r) {
   const lines = ['HALCYON bench  ' + r.frames + ' frames  ' + r.w + 'x' + r.h + '  scale ' + r.scale + '  quality ' + r.quality,
     ''.padEnd(12) + ['avg', 'p50', 'p99', 'max'].map((x) => x.padStart(8)).join(''),
     row('frame ms', r.frameMs), row('cpu ms', r.cpuMs)];
-  if (r.gpuMs) {
-    lines.push(row('gpu ms', r.gpuMs));
+  if (r.gpuFrameMs) {
+    lines.push(row('gpu frame', r.gpuFrameMs), row('gpu passes', r.gpuPassSumMs));
     for (const k in r.gpuPassMs) lines.push(row('  ' + k, r.gpuPassMs[k]));
+    for (const e of r.timerErrors || []) lines.push('TIMER ERROR: ' + e);
   } else lines.push('gpu: no timestamp-query on this device (frame delta only)');
   lines.push('', 'JSON: window.__halcyon.bench (also printed to the console)');
   o.style.whiteSpace = 'pre'; o.style.fontFamily = 'ui-monospace,Menlo,Consolas,monospace';
