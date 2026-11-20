@@ -54,7 +54,8 @@ export async function initDevice(opts) {
     adapter: [info.vendor, info.architecture, info.device, info.description].filter(Boolean).join(' / ') || 'unknown',
     available: ['float32-filterable', 'timestamp-query', 'float32-blendable', 'shader-f16', 'rg11b10ufloat-renderable']
       .filter((f) => adapter.features.has(f)),
-    requested: req, forcedNoF32: !!(opts && opts.noF32), clip: G.clipFormat,
+    requested: req, forcedNoF32: !!(opts && opts.noF32), f32filter: G.f32filter,
+    clip: G.clipFormat + ' (the same with and without float32-filterable)',
     timer: G.timestamp ? 'timestamp-query' : 'none',
     limits: { maxTextureDimension2D: lim.maxTextureDimension2D, maxColorAttachmentBytesPerSample: lim.maxColorAttachmentBytesPerSample,
       maxSampledTexturesPerShaderStage: lim.maxSampledTexturesPerShaderStage, maxStorageBuffersPerShaderStage: lim.maxStorageBuffersPerShaderStage,

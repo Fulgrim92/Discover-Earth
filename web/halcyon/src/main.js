@@ -359,6 +359,8 @@ async function init() {
   else if (XR.state > 0) { XR.onStart = xrStart; XR.onEnd = xrEnd; } // shots: no DOM control over the capture
   H.timer = G.timestamp ? 'timestamp-query' : 'none';
   H.gpu = G.paths;
+  // live counters: __halcyon.bakes is computed when read (JSON.stringify included), nothing runs per frame
+  Object.defineProperty(H, 'bakes', { get: bakeReport, enumerable: true });
   H.xr = XR.state === 0 ? 'none' : XR.state === 1 ? 'unavailable: ' + XR.why : 'ready';
 }
 
@@ -626,7 +628,6 @@ function frame(now) {
   if (P.grab > 0 && frameNo >= P.grab) {
     running = false;
     H.campose = Array.from(cam.subarray(0, 8)).join(',');
-    H.bakes = bakeReport();
     H.time = CLK[C_TIME];
     G.queue.onSubmittedWorkDone().then(shotDone);
     return;
