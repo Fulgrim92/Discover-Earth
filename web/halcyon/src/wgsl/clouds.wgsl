@@ -210,7 +210,7 @@ fn shade(p: vec3f, d: vec3f, hf: f32, od: f32, dens: f32, sea: bool) -> vec3f {
   // below the base (albedo ~0.15); cloud colour comes from that light, not from a tint
   let sc = gCL.sc;
   let top = mix(gCL.hor, gCL.zen, 0.75) * 1.25;
-  let bot = mix(gCL.hor, gCL.zen, 0.3) * 0.55 + sc * max(L.y, 0.0) * 0.15 * 0.5;
+  let bot = mix(gCL.hor, gCL.zen, 0.55) * 0.7 + sc * max(L.y, 0.0) * 0.15 * 0.5;
   var amb = mix(bot, top, sat(hf)) * mix(0.6, 1.0, sat(hf)) + gCL.night * 0.5;
   var sunK = 8.0;
   if (sea) {
@@ -350,7 +350,10 @@ struct CF { @location(0) front: vec4f, @location(1) refl: vec4f, @location(2) di
   let d01 = textureLoad(cDistT, min(b + vec2i(0, e), full - 1), 0).x;
   let d11 = textureLoad(cDistT, min(b + vec2i(e, e), full - 1), 0).x;
   let dist = min(min(d00, d10), min(d01, d11));
-  let pp = in.pos.xy * f32(S);
+  // each low-res ray goes through a jittered point of its block: a hard cloud edge turns into fine dither that the
+  // upsample's filter averages out, instead of a staircase of SxS blocks
+  let sj = vec2f(ign(in.pos.xy + vec2f(17.0, 59.0)), ign(in.pos.xy + vec2f(83.0, 29.0))) - 0.5;
+  let pp = (in.pos.xy + sj * select(0.85, 0.0, VW.cam.w == 13.0)) * f32(S);
   let d = viewRay(pp);
   let ro = VW.cam.xyz;
   var jit = ign(in.pos.xy);

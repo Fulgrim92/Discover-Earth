@@ -309,16 +309,20 @@ fn skyFull(d: vec3f, pix: f32) -> vec3f {
   let night = 1.0 - sstep(-0.21, -0.035, Ls.y);
   let vis = clamp(max(night, s5.x), 0.0, 1.0);
   var g = vec4f(0.0);
-  if (s5.z > 0.01 && d.y > -0.05) { g = giant(d); g.a *= s5.z; }
+  // a neighbouring realm's sky features come in with its weight squared: at a small weight nothing lone shows
+  let gw = s5.z * s5.z;
+  if (gw > 0.001 && d.y > -0.05) { g = giant(d); g.a *= gw; }
   if (vis > 0.01 && d.y > 0.0) {
     let unit = 0.9 * 8.3e-6; // a magnitude-0 star: 10^(-0.4 * 12.7) of a full moon (0.9 in every realm)
     var sk = stars(d, pix, unit);
     sk += milkyWay(d) * sstep(0.45, 0.9, s5.x);
     c += sk * vis * A.a * (1.0 - g.a);
   }
-  if (s5.y > 0.01) { c += aurora(d) * s5.y * mix(1.0, A.a, 0.6); }
+  // the aurora is only seen once the sun is well down (in a Drift it comes out with the dark, not as a streak)
+  let aw = s5.y * (1.0 - sstep(-0.16, -0.02, Ls.y));
+  if (aw > 0.01) { c += aurora(d) * aw * mix(1.0, A.a, 0.6); }
   // the giant is seen through the air in front of it: dimmed by its transmittance, the in-scatter stays
-  if (g.a > 0.0) { c += g.rgb * s5.z * A.a; }
+  if (g.a > 0.0) { c += g.rgb * gw * A.a; }
   return c;
 }
 

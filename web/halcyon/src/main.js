@@ -373,21 +373,22 @@ function renderView(v, enc, target, first) {
 }
 
 function ss(e0, e1, x) { const t = Math.min(Math.max((x - e0) / (e1 - e0), 0), 1); return t * t * (3 - 2 * t); }
+const KLS = new Float64Array(8); // keyLightDir scratch: no boxed doubles per frame
 // mirror of common.wgsl keyLight: the brightness-weighted direction of the sun and the moon (sky programmer)
-function keyLightDir(fr, row, drift) {
-  const R = Math.PI / 180, s0 = F.S0 * 4, s1 = F.S1 * 4, s8 = F.S8 * 4;
-  const se = (row[s0] + drift * 0.5) * R, sa = (row[s0 + 1] + drift) * R;
-  const me = (row[s8] + drift * 0.25) * R, ma = (row[s8 + 1] + drift * 0.5) * R;
-  const sy = Math.sin(se), my = Math.sin(me);
-  const ws = (0.2126 * row[s1] + 0.7152 * row[s1 + 1] + 0.0722 * row[s1 + 2]) * row[s0 + 2] * ss(-0.035, 0.06, sy) + 1e-5;
-  const ed = Math.asin(Math.max(-1, Math.min(1, my))) / R;
-  const am = 1 / (Math.max(my, 0) + 0.50572 * Math.pow(Math.max(ed + 6.07995, 0.3), -1.6364));
-  const wm = 0.9493 * row[s8 + 2] * ss(-0.035, 0.06, my) * Math.exp(-0.22 * am);
-  let x = Math.sin(sa) * Math.cos(se) * ws + Math.sin(ma) * Math.cos(me) * wm;
-  let y = sy * ws + my * wm;
-  let z = -Math.cos(sa) * Math.cos(se) * ws - Math.cos(ma) * Math.cos(me) * wm;
-  const l = Math.hypot(x, y, z) || 1;
-  fr[FO.sun] = x / l; fr[FO.sun + 1] = y / l; fr[FO.sun + 2] = z / l;
+// drift comes in KLS[7]: a double passed as an argument would be boxed every frame
+function keyLightDir(fr, row) {
+  const R = Math.PI / 180, s0 = F.S0 * 4, s1 = F.S1 * 4, s8 = F.S8 * 4, k = KLS, o = FO.sun, drift = k[7];
+  k[0] = (row[s0] + drift * 0.5) * R; k[1] = (row[s0 + 1] + drift) * R;
+  k[2] = (row[s8] + drift * 0.25) * R; k[3] = (row[s8 + 1] + drift * 0.5) * R;
+  k[4] = (0.2126 * row[s1] + 0.7152 * row[s1 + 1] + 0.0722 * row[s1 + 2]) * row[s0 + 2] * ss(-0.035, 0.06, Math.sin(k[0])) + 1e-5;
+  k[5] = 1 / (Math.max(Math.sin(k[2]), 0) + 0.50572 * Math.pow(Math.max(k[2] / R + 6.07995, 0.3), -1.6364));
+  k[5] = 0.9493 * row[s8 + 2] * ss(-0.035, 0.06, Math.sin(k[2])) * Math.exp(-0.22 * k[5]);
+  fr[o] = Math.sin(k[1]) * Math.cos(k[0]) * k[4] + Math.sin(k[3]) * Math.cos(k[2]) * k[5];
+  fr[o + 1] = Math.sin(k[0]) * k[4] + Math.sin(k[2]) * k[5];
+  fr[o + 2] = -Math.cos(k[1]) * Math.cos(k[0]) * k[4] - Math.cos(k[3]) * Math.cos(k[2]) * k[5];
+  k[6] = Math.sqrt(fr[o] * fr[o] + fr[o + 1] * fr[o + 1] + fr[o + 2] * fr[o + 2]);
+  k[6] = k[6] > 0 ? 1 / k[6] : 1;
+  fr[o] *= k[6]; fr[o + 1] *= k[6]; fr[o + 2] *= k[6];
 }
 
 // frame-wide uniforms, the drone and the rings
@@ -399,7 +400,7 @@ function prepareFrame() {
   const s0 = F.S0 * 4;
   const el = ((rowTmp[s0] + drift * 0.5) * Math.PI) / 180, az = ((rowTmp[s0 + 1] + drift) * Math.PI) / 180;
   fr[FO.sun] = Math.sin(az) * Math.cos(el); fr[FO.sun + 1] = Math.sin(el); fr[FO.sun + 2] = -Math.cos(az) * Math.cos(el); fr[FO.sun + 3] = drift;
-  keyLightDir(fr, rowTmp, drift); // the key light is the sun or the moon (common.wgsl keyLight), FR.sun its direction
+  KLS[7] = drift; keyLightDir(fr, rowTmp); // the key light is the sun or the moon (common.wgsl keyLight), FR.sun its direction
   fr[FO.time] = timeS; fr[FO.time + 1] = dt; fr[FO.time + 2] = frameNo; fr[FO.time + 3] = P.quality;
   const sim = R.sim;
   if (sim) {

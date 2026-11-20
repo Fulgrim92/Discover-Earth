@@ -12,7 +12,9 @@
 var<private> gRC: vec4f; // mirrored clouds for this pixel, read by reflectRay's sky branch
 
 struct CUp { front: vec4f, refl: vec4f }
-// 3x3 half-res neighbourhood: a small Gaussian (it also averages out the march jitter) times a depth weight
+// 3x3 low-res neighbourhood: a smooth Gaussian (it also averages out the march's ray and step jitter) times a depth
+// weight that only rejects taps across a real silhouette (a jump in depth), not along smoothly receding ground or
+// water, where the old per-texel weight degenerated to nearest-neighbour blocks
 fn cloudUp(pix: vec2f, dist: f32) -> CUp {
   let hs = vec2i(textureDimensions(cloudT));
   let S = max(round(VW.size.x / f32(hs.x)), 1.0); // 2 (half res) or 4 (quarter, quality=low)
@@ -25,10 +27,10 @@ fn cloudUp(pix: vec2f, dist: f32) -> CUp {
     let off = vec2i(k % 3 - 1, k / 3 - 1);
     let q = clamp(ic + off, vec2i(0), hs - 1);
     let dp = ((vec2f(q) + 0.5) * S - pix) / S;
-    let wb = exp(-dot(dp, dp) * 1.1);
+    let wb = exp(-dot(dp, dp) * 0.9);
     let dq = textureLoad(cloudD, q, 0).x;
     let rel = abs(dq - dist) / max(min(dq, dist), 1.0);
-    let wd = 1.0 / (1.0 + rel * 24.0);
+    let wd = 1.0 - sstep(0.08, 0.45, rel);
     let w = wb * wd * wd;
     let cf = textureLoad(cloudT, q, 0); let cr = textureLoad(cloudR, q, 0);
     o.front += cf * w; o.refl += cr * w; ws += w;
