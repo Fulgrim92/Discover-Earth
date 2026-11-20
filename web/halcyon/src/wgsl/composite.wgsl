@@ -204,6 +204,22 @@ struct VO { @builtin(position) pos: vec4f }
       // splashes, wakes and ripples from living things (fx/lifefx.js; a zero stub until it is wired, see composite.js)
       let lf = lfWater(P.xz, FR.time.x);
       n = normalize(n + vec3f(-lf.x, 0.0, -lf.y));
+      // water depth from the height clipmap (r16 scene depth is too coarse for 4 cm of water)
+      let depth = max(-heightAny(P.xz), 0.0);
+      // surf (clip.wgsl): swell steepening and breaking toward exposed shores; per-realm strength from the foam row
+      let surfAmt = min(bf(rw, G3).w * 1.6, 1.0);
+      var surf = vec3f(0.0);
+      if (depth < 18.0 && tw < 2500.0 && surfAmt > 0.01) {
+        let sfr = shoreFrame(P.xz);
+        surf = surfWave(P.xz, depth, sfr, surfAmt, FR.time.x);
+        n = normalize(n + vec3f(-sfr.sea.x, 0.0, -sfr.sea.y) * surf.x);
+      }
+      // rain on the water: fine rings roughen the surface
+      let rn = rainNow();
+      if (rn > 0.01 && tw < 250.0) {
+        let rr = vnoised(P.xz * 3.0 + vec2f(0.0, FR.time.x * 4.0), 568u).yz;
+        n = normalize(n + vec3f(rr.x, 0.0, rr.y) * 0.12 * rn * sstep(250.0, 30.0, tw));
+      }
       let V = -d;
       // Mirror Salt: raised polygon rims of salt just under the sheet, seen with a few cm of parallax;
       // the meniscus over each rim breaks the mirror slightly
@@ -234,8 +250,6 @@ struct VO { @builtin(position) pos: vec4f }
       let dd = nh * nh * (a2 - 1.0) + 1.0;
       rc += sunCol() * min(a2 / (PI * dd * dd) * 0.25, 60.0) * sstep(0.0, 0.05, L.y) * cloudShadow(P, L, rw);
       // refraction + absorption
-      // water depth from the height clipmap (r16 scene depth is too coarse for 4 cm of water)
-      let depth = max(-heightAny(P.xz), 0.0);
       let thick = min(dist - tw, depth / max(-d.y, 0.02));
       let ruv = clamp(uv + n.xz * 0.04 * min(depth, 4.0) / (1.0 + tw * 0.02), vec2f(0.0), vec2f(1.0));
       var under = textureSampleLevel(sceneT, linS, ruv, 0.0).rgb;
@@ -253,7 +267,7 @@ struct VO { @builtin(position) pos: vec4f }
       let foamAmt = rowv(G3).w;
       let fz = sstep(1.2, 0.0, depth + 0.3 * vn(P.xz * 0.3 + vec2f(FR.time.x * 0.3, 0.0), 550u));
       let fn1 = sstep(0.1, 0.6, vn(P.xz * 1.7 + vec2f(0.0, FR.time.x * 0.5), 551u) * 0.5 + 0.5 * fz);
-      let foam = max(fz * fn1 * foamAmt * bf(rw, G3).w, clamp(lf.z, 0.0, 1.0));
+      let foam = max(max(fz * fn1 * foamAmt * bf(rw, G3).w, clamp(lf.z, 0.0, 1.0)), surf.y);
       wcol = mix(wcol, vec3f(0.8) * (sunCol() * 0.25 + mix(rowv(S3).rgb, rowv(S2).rgb, 0.5) * I), foam * 0.6);
       col = mix(wcol, rc, refl * (1.0 - foam));
       if (VW.cam.w == 5.0) { col = rc; }
@@ -262,6 +276,20 @@ struct VO { @builtin(position) pos: vec4f }
           }
   }
 
+  // cliff spray (clip.wgsl surfSpray): white bursts and drifting mist on exposed cliff feet and skerries
+  if (!isSky && tEnd == dist && dist < 2500.0) {
+    let P = ro + d * dist;
+    if (P.y < 32.0 && P.y > -0.5) {
+      let rw = realmWeights(P.xz);
+      let amt = min(bf(rw, G3).w * 1.6, 1.0);
+      if (amt > 0.01) {
+        let sp = surfSpray(P.xz, P.y, shoreFrame(P.xz), amt, FR.time.x);
+        let I = rowv(S3).w;
+        let sc = vec3f(0.9) * (sunCol() * max(FR.sun.y, 0.0) * 0.55 + mix(rowv(S3).rgb, rowv(S2).rgb, 0.5) * I);
+        col = mix(col, sc, sp * 0.6);
+      }
+    }
+  }
   // fog over the visible distance (sky gets it toward the horizon only)
   if ((!isSky || tEnd < 1e8) && VW.cam.w != 8.0) { col = applyFog(col, ro, d, tEnd); }
   // under the cloud sea: the sky light is mostly gone (sun is handled by cloudShadow in the terrain)

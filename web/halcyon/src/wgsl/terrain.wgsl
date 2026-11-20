@@ -767,11 +767,39 @@ fn toff(b: u32) -> bool { return (TOFF & b) != 0u; }
     if (fp < 0.1) { let fz = vnoised(p.xz * (1.0 / 0.07), 303u); dg += vec3f(fz.y, 0.0, fz.z) * 0.04 * bl(0.07, fp) * wLum; }
   }
 
+  // ---- coast and weather (DESIGN 12) ----
+  // surf on the beach (clip.wgsl): the swash sheet runs up and drains back with a foam lace at its edge, leaving wet
+  // sand up to the run-up; tide pools sit in rock shelves just above the water. 3 clip fetches, near the shore only.
+  var foamS = 0.0;
+  let surfAmt = min(bfx(rw, G3).w * 1.6, 1.0);
+  if (h < 3.0 && h > -0.6 && surfAmt > 0.01 && dist < 1500.0) {
+    let sw = surfSwash(p.xz, h, shoreFrame(p.xz), surfAmt, tm);
+    wet = max(wet, max(sw.z * 0.75, sw.x));
+    rough = mix(rough, 0.06, sw.x);
+    flatN = max(flatN, sw.x * 0.6);
+    foamS = sw.y;
+    let pool = rockW * sstep(0.3, 0.12, slope) * sstep(-0.2, 0.3, h) * sstep(1.8, 1.2, h)
+             * sstep(0.2, 0.45, vn(p.xz * (1.0 / 3.5), 569u) + 0.35 * nS);
+    alb = mix(alb, vec3f(0.015, 0.035, 0.04) + alb * 0.35, pool);
+    wet = max(wet, pool); rough = mix(rough, 0.04, pool); flatN = max(flatN, pool);
+  }
+  // rain (weather stub, fx/terrain.js): ground darkens with the wetness, puddles gather on flat hollows and dry out
+  // as the wetness falls; rain roughens their surface. Snow, ice and salt crust are left alone.
+  let gw = groundWet() * (1.0 - wIce) * (1.0 - wSalt);
+  if (gw > 0.01) {
+    wet = max(wet, gw * (0.6 + 0.4 * sstep(0.0, 0.3, conc)));
+    let pud = sstep(0.08, 0.025, slope) * sstep(0.55, 0.8, gw + 0.5 * conc + 0.25 * vn(p.xz * (1.0 / 4.0), 570u) + 0.1 * nS);
+    alb = mix(alb, alb * 0.5, pud);
+    wet = max(wet, pud); flatN = max(flatN, pud);
+    rough = mix(rough, mix(0.03, 0.2, rainNow()), pud);
+  }
+
   // underwater: darker, wet
   let under = sstep(0.3, -0.5, h);
   wet = max(wet, under);
   alb *= 1.0 - 0.45 * clamp(wet, 0.0, 1.0);
   rough = mix(rough, 0.25, clamp(wet, 0.0, 1.0) * 0.7);
+  alb = mix(alb, vec3f(0.8, 0.82, 0.82), foamS); // swash foam sits on top of the wet sand
 
   // detail normal: remove the part of the detail gradient along the normal, tilt against it
   var n = normalize(gn - (dg - gn * dot(dg, gn)));

@@ -256,6 +256,7 @@ async function init() {
   perf.initTimer();
   perf.dyn.enabled = P.scale > 0 ? false : P.dynres >= 0 ? P.dynres > 0 : !P.shot && !P.bench && !P.alloc;
   perf.dyn.target = P.target;
+  terrain.weather[0] = num('rain', 0); terrain.weather[1] = num('wet', 0); // weather stub (fx/terrain.js)
   clipmap.init(ctx); terrain.init(ctx); clouds.init(ctx); composite.init(ctx); rings.init(ctx); drone.init(ctx); post.init(ctx);
   flora.init(ctx); fauna.init(ctx); particles.init(ctx);
   layoutViews();

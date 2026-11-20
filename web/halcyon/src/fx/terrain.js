@@ -44,8 +44,17 @@ export function init(ctx) {
     depth: { format: 'depth32float', depthWriteEnabled: false, depthCompare: 'greater-equal' } });
 }
 
+// Weather for the ground and water (DESIGN 12): [0] rain intensity 0..1 (set by the weather system; a stub fed from
+// the rain= URL parameter until sky-clouds' rain field arrives), [1] ground wetness 0..1, integrated here: soaks in
+// over about a minute of rain and dries over about ten minutes. Shaders read them as FR.mc[0].w and FR.mc[1].w.
+export const weather = new Float32Array(2);
+const WET_IN = 1 / 60, WET_OUT = 1 / 600;
+
 // per frame: snap mesh centres, pick the ring variant for each level
 export function setup(ctx, camX, camZ) {
+  const dt = Math.min(ctx.frame[FO.time + 1], 0.1);
+  weather[1] += dt * (weather[0] * (1 - weather[1]) * WET_IN - (1 - weather[0]) * weather[1] * WET_OUT);
+  weather[1] = weather[1] < 0 ? 0 : weather[1] > 1 ? 1 : weather[1];
   for (let i = 0; i < LEVELS; i++) {
     const s = K * T0 * (1 << i);
     const o = FO.mc + i * 4;
@@ -53,6 +62,7 @@ export function setup(ctx, camX, camZ) {
     ctx.frame[o + 1] = Math.round(camZ / (2 * s)) * 2 * s;
     ctx.frame[o + 2] = s;
   }
+  ctx.frame[FO.mc + 3] = weather[0]; ctx.frame[FO.mc + 7] = weather[1];
   variant[0] = 9;
   for (let i = 1; i < LEVELS; i++) {
     const s = K * T0 * (1 << i);
