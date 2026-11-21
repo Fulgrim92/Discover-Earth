@@ -46,9 +46,23 @@ fn lfShadow(p: vec3f, dist: f32, jit: f32, steps: i32) -> f32 {
   let L = FR.sun.xyz;
   if (L.y < -0.03) { return 0.0; }
   if (isOff(OFF_FSHADOW)) { return lfCloudShadow(p); }
-  let sh = sunShadow(p, L, dist, rowv(S6).y, jit, steps);
+  // the short march catches near casters; the terrain's baked shadow (the same three levels the ground reads)
+  // catches the ridges and mountains beyond its reach, so a plant or an animal is dark where the ground is
+  let sh = min(sunShadow(p, L, dist, rowv(S6).y, jit, steps), lfBakedSun(p.xz));
   if (sh < 0.02) { return sh; }
   return sh * lfCloudShadow(p);
+}
+fn lfBakedSun(p: vec2f) -> f32 {
+  let L = FR.sun.xyz;
+  let n = nLevels() - 1u;
+  let l0 = clipLevel(p, 0u, 6.0);
+  let Lh = L.xz / max(length(L.xz), 1e-3);
+  let l1 = min(l0 + 2u, n); let l2 = min(l0 + 4u, n);
+  let a = clipSH(l0, p).x;
+  let q1 = p + Lh * FR.lv[l1].z; let q2 = p + Lh * FR.lv[l2].z;
+  let b = clipSH(clipLevel(q1, l1, 4.0), q1).x;
+  let c = clipSH(clipLevel(q2, l2, 4.0), q2).x;
+  return min(a, min(b, c));
 }
 fn lfCloudShadow(p: vec3f) -> f32 {
   return cloudShadowF(p, FR.sun.xyz, rowv(C0), rowv(C1), rowv(C2), rowv(C3));

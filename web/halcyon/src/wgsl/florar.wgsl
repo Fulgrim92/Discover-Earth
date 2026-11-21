@@ -240,7 +240,8 @@ fn widthAt(k: u32, j: u32) -> f32 {
   // self-shadowing in the sward: the root sits in the shade of its neighbours, more so in dense tall grass
   let ao = mix(select(0.55, 0.3, kind == K_GRASS || kind == K_TUFT), 1.0, sstep(0.0, 0.85, s));
   // on a slope facing away from the sun the ground itself hides it: whatever stands low on it is in shade
-  let gshade = sstep(-0.04, 0.12, dot(gn, FR.sun.xyz));
+  // (and where the sun only grazes the slope, the neighbours and the ground's own relief shade the plant too)
+  let gshade = sstep(0.0, 0.3, dot(gn, FR.sun.xyz));
   o.prm = vec4f(I.sh * gshade, ao * select(1.0, 0.85, dryC), select(tr, 0.12, dryC), I.fade);
   if (dryC && I.x < -1.5) { o.kind = K_TUSSOCK; }                 // bunch grass: the fan of fine blades
   o.pos = VW.vp * vec4f(pos - cam, 1.0);
