@@ -48,7 +48,8 @@ export function init(ctx) {
   }
   if (hi <= lo) { lo = 0; hi = 0; }
   if (shi <= slo) { slo = 0; shi = 0; }
-  CU[4] = lo; CU[5] = hi; CU[6] = slo; CU[7] = shi;
+  CU[4] = lo - 250; CU[5] = hi + 5200; // squalls lower the base 250 m and tower 5.2 km (cloudwx.wgsl)
+  CU[6] = slo; CU[7] = shi;
   cuBuf = buffer(128, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'cloudU');
   CU[28] = new URLSearchParams(location.search).get('steps') === '1' ? 1 : 0;
   stBuf = buffer(NST * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST, 'cloudSteps');

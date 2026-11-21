@@ -578,12 +578,15 @@ fn precipMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
       let base = w.y;
       if (p.y < base) {
         // falling streaks and shafts: vertical structure moving down, broken into curtains
-        let cur = sstep(-0.2, 0.5, vn(p.xz * (1.0 / 520.0) + vec2f(tm * 0.002, 0.0), 760u));
+        // curtains lean with the wind shear and wander with height (not vertical bars)
+        let sh = p.xz + CLOUD_WIND * (base - p.y) * 0.35;
+        let cur = sstep(-0.45, 0.45, vn(sh * (1.0 / 700.0) + vec2f(tm * 0.002, p.y * (1.0 / 1400.0)), 760u));
         // one jittered sample per long segment: keep the structure broad, or it turns into dither the upsample cannot
         // resolve (fine streaks are composite.wgsl rainNear's job)
         let stk = 0.78 + 0.22 * vn(vec2f((p.x + p.z * 0.7) * (1.0 / 160.0), (p.y + tm * fall * 6.0) * (1.0 / 900.0)), 761u);
         // virga evaporates on the way down; snow and spores thin out towards the ground less
-        var fade = sstep(base - 2600.0, base - 300.0, p.y) * 0.6 + 0.4;
+        // grows out of the base over 300 m (no hard top line where the base is thin)
+        var fade = (sstep(base - 2600.0, base - 300.0, p.y) * 0.6 + 0.4) * sstep(base, base - 300.0, p.y);
         if (kind == 1) { fade = sstep(base - 900.0, base - 150.0, p.y); }
         let dn = 0.0009 * st * amt * cur * stk * fade * select(1.0, 1.3, kind == 2);
         let a = 1.0 - exp(-dn * (t1 - t0));
