@@ -11,7 +11,8 @@ fn footprint() -> f32 { return select(0.0, TEXEL, TEXEL >= 4.0); }
 // octave weight for wavelength lam (m) at footprint F
 fn octW(lam: f32, F: f32) -> f32 { if (F <= 0.0) { return 1.0; } return sstep(1.5 * F, 4.0 * F, lam); }
 
-struct TP { t0: vec4f, t1: vec4f, t2: vec4f, t3: vec4f, t4: vec4f, t5: vec4f, t6: vec4f, t7: vec4f, t8: vec4f }
+struct TP { t0: vec4f, t1: vec4f, t2: vec4f, t3: vec4f, t4: vec4f, t5: vec4f, t6: vec4f, t7: vec4f, t8: vec4f,
+  t9: vec4f, t10: vec4f, t11: vec4f }
 struct TerrOut { h: f32, mA: vec4f, mB: vec4f }
 // mA: sinkhole distance (Lumen pulse phase), pillar top height / 600 m, hot pool ring coordinate + steam mask, veins
 // mB: crevasse, crystal, cone (salt) or berg (> 0.5 ice, < 0.45 submerged shelf), glacier
@@ -29,6 +30,7 @@ fn terrParams(r: RWt) -> TP {
   k.w /= max(sum, 1e-12);
   t.t3 = bf(k, T3); t.t4 = bf(k, T4);
   t.t5 = bf(k, T5); t.t6 = bf(k, T6); t.t7 = bf(k, T7); t.t8 = bf(k, T8);
+  t.t9 = bf(k, T9); t.t10 = bf(k, T10); t.t11 = bf(k, T11);
   return t;
 }
 
@@ -448,6 +450,124 @@ fn terrainEval(p: vec2f, t: TP, masks: bool) -> TerrOut {
       }
     }
   }
+  // ---- wave 1 realms (DESIGN 13). Each term replaces the height by its own profile, blended by its sharpened
+  // weight, so a border morphs from one landform into the other ----
+
+  // Coral Atoll (T9: weight, ring radius m, lagoon depth m, core height m): a ring reef around the realm site with
+  // sand motus on it, a lagoon of 2-30 m with patch reefs rising to the surface, a steep outer drop-off to the deep
+  // ocean, and a jungle-clad volcanic core in the middle. Deep ocean beyond ~700 m outside the ring, so a nearest-
+  // site switch far out at sea joins level ocean floors.
+  if (t.t9.x > 0.001) {
+    let F = footprint();
+    let c = NEAR_SITE;
+    let wv = (p - c) + 140.0 * vec2f(vn(p * (1.0 / 700.0), 401u), vn(p * (1.0 / 700.0) + vec2f(4.1, 7.3), 402u));
+    let d = length(wv);
+    let e = d - t.t9.y * (1.0 + 0.1 * vn(p * (1.0 / 900.0), 403u)); // + outside the rim's centre line
+    // lagoon floor: shallow sand near the rim, deeper toward the middle, sand waves; patch reefs (bommies)
+    var lag = -t.t9.z * (0.25 + 0.75 * sstep(-60.0, -520.0, e)) + 2.5 * vn(p * (1.0 / 75.0), 404u) * octW(75.0, F);
+    let kc = 170.0;
+    let kg = floor(p / kc);
+    var kn = 0.0;
+    for (var j = -1; j <= 1; j++) {
+      for (var i = -1; i <= 1; i++) {
+        let ci = i32(kg.x) + i; let cj = i32(kg.y) + j;
+        if (hf(ci, cj, 405u) > 0.35) { continue; }
+        let pt = cellPt(ci, cj, kc, 440u);
+        let r = max(18.0 + 30.0 * hf(ci, cj, 442u), 1.5 * F);
+        kn = max(kn, sstep(1.0, 0.45, length(p - pt) / r) * (0.75 + 0.25 * hf(ci, cj, 443u)));
+      }
+    }
+    lag = mix(lag, -0.7, kn * sstep(-30.0, -120.0, e));
+    // outer slope: the reef front drops to 45 m within 200 m, then to the ocean floor at 120 m
+    let outS = -1.0 - 44.0 * sstep(40.0, 230.0, e) - 75.0 * sstep(230.0, 700.0, e);
+    var ha = select(lag, outS, e > 0.0);
+    // the reef flat: a 150 m band just awash, its seaward edge a little higher (the algal ridge where the surf breaks)
+    let reef = sstep(95.0, 45.0, abs(e + 10.0));
+    let reefTop = -0.55 + 0.25 * vn(p * (1.0 / 35.0), 409u) * octW(35.0, F) + 0.3 * sstep(0.0, 40.0, e) * sstep(80.0, 40.0, e);
+    ha = mix(ha, reefTop, reef);
+    // motus: low sand and rubble islets on stretches of the rim, 1.5-3.5 m, beaches sloping into the lagoon
+    let mo = sstep(0.15, 0.45, vn(p * (1.0 / 640.0), 410u)) * sstep(75.0, 25.0, abs(e + 15.0));
+    ha = mix(ha, max(ha, 1.5 + 2.0 * sstep(-0.2, 0.6, vn(p * (1.0 / 160.0), 419u))), mo);
+    // the volcanic core: a steep green island with ridged gullies, its foot in the lagoon
+    let dc = length(wv) / (t.t9.y * 0.42);
+    if (dc < 1.0) {
+      let k = 1.0 - dc;
+      let rq = p * (1.0 / 160.0) + 0.3 * vec2f(vn(p * (1.0 / 400.0), 420u), vn(p * (1.0 / 400.0) + vec2f(5.0, 3.0), 421u));
+      let core = t.t9.w * pow(k, 1.6) * (0.75 + 0.5 * rfbm(rq, 4, 422u, 160.0)) - 8.0;
+      ha = max(ha, core);
+    }
+    h = mix(h, ha, t.t9.x);
+  }
+
+  // Slot Canyons (T10: weight, slot width m, slot depth m, mesa height m): a sandstone mesa of slickrock domes cut
+  // by sinuous slots (the zero lines of a warped noise; distance in metres from its analytic gradient, so the width
+  // is even), widening into amphitheatres, with a shallower network of side slots. Walls keep a minimum horizontal
+  // span (6 m, three mesh quads on coarse levels) so the mesh never draws them as teeth.
+  if (t.t10.x > 0.001) {
+    let F = footprint();
+    var hm = t.t10.w + 22.0 * vn(p * (1.0 / 300.0), 411u) + 5.0 * vn(p * (1.0 / 60.0), 412u) * octW(60.0, F);
+    let wq = p * (1.0 / 520.0) + 0.35 * vec2f(vn(p * (1.0 / 900.0), 413u), vn(p * (1.0 / 900.0) + vec2f(3.0, 1.0), 414u));
+    let n1 = vnoised(wq, 415u);
+    let d1 = abs(n1.x) / max(length(n1.yz) * (1.0 / 520.0), 1e-5);
+    let amph = sstep(0.5, 0.8, vn(p * (1.0 / 700.0), 417u));
+    let hw1 = t.t10.y * (0.35 + 0.4 * sstep(-0.3, 0.6, vn(p * (1.0 / 300.0), 416u))) + 55.0 * amph;
+    let wall = max(6.0, 6.0 * F);
+    let cut1 = sstep(hw1 + wall, hw1, d1);
+    let wq2 = p * (1.0 / 210.0) + 0.3 * vec2f(vn(p * (1.0 / 380.0), 423u), vn(p * (1.0 / 380.0) + vec2f(7.0, 2.0), 424u));
+    let n2 = vnoised(wq2, 425u);
+    let d2 = abs(n2.x) / max(length(n2.yz) * (1.0 / 210.0), 1e-5);
+    let hw2 = t.t10.y * 0.3;
+    let cut2 = sstep(hw2 + wall, hw2, d2) * sstep(0.0, 0.35, vn(p * (1.0 / 450.0), 426u)); // side slots end in the mesa
+    let dep = t.t10.z * (0.75 + 0.25 * vn(p * (1.0 / 420.0), 418u));
+    let flo = 1.5 * vn(p * (1.0 / 25.0), 427u) * octW(25.0, F); // sand floor ripples
+    let ha = hm - max(dep * cut1, dep * 0.55 * cut2) + flo * max(cut1, cut2);
+    h = mix(h, ha, t.t10.x);
+    o.mB.z = max(o.mB.z, max(cut1, cut2) * t.t10.x); // slot mask (material: sand floor, bounce light)
+  }
+
+  // Alpine Crown (T11: weight, tower height m, glacier weight, 0): granite towers stand on the high ground (Dolomites,
+  // Torres), and hanging glaciers fill the cirques above ~900 m: an ice surface 30 m above a smoothed copy of the land.
+  if (t.t11.x > 0.001) {
+    let F = footprint();
+    let tc = 150.0;
+    let g = floor(p / tc);
+    var best = 0.0;
+    let hiG = sstep(650.0, 1100.0, h);
+    if (hiG > 0.001) {
+      for (var j = -1; j <= 1; j++) {
+        for (var i = -1; i <= 1; i++) {
+          let ci = i32(g.x) + i; let cj = i32(g.y) + j;
+          if (hf(ci, cj, 431u) > 0.4) { continue; }
+          let pt = cellPt(ci, cj, tc, 444u);
+          let rb0 = 22.0 + 26.0 * hf(ci, cj, 433u);
+          let ht0 = min(t.t11.y * (0.35 + 0.65 * hf(ci, cj, 434u)), rb0 * 7.0);
+          let fs = max(1.0, 1.25 * F / rb0);
+          let rb = rb0 * fs; let ht = ht0 / fs;
+          let dv = p - pt;
+          let dir = dv / max(length(dv), 1e-3);
+          let db = length(dv) / rb + 0.08 * vn(dir * 4.0 + vec2f(f32(ci & 63), f32(cj & 63)) * 5.0, 435u);
+          if (db >= 1.0) { continue; }
+          // a tapering tower with a rounded summit: the wall is a steep cone over its outer 45 %, the top domed
+          let f = sstep(1.0, 0.55, db);
+          best = max(best, ht * f * (1.0 - 0.18 * db * db));
+        }
+      }
+    }
+    h += t.t11.x * hiG * best;
+    if (t.t11.z > 0.001) {
+      let freq = t.t0.x;
+      let wq = p * (freq * 0.5);
+      let qf = (p + t.t0.w * vec2f(vn(wq, 11u), vn(wq + vec2f(5.2, 1.3), 12u))) * freq;
+      let hl = mix(efbm(qf, 3, t.t1.y, 20u, 1.0 / freq) * 0.75 + 0.5, 0.32, t.t1.x);
+      let sm = pow(max(clamp(hl, 0.0, 1.0), 1e-6), t.t1.w) * t.t0.y + t.t0.z;
+      let gw = sstep(800.0, 950.0, sm + 60.0 * vn(p * (1.0 / 500.0), 436u)) * t.t11.z * t.t11.x;
+      let iceS = sm + 30.0 + 8.0 * vn(p * (1.0 / 260.0), 437u);
+      let cover = gw * sstep(-0.3, 0.6, iceS - h);
+      h = mix(h, max(h, iceS), gw);
+      o.mB.w = max(o.mB.w, cover);
+    }
+  }
+
   o.h = h;
 
   if (masks) {

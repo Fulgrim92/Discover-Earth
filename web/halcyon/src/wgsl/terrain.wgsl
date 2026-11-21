@@ -331,6 +331,7 @@ var<private> gBakeL: i32 = -1;       // >= 0: baking this level's material (terr
 var<private> gForceBake: bool = false; // the second surface of a silhouette pixel: baked path only (a cost cap)
 var<private> gMat: MatS;
 var<private> gPath: u32 = 0u;          // 0 baked, 1 live (dbg=23)
+var<private> gBounce: vec3f = vec3f(0.0);  // Slot Canyons: light bounced off the sunlit walls into the slot (albedo x this x sun)
 var<private> gCost: f32 = 0.0;         // dbg=24: estimated work in 2D value-noise units (blocks entered x their noise count)
 // (replaced by a stub in the bake module, which writes these textures; the markers survive minification)
 const MAT_FETCH_BEGIN: i32 = 0;
@@ -459,7 +460,7 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
     }
     rwm.w /= max(sw, 1e-6);
   }
-  let M4v = bfx(rwm, M4); let M5v = bfx(rwm, M5); let M6v = bfx(rwm, M6);
+  let M4v = bfx(rwm, M4); let M5v = bfx(rwm, M5); let M6v = bfx(rwm, M6); let M7v = bfx(rwm, M7);
   // a pixel of the camera's own pure realm (main.js FR.mc[9].w) has the camera row's light: read once per frame from
   // the uniform block, key light included (no per-pixel sun and moon trig)
   let camP = rw.id[1] < 0 && f32(rw.id[0]) == FR.mc[9].w;
@@ -499,6 +500,7 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   let wIce = M4v.w;
   let wLum = M5v.x;
   let wHome = M5v.z;
+  let wAtoll = M7v.x; let wCanyon = M7v.y; let wAlp = M7v.z; // wave 1 realms (DESIGN 13)
 
   // material outputs (off=tmat leaves them at these constants and skips the whole material section)
   var dg = vec3f(0.0); // detail height gradient (world)
@@ -510,6 +512,7 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   var flatN = 0.0; // 1: shade as a level surface (pool water over terraced ground)
   var iceSnow = 0.0; var iceThin = 0.0;
   var rockW = 0.0; var screeW = 0.0; var wet = 0.0;
+  gBounce = vec3f(0.0);
   if (!isOff(OFF_TMAT)) {
   // Two paths (a real branch). Baked: the macro material of this clip level, baked with it (fsMatBake), plus one
   // detail set for the scales under the baked texel and the live Lumen light: a fixed cost. Live: the full material
@@ -570,7 +573,7 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   let hollow = sstep(0.02, 0.35, conc);
   // the base cover's albedo (turf, soil, scree, uplands): only where some realm shows it (Home, and blends into
   // Home); every other realm replaces the albedo with its own (a real branch: no turf noise under salt or ice)
-  let wBaseA = 1.0 - min(wPaint + wSalt + wStone + wIce + wLum, 1.0);
+  let wBaseA = 1.0 - min(wPaint + wSalt + wStone + wIce + wLum + wAtoll + wCanyon + wAlp, 1.0);
   var heather = 0.0;
   dg += rd.yzw * rockW;
   if (wBaseA > 0.01) {
@@ -1116,6 +1119,118 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
     if (fp < 0.1) { let fz = vnoised(p.xz * (1.0 / 0.07), 303u); dg += vec3f(fz.y, 0.0, fz.z) * 0.04 * bl(0.07, fp) * wLum; }
   }
 
+
+  // ---- Coral Atoll: white coral sand above and under the lagoon, a mottled coral reef flat and patch reefs
+  //      (ochre, mauve, olive algae), darker coral down the drop-off, palm-green motus and a jungle volcanic core ----
+  if (wAtoll > 0.01) {
+    gCost += 6.0;
+    let sand = M3v.rgb * (0.92 + 0.1 * gd.x + 0.06 * nM);
+    // sand ripples and a faint grain close up
+    var at = sand;
+    // reef: the shallow hard ground (reef flat, patch reef tops) between ~-3 m and the surface, mottled at 2-20 m
+    let reefZ = sstep(-3.2, -1.4, h) * sstep(0.4, -0.2, h);
+    let cm = 0.6 * nM + 0.5 * nS + 0.4 * gd.x;
+    var coral = mix(vec3f(0.36, 0.27, 0.2), vec3f(0.34, 0.27, 0.25), sstep(-0.3, 0.4, nL + 0.5 * nS)); // ochre .. dull mauve
+    coral = mix(coral, vec3f(0.2, 0.24, 0.13), sstep(0.2, 0.7, cm) * 0.6); // olive turf algae
+    coral = mix(coral, sand * 0.9, sstep(-0.1, -0.6, cm) * 0.7); // sand channels through the flat
+    let rz = reefZ * sstep(-0.35, 0.15, cm + 0.3 * sstep(-1.0, -0.5, h));
+    at = mix(at, coral * (0.8 + 0.3 * gd.x), rz);
+    // the drop-off: below ~6 m outside the lagoon sand gives way to darker coral slope
+    let deep = sstep(-6.0, -22.0, h) * sstep(0.04, 0.12, slope);
+    at = mix(at, vec3f(0.16, 0.15, 0.14) * (0.8 + 0.4 * gd.x), deep * 0.8);
+    // land: beach sand up to ~1.5 m, then low scrub and palms on the motus; the core is jungle with dark gullies
+    let land = sstep(1.0, 2.2, h + 0.6 * nS);
+    var veg = M0v.rgb * (0.75 + 0.3 * nM + 0.25 * gd.x);
+    veg = mix(veg, veg * vec3f(1.25, 1.2, 0.75), sstep(0.3, 0.8, nL) * 0.4); // sun-yellowed palms
+    veg = mix(veg, veg * 0.6, sstep(0.0, 0.25, conc) * 0.7);              // dark gullies
+    at = mix(at, veg, land * (1.0 - rockW));
+    at = mix(at, M1v.rgb * (0.75 + 0.3 * nM) * rd.x, rockW * sstep(5.0, 15.0, h)); // basalt crags on the core
+    alb = mix(alb, at, wAtoll);
+    rough = mix(rough, mix(0.75, 0.9, land), wAtoll);
+    wet = max(wet, sstep(1.2, 0.2, h) * wAtoll * 0.8);
+  }
+
+  // ---- Slot Canyons: Navajo sandstone. The walls are banded by wavy cross-beds (orange, salmon, cream, deep red),
+  //      the mesa top is pale slickrock with swirling bands (The Wave), the slot floors are soft orange sand ----
+  if (wCanyon > 0.01) {
+    gCost += 7.0;
+    // cross-bed bands: height plus a slow wave along the wall, so the lines flow like Antelope Canyon's
+    let bw = h + 4.0 * vn(p.xz * (1.0 / 38.0), 470u) + 1.2 * vn(p.xz * (1.0 / 9.0), 471u) * bl(9.0, fp);
+    let b1 = sin(bw * (6.2832 / 2.3)) * bl(2.3, fp);
+    let b2 = sin(bw * (6.2832 / 0.7) + 2.0 * nS) * bl(0.7, fp);
+    var ss = M1v.rgb * (0.9 + 0.12 * b1 + 0.05 * b2 + 0.1 * nM);
+    ss = mix(ss, vec3f(0.72, 0.38, 0.26), sstep(0.2, 0.8, vn(vec2f(u * 0.02, bw * 0.08), 472u)) * 0.5); // salmon beds
+    ss = mix(ss, vec3f(0.5, 0.2, 0.1), sstep(0.55, 0.9, vn(vec2f(u * 0.01, bw * 0.05), 473u)) * 0.35); // deep red
+    // desert varnish: dark streaks down the outer walls from the rim
+    let rimD = M7v.y * (bfx(rwm, T10).w - h); // m below the mesa
+    let varn = sstep(0.1, 0.5, vn(vec2f(u * 0.12, h * 0.01), 474u)) * sstep(0.5, 0.75, slope) * sstep(80.0, 10.0, rimD);
+    ss = mix(ss, ss * vec3f(0.35, 0.3, 0.3), varn * 0.6);
+    // slickrock on the gentler mesa: cream with swirls of orange and red
+    let top = sstep(0.4, 0.2, slope);
+    let sw = sin((h * 1.3 + 9.0 * vn(p.xz * (1.0 / 60.0), 475u)) * 2.2) * bl(3.0, fp);
+    // the swirls come in patches (The Wave is one outcrop, not the whole plateau) and stay soft
+    let swP = sstep(-0.1, 0.45, vn(p.xz * (1.0 / 420.0), 477u));
+    var sr = mix(M2v.rgb * 0.85, M1v.rgb * 1.05, sstep(-0.2, 0.8, sw) * mix(0.15, 0.5, swP));
+    sr *= 0.9 + 0.15 * gd.x + 0.08 * nM;
+    // slot floors: soft sand, with pebbles of desert varnish
+    let slot = mB.z * wCanyon;
+    var cc = mix(ss, sr, top);
+    cc = mix(cc, M3v.rgb * (0.85 + 0.2 * gd.x), slot * sstep(0.3, 0.15, slope));
+    // desert scrub on the mesa: sparse sage dots
+    let sage = sstep(0.55, 0.8, vn(rotq(p.xz * (1.0 / 4.0)), 476u) + 0.2 * nM) * top * (1.0 - slot) * M0v.w * 4.0;
+    cc = mix(cc, M0v.rgb * 0.8, min(sage, 0.8));
+    alb = mix(alb, cc, wCanyon);
+    rough = mix(rough, 0.85, wCanyon);
+    // deep in a slot the walls glow with light bounced off the sunlit upper walls (warm, strongest mid-depth)
+    let deepS = sstep(4.0, 25.0, rimD) * slot;
+    gBounce = M1v.rgb * vec3f(1.3, 0.95, 0.6) * deepS * 0.5;
+  }
+
+  // ---- Alpine Crown: belts by altitude and slope. Grey gravel shores on the turquoise lakes, flower meadows,
+  //      larch and pine forest on the lower slopes, granite (pale grey-orange, vertical joints) above, snow on the
+  //      gentle high ground and blue-white hanging glaciers ----
+  if (wAlp > 0.01) {
+    gCost += 9.0;
+    let hz = h + 40.0 * nL + 15.0 * nM;
+    // meadow
+    var mead = M0v.rgb * (0.85 + 0.2 * nL + 0.15 * gd.x);
+    mead = mix(mead, mead * vec3f(1.2, 1.15, 0.8), sstep(0.2, 0.7, nM) * 0.35);
+    // forest: dense dark conifer clumps with gaps, a few golden larch
+    let fz = sstep(80.0, 160.0, hz) * sstep(780.0, 650.0, hz) * sstep(0.55, 0.35, slope);
+    var forest = vec3f(0.035, 0.06, 0.03);
+    let wtr = bl(6.0, fp);
+    if (wtr > 0.0 && fz > 0.01) {
+      let cl = vn(rotq(p.xz * (1.0 / 6.0)), 480u);
+      forest = mix(vec3f(0.06, 0.09, 0.04), vec3f(0.025, 0.04, 0.02), sstep(-0.2, 0.4, cl) * wtr);
+      forest = mix(forest, vec3f(0.3, 0.24, 0.07), sstep(0.75, 0.95, vn(rotq(p.xz * (1.0 / 9.0)) + 3.0, 481u)) * 0.6 * wtr); // larch
+    }
+    let fd = fz * sstep(-0.35, 0.1, nM + 0.4 * nL);
+    var ac = mix(mead, forest, fd);
+    // granite: pale grey with an orange cast, vertical joints and dark water streaks
+    var gr = M1v.rgb * (0.8 + 0.25 * nM + 0.15 * gd.x) * rd.x;
+    gr = mix(gr, gr * vec3f(1.15, 1.0, 0.85), sstep(0.0, 0.7, nL) * 0.5);
+    let jt = vn(vec2f(u * (1.0 / 3.5), h * (1.0 / 40.0)), 482u);
+    gr *= 1.0 - 0.35 * (1.0 - sstep(0.0, 0.08, abs(jt) - 0.03)) * bl(3.5, fp);
+    gr = mix(gr, gr * 0.5, sstep(0.25, 0.6, vn(vec2f(u * 0.15, h * 0.012), 483u)) * sstep(0.6, 0.8, slope) * 0.6);
+    let rockA = max(rockW, sstep(0.5, 0.7, slope + 0.1 * nM) * mix(0.7, 1.0, sstep(300.0, 700.0, hz)));
+    ac = mix(ac, gr, rockA);
+    // scree fans and moraine at the foot of the walls
+    let scr = sstep(0.18, 0.3, slope) * sstep(0.5, 0.38, slope) * sstep(700.0, 950.0, hz) * sstep(-0.1, 0.3, conc + 0.2 * nS);
+    ac = mix(ac, M1v.rgb * 1.15 * (0.85 + 0.3 * gd.x), scr * 0.8);
+    // snow on the gentle high ground; glacier ice (the terrain's hanging glaciers)
+    let snow = sstep(M2v.w - 120.0, M2v.w + 80.0, hz + 120.0 * conc) * sstep(0.75, 0.5, slope);
+    ac = mix(ac, M2v.rgb * (0.88 + 0.1 * nS), snow);
+    let gl = mB.w * wAlp;
+    ac = mix(ac, mix(vec3f(0.62, 0.74, 0.82), M2v.rgb * 0.92, sstep(0.0, 0.6, nM + 0.3 * nS)), gl);
+    // lake shores: grey gravel just around the water
+    let shoreA = sstep(4.0, 1.0, h + 1.5 * nS);
+    ac = mix(ac, M3v.rgb * (0.8 + 0.3 * gd.x), shoreA);
+    alb = mix(alb, ac, wAlp);
+    rough = mix(rough, mix(0.9, 0.45, max(snow, gl)), wAlp);
+    iceSnow = max(iceSnow, max(snow, gl) * wAlp * 0.6);
+    wet = max(wet, shoreA * 0.5 * wAlp);
+  }
+
   } // live material path
   if (gBakeL >= 0) { // material bake: store the macro material (before coast, weather and wetness darkening)
     gMat.a = vec4f(sqrt(max(alb, vec3f(0.0))), rough);
@@ -1205,6 +1320,8 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   let fr = f0 + (1.0 - f0) * pow(1.0 - max(dot(n, V), 0.0), 5.0);
   let kd = 1.0 - fr * (1.0 - 0.6 * rough);
   var col = alb * kd * (sunC * max(ndl, 0.0) * sh + amb);
+  // Slot Canyons: the sunlit upper walls fill the slot with warm bounced light (the glow of Antelope Canyon)
+  if (gBounce.r > 0.0) { col += alb * gBounce * (sunC * max(L.y, 0.0) + skyUp * 0.15) * mix(0.6, 1.0, ao); }
   // Lumen: the ringed giant and the moons light the dunes from the sky; velvet sheen at grazing angles
   if (sheen > 0.0) {
     let Gd = vec3f(0.553, 0.438, -0.708);

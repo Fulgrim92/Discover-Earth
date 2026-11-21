@@ -3,12 +3,13 @@
 // Float64Array scratch slots and only small integers cross function boundaries. V8 boxes every double passed to or
 // returned from a function it does not inline, and heightAt is far too big to inline its helpers, so with plain
 // double arguments it allocated ~400 bytes per call on the sim's frame path. Results are bit-identical.
-import { hu8, realmWeightsA, W_IN, W_ID, W_W, TABLE, blendFields, blendAt as blendRow, blendAtA, ROWF, W_NEAR } from './realms.js';
+import { hu8, realmWeightsA, W_IN, W_ID, W_W, TABLE, blendFields, blendAt as blendRow, blendAtA, ROWF, W_NEAR, F as RF } from './realms.js';
+const F_T9 = RF.T9; // T9-T11 are consecutive fields
 
 export { W_NEAR };
 
 // blended terrain fields T0..T8 (9 vec4) in scratch
-const T = new Float64Array(36);
+const T = new Float64Array(48); // T0-T8, then the wave 1 features T9-T11 (realms.js appends them after V4)
 
 // smoothstep through scratch: SX = [e0, e1, x] -> SX[3] (a call with no double arguments or result: nothing to box
 // whether or not V8 inlines it)
@@ -145,12 +146,14 @@ function blendFeatures() {
   let sum = 0;
   for (let s = 0; s < 4; s++) { const w = W_W[s]; KW[s] = W_ID[s] < 0 ? 0 : w * w * w; sum += KW[s]; }
   sum = sum > 1e-12 ? sum : 1e-12;
-  for (let c = 12; c < 36; c++) T[c] = 0;
+  for (let c = 12; c < 48; c++) T[c] = 0;
   for (let s = 0; s < 4; s++) {
     const id = W_ID[s];
     if (id < 0) continue;
     const w = KW[s] / sum, base = id * ROWF;
     for (let c = 12; c < 36; c++) T[c] += w * TABLE[base + c];
+    const b9 = base + F_T9 * 4;
+    for (let c = 0; c < 12; c++) T[36 + c] += w * TABLE[b9 + c];
   }
 }
 const KW = new Float64Array(4);
@@ -407,6 +410,131 @@ function sec28() {
   HQ[2] = h;
 }
 
+// ---- wave 1 realms (terrfn.wgsl, same order and lines) ----
+// Coral Atoll (T9 -> T[36..39])
+function sec33() {
+  const px = HQ[0], py = HQ[1];
+  let h = HQ[2];
+  if (T[36] > 0.001) {
+    const F = FT[0];
+    const wvx = (px - W_NEAR[0]) + 140 * (NI[0] = px * (1 / 700), NI[1] = py * (1 / 700), vnoised(401), N3[0]);
+    const wvy = (py - W_NEAR[1]) + 140 * (NI[0] = px * (1 / 700) + 4.1, NI[1] = py * (1 / 700) + 7.3, vnoised(402), N3[0]);
+    const d = Math.sqrt(wvx * wvx + wvy * wvy);
+    const e = d - T[37] * (1 + 0.1 * (NI[0] = px * (1 / 900), NI[1] = py * (1 / 900), vnoised(403), N3[0]));
+    let lag = -T[38] * (0.25 + 0.75 * (SX[2] = e, SX[0] = -60, SX[1] = -520, sstepA(), SX[3])) +
+      2.5 * (NI[0] = px * (1 / 75), NI[1] = py * (1 / 75), vnoised(404), N3[0]) * (F > 0 ? (SX[2] = 75, SX[0] = 1.5 * F, SX[1] = 4 * F, sstepA(), SX[3]) : 1);
+    const kc = 170;
+    const gx = Math.floor(px / kc), gy = Math.floor(py / kc);
+    let kn = 0;
+    for (let j = -1; j <= 1; j++) {
+      for (let i = -1; i <= 1; i++) {
+        const ci = gx + i, cj = gy + j;
+        if ((hu8(ci, cj, 405) * (1 / 16777216)) > 0.35) continue;
+        CP[2] = kc; cellPt(ci, cj, 440);
+        const r = Math.max(18 + 30 * (hu8(ci, cj, 442) * (1 / 16777216)), 1.5 * F);
+        const dd = Math.sqrt((px - CP[0]) * (px - CP[0]) + (py - CP[1]) * (py - CP[1])) / r;
+        kn = Math.max(kn, (SX[2] = dd, SX[0] = 1, SX[1] = 0.45, sstepA(), SX[3]) * (0.75 + 0.25 * (hu8(ci, cj, 443) * (1 / 16777216))));
+      }
+    }
+    const kw = kn * (SX[2] = e, SX[0] = -30, SX[1] = -120, sstepA(), SX[3]);
+    lag = lag * (1 - kw) + -0.7 * kw;
+    const outS = -1 - 44 * (SX[2] = e, SX[0] = 40, SX[1] = 230, sstepA(), SX[3]) - 75 * (SX[2] = e, SX[0] = 230, SX[1] = 700, sstepA(), SX[3]);
+    let ha = e > 0 ? outS : lag;
+    const reef = (SX[2] = Math.abs(e + 10), SX[0] = 95, SX[1] = 45, sstepA(), SX[3]);
+    const reefTop = -0.55 + 0.25 * (NI[0] = px * (1 / 35), NI[1] = py * (1 / 35), vnoised(409), N3[0]) * (F > 0 ? (SX[2] = 35, SX[0] = 1.5 * F, SX[1] = 4 * F, sstepA(), SX[3]) : 1) +
+      0.3 * (SX[2] = e, SX[0] = 0, SX[1] = 40, sstepA(), SX[3]) * (SX[2] = e, SX[0] = 80, SX[1] = 40, sstepA(), SX[3]);
+    ha = ha * (1 - reef) + reefTop * reef;
+    const mo = (SX[2] = (NI[0] = px * (1 / 640), NI[1] = py * (1 / 640), vnoised(410), N3[0]), SX[0] = 0.15, SX[1] = 0.45, sstepA(), SX[3]) *
+      (SX[2] = Math.abs(e + 15), SX[0] = 75, SX[1] = 25, sstepA(), SX[3]);
+    const moH = 1.5 + 2 * (SX[2] = (NI[0] = px * (1 / 160), NI[1] = py * (1 / 160), vnoised(419), N3[0]), SX[0] = -0.2, SX[1] = 0.6, sstepA(), SX[3]);
+    ha = ha * (1 - mo) + Math.max(ha, moH) * mo;
+    const dc = d / (T[37] * 0.42);
+    if (dc < 1) {
+      const k = 1 - dc;
+      const rqx = px * (1 / 160) + 0.3 * (NI[0] = px * (1 / 400), NI[1] = py * (1 / 400), vnoised(420), N3[0]);
+      const rqy = py * (1 / 160) + 0.3 * (NI[0] = px * (1 / 400) + 5, NI[1] = py * (1 / 400) + 3, vnoised(421), N3[0]);
+      const core = T[39] * Math.pow(k, 1.6) * (0.75 + 0.5 * (NI[0] = rqx, NI[1] = rqy, FT[1] = 160, rfbm(4, 422), FB[0])) - 8;
+      ha = Math.max(ha, core);
+    }
+    h = h * (1 - T[36]) + ha * T[36];
+  }
+  HQ[2] = h;
+}
+// Slot Canyons (T10 -> T[40..43])
+function sec34() {
+  const px = HQ[0], py = HQ[1];
+  let h = HQ[2];
+  if (T[40] > 0.001) {
+    const F = FT[0];
+    const hm = T[43] + 22 * (NI[0] = px * (1 / 300), NI[1] = py * (1 / 300), vnoised(411), N3[0]) +
+      5 * (NI[0] = px * (1 / 60), NI[1] = py * (1 / 60), vnoised(412), N3[0]) * (F > 0 ? (SX[2] = 60, SX[0] = 1.5 * F, SX[1] = 4 * F, sstepA(), SX[3]) : 1);
+    const wqx = px * (1 / 520) + 0.35 * (NI[0] = px * (1 / 900), NI[1] = py * (1 / 900), vnoised(413), N3[0]);
+    const wqy = py * (1 / 520) + 0.35 * (NI[0] = px * (1 / 900) + 3, NI[1] = py * (1 / 900) + 1, vnoised(414), N3[0]);
+    NI[0] = wqx; NI[1] = wqy; vnoised(415);
+    const d1 = Math.abs(N3[0]) / Math.max(Math.sqrt(N3[1] * N3[1] + N3[2] * N3[2]) * (1 / 520), 1e-5);
+    const amph = (SX[2] = (NI[0] = px * (1 / 700), NI[1] = py * (1 / 700), vnoised(417), N3[0]), SX[0] = 0.5, SX[1] = 0.8, sstepA(), SX[3]);
+    const hw1 = T[41] * (0.35 + 0.4 * (SX[2] = (NI[0] = px * (1 / 300), NI[1] = py * (1 / 300), vnoised(416), N3[0]), SX[0] = -0.3, SX[1] = 0.6, sstepA(), SX[3])) + 55 * amph;
+    const wall = Math.max(6, 6 * F);
+    const cut1 = (SX[2] = d1, SX[0] = hw1 + wall, SX[1] = hw1, sstepA(), SX[3]);
+    const wq2x = px * (1 / 210) + 0.3 * (NI[0] = px * (1 / 380), NI[1] = py * (1 / 380), vnoised(423), N3[0]);
+    const wq2y = py * (1 / 210) + 0.3 * (NI[0] = px * (1 / 380) + 7, NI[1] = py * (1 / 380) + 2, vnoised(424), N3[0]);
+    NI[0] = wq2x; NI[1] = wq2y; vnoised(425);
+    const d2 = Math.abs(N3[0]) / Math.max(Math.sqrt(N3[1] * N3[1] + N3[2] * N3[2]) * (1 / 210), 1e-5);
+    const hw2 = T[41] * 0.3;
+    const cut2 = (SX[2] = d2, SX[0] = hw2 + wall, SX[1] = hw2, sstepA(), SX[3]) *
+      (SX[2] = (NI[0] = px * (1 / 450), NI[1] = py * (1 / 450), vnoised(426), N3[0]), SX[0] = 0, SX[1] = 0.35, sstepA(), SX[3]);
+    const dep = T[42] * (0.75 + 0.25 * (NI[0] = px * (1 / 420), NI[1] = py * (1 / 420), vnoised(418), N3[0]));
+    const flo = 1.5 * (NI[0] = px * (1 / 25), NI[1] = py * (1 / 25), vnoised(427), N3[0]) * (F > 0 ? (SX[2] = 25, SX[0] = 1.5 * F, SX[1] = 4 * F, sstepA(), SX[3]) : 1);
+    const ha = hm - Math.max(dep * cut1, dep * 0.55 * cut2) + flo * Math.max(cut1, cut2);
+    h = h * (1 - T[40]) + ha * T[40];
+  }
+  HQ[2] = h;
+}
+// Alpine Crown (T11 -> T[44..47]); the glacier needs qf from heightCore (GQ)
+function sec35() {
+  const px = HQ[0], py = HQ[1];
+  let h = HQ[2];
+  if (T[44] > 0.001) {
+    const F = FT[0];
+    const tc = 150;
+    const gx = Math.floor(px / tc), gy = Math.floor(py / tc);
+    let best = 0;
+    const hiG = (SX[2] = h, SX[0] = 650, SX[1] = 1100, sstepA(), SX[3]);
+    if (hiG > 0.001) {
+      for (let j = -1; j <= 1; j++) {
+        for (let i = -1; i <= 1; i++) {
+          const ci = gx + i, cj = gy + j;
+          if ((hu8(ci, cj, 431) * (1 / 16777216)) > 0.4) continue;
+          CP[2] = tc; cellPt(ci, cj, 444);
+          const rb0 = 22 + 26 * (hu8(ci, cj, 433) * (1 / 16777216));
+          const ht0 = Math.min(T[45] * (0.35 + 0.65 * (hu8(ci, cj, 434) * (1 / 16777216))), rb0 * 7);
+          const fs = Math.max(1, 1.25 * F / rb0);
+          const rb = rb0 * fs, ht = ht0 / fs;
+          const dvx = px - CP[0], dvy = py - CP[1];
+          const dl = Math.max(Math.sqrt(dvx * dvx + dvy * dvy), 1e-3);
+          const db = Math.sqrt(dvx * dvx + dvy * dvy) / rb +
+            0.08 * (NI[0] = (dvx / dl) * 4 + (ci & 63) * 5, NI[1] = (dvy / dl) * 4 + (cj & 63) * 5, vnoised(435), N3[0]);
+          if (db >= 1) continue;
+          const f = (SX[2] = db, SX[0] = 1, SX[1] = 0.55, sstepA(), SX[3]);
+          best = Math.max(best, ht * f * (1 - 0.18 * db * db));
+        }
+      }
+    }
+    h += T[44] * hiG * best;
+    if (T[46] > 0.001) {
+      const qfx = GQ[0], qfy = GQ[1], freq = GQ[2];
+      let hl = (NI[0] = qfx, NI[1] = qfy, FB[1] = T[5], FT[1] = 1 / freq, efbm(3, 20), FB[0]) * 0.75 + 0.5;
+      hl = hl * (1 - T[4]) + 0.32 * T[4];
+      hl = hl < 0 ? 0 : hl > 1 ? 1 : hl;
+      const sm = Math.pow(Math.max(hl, 1e-6), T[7]) * T[1] + T[2];
+      const gw = (SX[2] = sm + 60 * (NI[0] = px * (1 / 500), NI[1] = py * (1 / 500), vnoised(436), N3[0]), SX[0] = 800, SX[1] = 950, sstepA(), SX[3]) * T[46] * T[44];
+      const iceS = sm + 30 + 8 * (NI[0] = px * (1 / 260), NI[1] = py * (1 / 260), vnoised(437), N3[0]);
+      h = h * (1 - gw) + Math.max(h, iceS) * gw;
+    }
+  }
+  HQ[2] = h;
+}
+
 function sec30() {
   const px = HQ[0], py = HQ[1];
   let h = HQ[2];
@@ -513,6 +641,9 @@ function heightCore() {
   sec28();
   sec30();
   sec31();
+  sec33();
+  sec34();
+  sec35();
 }
 
 // Full blended realm row at (x, z) into outRow (Float32Array of ROWF). W_NEAR then holds the nearest site.

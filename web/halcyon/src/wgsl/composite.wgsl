@@ -176,6 +176,8 @@ fn reflectRay(P: vec3f, R: vec3f, rw: RWt, pix: f32) -> vec3f {
     alb = mix(alb, vec3f(0.75, 0.88, 0.95), sstep(0.5, 0.6, mb.z) * m4.w);
     // Lumen: near-black indigo
     alb = mix(alb, vec3f(0.018, 0.014, 0.045), bf(rq, M5).x * 0.6);
+    // Coral Atoll: the motus are white sand up to ~2 m, palms above (terrain.wgsl), not lawn
+    alb = mix(alb, mix(bf(rq, M3).rgb, alb * 0.7, sstep(1.0, 2.2, hp.y)), bf(rq, M7).x);
     let KLr = keyLight(bf(rq, S0), bf(rq, S1), bf(rq, S8), FR.sun.w);
     let L = KLr.dir;
     let sc = KLr.col;
@@ -280,7 +282,9 @@ struct VO { @builtin(position) pos: vec4f }
       let ruv = clamp(uv + n.xz * 0.04 * min(depth, 4.0) / (1.0 + tw * 0.02), vec2f(0.0), vec2f(1.0));
       var under = textureSampleLevel(sceneT, linS, ruv, 0.0).rgb;
       let dist2 = textureSampleLevel(distT, linS, ruv, 0.0).x;
-      if (dist2 + max(0.6, dist2 * 0.0015) < tw) { under = col; }
+      // the shifted sample must be under this water too: in front of the surface, or far behind this pixel's floor
+      // (land beyond the shore seen through clear deep water: green flecks), it falls back to the unshifted floor
+      if (dist2 + max(0.6, dist2 * 0.0015) < tw || dist2 > dist + max(4.0, dist - tw)) { under = col; }
       if (isSky) { under = vec3f(0.0); }
       let path = min(thick, 400.0);
       let tr = exp(-w0.rgb * path);

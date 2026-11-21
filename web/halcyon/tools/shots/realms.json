@@ -13,6 +13,12 @@
     { "name": "ice_high",     "params": { "realm": 4, "pos": "1500,300,-800", "agl": 1, "yaw": 285, "pitch": -7 } },
     { "name": "lumen_low",    "params": { "realm": 5, "pos": "0,15,0", "agl": 1, "yaw": 40, "pitch": 8 } },
     { "name": "lumen_high",   "params": { "realm": 5, "pos": "-800,380,800", "agl": 1, "yaw": 45, "pitch": -10 } },
+    { "name": "atoll_low",    "params": { "realm": 6, "pos": "-1100,3,300", "agl": 1, "yaw": 285, "pitch": 1 } },
+    { "name": "atoll_high",   "params": { "realm": 6, "pos": "2500,400,600", "yaw": 283, "pitch": -10 } },
+    { "name": "canyon_low",   "params": { "realm": 7, "pos": "-480,8,-810", "agl": 1, "yaw": 97, "pitch": 8 } },
+    { "name": "canyon_high",  "params": { "realm": 7, "pos": "-700,200,700", "agl": 1, "yaw": 135, "pitch": -28 } },
+    { "name": "alpine_low",   "params": { "realm": 8, "pos": "975,3,-600", "agl": 1, "yaw": 180, "pitch": 6 } },
+    { "name": "alpine_high",  "params": { "realm": 8, "pos": "0,1750,2500", "yaw": 0, "pitch": -18 } },
     { "name": "border_home_painted", "params": { "realm": 0, "pos": "1200,380,300", "agl": 1, "yaw": 95, "pitch": -9 } },
     { "name": "stereo_home",  "params": { "realm": 0, "pos": "300,60,-200", "agl": 1, "yaw": 205, "pitch": -4, "stereo": 1 } }
   ]
