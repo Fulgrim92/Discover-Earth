@@ -1,0 +1,155 @@
+{
+ "_comment": "Home -> Painted Drift crossing as a moving camera: 12 frames from the Home sheep (1759, 263) over the ridge in the border band to the Painted horses (3892, 423), 30 m above the ground, pitched so the ground ~140 m ahead sits below the centre, time stepping 4 s per frame (a ~45 m/s transit); _painted is the Painted Range weight at the camera. Made by a script (ground heights from src/world.js). node tools/shot.mjs tools/shots/crossing.json --out out/crossing; python3 tools/sheet.py out/crossing/crossing.sheet.png out/crossing/cross_*.png",
+ "defaults": {
+  "w": 1920,
+  "h": 1080,
+  "hud": 0,
+  "fov": 62
+ },
+ "shots": [
+  {
+   "name": "cross_00",
+   "params": {
+    "realm": 0,
+    "pos": "1660,30,256",
+    "agl": 1,
+    "yaw": 94.3,
+    "pitch": -7.5,
+    "t": 20
+   },
+   "_painted": 0
+  },
+  {
+   "name": "cross_01",
+   "params": {
+    "realm": 0,
+    "pos": "1855,30,270",
+    "agl": 1,
+    "yaw": 94.3,
+    "pitch": -6,
+    "t": 24
+   },
+   "_painted": 0.01
+  },
+  {
+   "name": "cross_02",
+   "params": {
+    "realm": 0,
+    "pos": "2049,30,285",
+    "agl": 1,
+    "yaw": 94.3,
+    "pitch": -6,
+    "t": 28
+   },
+   "_painted": 0.07
+  },
+  {
+   "name": "cross_03",
+   "params": {
+    "realm": 0,
+    "pos": "2244,30,299",
+    "agl": 1,
+    "yaw": 94.3,
+    "pitch": -14.4,
+    "t": 32
+   },
+   "_painted": 0.21
+  },
+  {
+   "name": "cross_04",
+   "params": {
+    "realm": 0,
+    "pos": "2438,30,314",
+    "agl": 1,
+    "yaw": 94.3,
+    "pitch": -26.5,
+    "t": 36
+   },
+   "_painted": 0.35
+  },
+  {
+   "name": "cross_05",
+   "params": {
+    "realm": 0,
+    "pos": "2633,30,329",
+    "agl": 1,
+    "yaw": 94.3,
+    "pitch": -23.5,
+    "t": 40
+   },
+   "_painted": 0.44
+  },
+  {
+   "name": "cross_06",
+   "params": {
+    "realm": 0,
+    "pos": "2827,30,343",
+    "agl": 1,
+    "yaw": 94.3,
+    "pitch": -12.9,
+    "t": 44
+   },
+   "_painted": 0.49
+  },
+  {
+   "name": "cross_07",
+   "params": {
+    "realm": 0,
+    "pos": "3022,30,358",
+    "agl": 1,
+    "yaw": 94.3,
+    "pitch": -6,
+    "t": 48
+   },
+   "_painted": 0.5
+  },
+  {
+   "name": "cross_08",
+   "params": {
+    "realm": 0,
+    "pos": "3216,30,372",
+    "agl": 1,
+    "yaw": 94.3,
+    "pitch": -35,
+    "t": 52
+   },
+   "_painted": 0.51
+  },
+  {
+   "name": "cross_09",
+   "params": {
+    "realm": 0,
+    "pos": "3411,30,387",
+    "agl": 1,
+    "yaw": 94.3,
+    "pitch": -35,
+    "t": 56
+   },
+   "_painted": 0.58
+  },
+  {
+   "name": "cross_10",
+   "params": {
+    "realm": 0,
+    "pos": "3605,30,401",
+    "agl": 1,
+    "yaw": 94.3,
+    "pitch": -35,
+    "t": 60
+   },
+   "_painted": 0.74
+  },
+  {
+   "name": "cross_11",
+   "params": {
+    "realm": 0,
+    "pos": "3800,30,416",
+    "agl": 1,
+    "yaw": 94.3,
+    "pitch": -17,
+    "t": 64
+   },
+   "_painted": 0.94
+  }
+ ]
+}
