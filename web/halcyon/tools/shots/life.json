@@ -25,7 +25,8 @@
     { "name": "drift_painted_150", "params": { "realm": 0, "pos": "3076,150,262", "agl": 1, "yaw": 95, "pitch": -24 } },
     { "name": "drift_mirror_5",  "params": { "realm": 0, "pos": "-1992,4,-1708", "agl": 1, "yaw": 311, "pitch": -8 } },
     { "name": "drift_stone_5",   "params": { "realm": 0, "pos": "142,5,3116", "agl": 1, "yaw": 177, "pitch": -6 } },
-    { "name": "crown_5",   "params": { "w": 1920, "h": 1080, "fov": 50, "realm": 3, "pos": "-131,24,-387", "agl": 1, "yaw": 84, "pitch": -16 } },
+    { "name": "meadow_near", "params": { "w": 1920, "h": 1080, "realm": 0, "pos": "300,1.2,-200", "agl": 1, "yaw": 205, "pitch": -22 } },
+    { "name": "crown_5",  "params": { "w": 1920, "h": 1080, "fov": 50, "realm": 3, "pos": "-131,24,-387", "agl": 1, "yaw": 84, "pitch": -16 } },
     { "name": "crown_30",  "params": { "w": 1920, "h": 1080, "fov": 50, "realm": 3, "pos": "-150,24,-385", "agl": 1, "yaw": 84, "pitch": -4 } },
     { "name": "crown_150", "params": { "w": 1920, "h": 1080, "fov": 50, "realm": 3, "pos": "-150,150,-385", "agl": 1, "yaw": 84, "pitch": -40 } }
   ]

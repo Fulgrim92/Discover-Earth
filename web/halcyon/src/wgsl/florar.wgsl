@@ -74,6 +74,9 @@ fn widthAt(k: u32, j: u32) -> f32 {
     o.pos = VW.vp * vec4f(pos - cam, 1.0);
     return o;
   }
+  // meadow clumps thin out over their fade ramps (a random share drops out, the rest shrink), so the carpet
+  // dissolves into the sward instead of ending on a line
+  if (kind == K_TUFT && I.x >= 0.0 && lfRand(I.h, 31u) > I.fade * 1.4) { return dead(); }
   // blade root inside the tuft (clumped toward the centre)
   let ang = r1 * 6.2832;
   var spread = I.cell * 0.45;
@@ -101,7 +104,7 @@ fn widthAt(k: u32, j: u32) -> f32 {
       // far impostor tuft: a wide card with a fringe of grass spikes (shaped in the fragment shader) that grows
       // with distance so the ring keeps its cover as the count thins
       let sc = max(1.0, I.d / 28.0);
-      H = (0.3 + 0.25 * r4) * min(sc, 2.4); W = (0.35 + 0.3 * r3) * sc; leanM = 0.35 + 0.4 * r3; stiff = 0.5; tr = 0.6;
+      H = (0.24 + 0.2 * r4) * min(sc, 2.4); W = (0.22 + 0.16 * r3) * sc; leanM = 0.35 + 0.4 * r3; stiff = 0.5; tr = 0.3;
       if (I.x < 0.0) { H *= 1.3; W *= 0.7; }
     }
     case 3u: { H = (0.7 + 0.8 * r4); W = 0.012 * ws; leanM = 0.05 + 0.12 * r3; stiff = 0.5; }
@@ -141,7 +144,8 @@ fn widthAt(k: u32, j: u32) -> f32 {
     let t2 = cross(hn, t1);
     let kk = select(vi - 10u, 0u, vi == 9u);
     let cx = f32(kk & 1u) * 2.0 - 1.0; let cy = f32(kk >> 1u) * 2.0 - 1.0;
-    let rad = (0.015 + 0.013 * r3) * pow(lscale, 0.55) * sizeF * select(1.0, 1.35, I.alb.b > 0.6 && I.alb.r > 0.6);
+    // 2-4 cm across: buttercups, daisies and cranesbill are small heads on long stems, not discs on the grass
+    let rad = (0.01 + 0.008 * r3) * pow(lscale, 0.55) * sizeF * select(1.0, 1.25, I.alb.b > 0.6 && I.alb.r > 0.6);
     o.wp = tip + (t1 * cx + t2 * cy) * rad;
     o.n = hn;
     o.loc = vec2f(cx, cy);
@@ -205,7 +209,8 @@ fn widthAt(k: u32, j: u32) -> f32 {
   }
   if (kind == K_TUSSOCK) { a2 = mix(alb * 0.6, alb * vec3f(1.15, 1.1, 1.0), s); }
   if (kind == K_TUFT) {
-    a2 = mix(alb * 0.72, alb * select(vec3f(1.25, 1.2, 0.75), vec3f(1.08, 1.06, 1.02), I.x < 0.0), s);
+    // within the meadow's own greens (the ground's albedo), only a little lighter at the tips: never lime
+    a2 = mix(alb * 0.72, alb * select(vec3f(1.06, 1.05, 0.92), vec3f(1.08, 1.06, 1.02), I.x < 0.0), s);
     if (I.x >= 1.0 && b == 0u) {
       // a flower drift seen from afar: blossom colour on the tips of one card
       let code = floor(I.x);
@@ -496,7 +501,7 @@ fn floraLit(n: vec3f, V: vec3f, alb: vec3f, sh: f32, ao: f32, tr: f32, kind: u32
   let back = max(-ndl, 0.0) * tr * 0.55;
   let mu = max(dot(-V, L), 0.0);
   let fwd = (pow(mu, 8.0) * 4.0 + pow(mu, 3.0) * 0.7) * tr;
-  let tcol = alb * vec3f(1.3, 1.95, 0.55) + vec3f(0.006, 0.012, 0.0); // leaf transmission: glowing yellow-green, not ochre
+  let tcol = alb * vec3f(1.2, 1.6, 0.65) + vec3f(0.005, 0.009, 0.0); // leaf transmission: a warmer green, not lime or ochre
   var col = alb * (sc * sh * max(ndl, 0.0) + lfAmb(n.y, alb) * ao) + tcol * sc * sh * (back + fwd) * ao;
   // soft sheen on leaves
   let hv = normalize(L + V);
@@ -561,9 +566,17 @@ struct FOut { @location(0) c: vec4f, @location(1) d: vec4f }
         let gap = vn(vec2f(u * 9.0, yv * 7.0) + in.shp.w * 13.0, 977u);
         alpha = aaStep(length(q) - edge) * aaStep(gap - 0.55) * aaStep(-yv);
       } else {
-        let sp = abs(sin(u * 3.1416 * 6.0 + in.shp.w * 20.0)) * 0.6 + abs(sin(u * 3.1416 * 13.0 + in.shp.w * 7.0)) * 0.4;
-        let top = 0.35 + 0.6 * pow(sp, 0.7);
-        alpha = aaStep(yv - top) * aaStep(abs(u) - 0.5 * (1.0 - 0.35 * yv));
+        // a meadow clump: a fan of narrow blades from a tight root, each with its own length and a curve that bends
+        // its tip over (not one flat card with a spiky top)
+        let bendC = (in.shp.w - 0.5) * 0.9;
+        let th = (u - bendC * yv * yv) / (yv + 0.08) * 0.5;
+        let bi = floor(th * 12.0 + in.shp.w * 5.0);
+        let f = fract(th * 12.0 + in.shp.w * 5.0);
+        let hb = fract(sin(bi * 12.9898 + in.shp.w * 78.233) * 43758.5453);
+        let top = 0.4 + 0.6 * hb;
+        let w = 0.3 * (1.0 - yv / top);
+        alpha = aaStep(abs(f - 0.5) - w) * aaStep(yv - top) * aaStep(abs(u - bendC * yv * yv) - 0.5);
+        alb *= 0.9 + 0.2 * hb; // blade to blade variation
       }
     }
   } else if (kind == K_FERN || kind == K_VINE) {
