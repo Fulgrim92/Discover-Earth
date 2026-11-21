@@ -291,8 +291,8 @@ fn mushCR(t: f32) -> vec2f {
 
 // subtropical crown: a cluster of 6 rounded sub-crowns (cauliflower lobes) at random bearings and heights, so the
 // canopy reads as many trees' worth of billowing foliage instead of one lumpy dome; 0..1 how far out on a lobe
-fn crownLobe(k: u32, a: f32, h: u32) -> f32 {
-  let y = crownProf(k).y;
+fn crownLobe(k: u32, a: f32, h: u32) -> f32 { return crownLobeY(crownProf(k).y, a, h); }
+fn crownLobeY(y: f32, a: f32, h: u32) -> f32 {
   var lob = 0.0;
   for (var i = 0u; i < 6u; i++) {
     let th = lfRand(h, 60u + i) * 6.2832;
@@ -313,14 +313,28 @@ fn lathePt(kind: u32, k: u32, a: f32, H: f32, R: f32, h: u32) -> vec3f {
     let ca = vec2f(cos(a), sin(a));
     let l = vn(ca * 1.7 + vec2f(sd, f32(k) * 0.9), 840u) * 0.55 + vn(ca * 4.3 + vec2f(sd, f32(k) * 2.1), 841u) * 0.3;
     let lob = crownLobe(k, a, h);
-    r *= 0.72 + 0.62 * lob + 0.22 * l;
-    y += (lob * 0.07 + l * 0.04) * H;
+    r *= 0.8 + 0.45 * lob + 0.16 * l; // billowing, not creased: the leaf cards carry the fine relief
+    y += (lob * 0.06 + l * 0.03) * H;
   }
   if (kind == K_MUSH && k >= 4u) {
     // scalloped cap rim
     r *= 1.0 + 0.06 * sin(a * 7.0 + f32(h & 63u));
   }
   return vec3f(cos(a) * r, y, sin(a) * r);
+}
+
+// foliage crown (Stone Forest canopy): a closed, rounded shell of CR_NS x 6 quads along the crown profile (trunk
+// stub, underside, billowing sides, top), opaque, with CR_NC leaf-cluster cards on its surface. The cards face the
+// camera and sit half out of the shell, so the outline is leafy wherever it is seen from while the volume behind
+// them stays closed: no see-through holes. 576 + 384 = 960 vertices (flora.wgsl CROWN_SEG x CROWN_RING x 6).
+const CR_NS = 16u; const CR_SHELL = 576u; const CR_NC = 64u;
+fn crT(ring: u32) -> f32 {
+  switch ring { case 0u: { return 0.0; } case 1u: { return 1.0; } case 2u: { return 2.0; } case 3u: { return 3.3; }
+    case 4u: { return 4.6; } case 5u: { return 6.0; } default: { return 8.0; } }
+}
+fn crownAt(tp: f32, a: f32, H: f32, R: f32, h: u32) -> vec3f {
+  let k0 = u32(min(floor(tp), 7.0)); let f = tp - f32(k0);
+  return mix(lathePt(K_CROWN, k0, a, H, R, h), lathePt(K_CROWN, k0 + 1u, a, H, R, h), f);
 }
 
 @vertex fn vsLathe(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> FV {
@@ -333,7 +347,52 @@ fn lathePt(kind: u32, k: u32, a: f32, H: f32, R: f32, h: u32) -> vec3f {
   let sizeF = 0.25 + 0.75 * I.fade;
   var wp: vec3f; var n: vec3f; var loc: vec2f; var alb = I.alb; var emis = vec3f(0.0); var tr = 0.3;
   var shp = vec4f(0.0); var lobe = 1.0;
-  if (I.kind == K_MUSH || I.kind == K_CROWN) {
+  if (I.kind == K_CROWN) {
+    var H = 4.0 + 6.0 * r2; var R = H * (0.42 + 0.16 * r3); // broad crowns that close into a canopy
+    if (I.x > 0.5) { H = 13.0 + 6.0 * r2; R = H * (0.26 + 0.08 * r3); } // emergent
+    H *= sizeF; R *= sizeF;
+    let ctr = vec3f(0.0, 0.62 * H, 0.0); // the crown's middle: foliage normals bend out from it (a soft volume)
+    let swy = sin(t * 0.5 + r1 * 9.0) * 0.04 * H;
+    var pk: vec3f;
+    if (vi < CR_SHELL) {
+      let q = vi / 6u; let c = CO[vi % 6u];
+      let seg = q % CR_NS + c.x; let ring = q / CR_NS + c.y;
+      let a = f32(seg) / f32(CR_NS) * 6.2832 + r1 * 6.2832;
+      let tp = crT(ring);
+      pk = crownAt(tp, a, H, R, I.h);
+      let pa = crownAt(max(tp - 0.35, 0.0), a, H, R, I.h); let pb = crownAt(min(tp + 0.35, 8.0), a, H, R, I.h);
+      let pc = crownAt(tp, a + 0.25, H, R, I.h);
+      var nn = normalize(cross(pb - pa, pc - pk));
+      if (ring == 6u) { nn = vec3f(0.0, 1.0, 0.0); }
+      n = select(normalize(mix(nn, normalize(pk - ctr), 0.6)), nn, tp < 1.5);
+      loc = vec2f(f32(seg) / f32(CR_NS), tp);
+      alb = select(alb, vec3f(0.12, 0.1, 0.08), tp < 1.5); // the trunk stub
+      lobe = select(crownLobeY(pk.y / max(H, 1e-3), a, I.h), 1.0, ring == 6u);
+      shp = vec4f(H, R, r1, 0.0);
+    } else {
+      // a leaf-cluster card: golden-angle bearings over the canopy (not the trunk), facing the camera, its centre a
+      // little inside the shell so half of it stands out of the outline
+      let ci = (vi - CR_SHELL) / 6u; let c = CO[(vi - CR_SHELL) % 6u];
+      let hc = hu(i32(I.h), i32(ci), 0xC7u);
+      let tp = 2.3 + 5.4 * (f32(ci) + lfRand(hc, 1u)) / f32(CR_NC);
+      let a = f32(ci) * 2.39996 + r1 * 6.2832;
+      pk = crownAt(tp, a, H, R, I.h);
+      pk = ctr + (pk - ctr) * 0.94;
+      let Vc = normalize(cam - (I.p + pk));
+      let rt = normalize(cross(vec3f(0.0, 1.0, 0.0), Vc) + vec3f(1e-4, 0.0, 0.0)); let up = cross(Vc, rt);
+      let ro = lfRand(hc, 3u) * 6.2832;
+      let uv = vec2f(f32(c.x) * 2.0 - 1.0, f32(c.y) * 2.0 - 1.0);
+      let uvr = vec2f(uv.x * cos(ro) - uv.y * sin(ro), uv.x * sin(ro) + uv.y * cos(ro));
+      let s = R * (0.26 + 0.1 * lfRand(hc, 2u));
+      pk += (rt * uvr.x + up * uvr.y) * s;
+      n = normalize(pk - ctr);
+      loc = uvr;
+      shp = vec4f(H, R, lfRand(hc, 4u), 1.0);
+    }
+    let hy = clamp(pk.y / max(H, 1e-3), 0.0, 1.0);
+    wp = I.p + pk + vec3f(0.8, 0.0, 0.6) * swy * hy * hy;
+    tr = 0.35;
+  } else if (I.kind == K_MUSH) {
     let isM = I.kind == K_MUSH;
     let NS = select(CROWN_SEG, MUSH_SEG, isM); let NR = select(CROWN_RING, MUSH_RING, isM);
     if (vi >= NS * NR * 6u) { return dead(); }
@@ -552,30 +611,34 @@ struct FOut { @location(0) c: vec4f, @location(1) d: vec4f }
     // translucent cap flesh: the gill light scatters through the thin margin, softly, wider at grazing angles
     emis += in.emis * sstep(5.0, 5.5, ring) * sstep(6.3, 5.7, ring) * (0.04 + 0.3 * fr);
   } else if (kind == K_CROWN) {
-    // leaf clusters: high-frequency normal noise and dark gaps
-    // (trig lumps, not value noise: the fragment stays cheap)
-    // leaf clusters at two scales (the finer one only near), holes only toward the silhouette: a soft leafy edge
-    // and a closed, lit volume inside (no see-through gaps)
-    let lp = in.wp * 2.2;
-    let g = sin(lp * vec3f(1.7, 2.3, 1.9) + 2.0 * sin(lp.zxy * vec3f(1.3, 1.1, 1.7)));
-    let nearF = sstep(40.0, 8.0, dist);
-    // near: leaf clusters as value-noise bumps on two planes (no trig worms), clumps darker between
-    let pw = in.wp * 4.0;
-    let na = vnoised(pw.xz + 0.37 * pw.y, 861u);
-    let nb = vnoised(pw.xy + 0.37 * pw.z, 862u);
-    let G = vec3f(na.y + nb.y, nb.z, na.z);
-    let edge = 1.0 - abs(dot(n, V));
-    n = normalize(n + g * 0.35 * (1.0 - nearF) - G * 0.12 * nearF);
-    let q = in.wp * 3.1;
-    let gap = 0.6 * sin(q.x * 1.3 + 2.0 * sin(q.z * 1.1) + q.y) * cos(q.z * 1.4 - 1.5 * sin(q.y * 1.2 + q.x)) + 0.4 * g.x * g.y;
-    let fine = mix(gap, 0.6 * na.x + 0.4 * nb.x, nearF);
-    let rim = sstep(0.35, 0.8, edge);
-    alpha = sstep(-0.05, 0.12, fine * rim + 0.75 - rim * 0.95); // ragged leafy silhouette, solid inside
-    alb *= 0.78 + 0.35 * sstep(-0.4, 0.5, fine);
-    alb *= mix(1.0, mix(0.4, 1.12, sstep(-0.55, 0.45, na.x + 0.5 * nb.x)), nearF); // deep gaps between leaf clusters
-    alb = mix(vec3f(luma(alb)), alb, 0.75);
-    ao = mix(0.62, 1.0, sstep(2.0, 6.5, in.loc.y)) * (0.8 + 0.2 * sstep(-0.5, 0.3, fine));
-    alb *= mix(0.85, 1.12, sstep(0.55, 1.0, in.prm.y));                // outer leaves on the sub-crowns lighter, younger
+    // foliage: the shell is closed and opaque (its leaves are a soft mottle); the cards on it are leaf clusters, a
+    // lobed outline of 7 leaves with a domed normal that blends into the crown's own volume. Shade is sky-lit, never
+    // black: the folds and the underside keep at least 0.6 of the ambient, and the sun side passes light through.
+    alb = mix(vec3f(luma(alb)), alb, 0.8);
+    if (in.shp.w > 0.5) {
+      let uv = in.loc; let r = length(uv);
+      let a = atan2(uv.y, uv.x) + in.shp.z * 6.2832;
+      let lf = pow(abs(cos(a * 3.5)), 0.7);                        // 7 leaves round the cluster
+      let outl = 0.62 + 0.3 * lf + 0.05 * sin(a * 13.0 + in.shp.z * 40.0);
+      alpha = aaStep(r - outl);
+      let rt = normalize(cross(vec3f(0.0, 1.0, 0.0), V) + vec3f(1e-4, 0.0, 0.0)); let up = cross(V, rt);
+      let z = sqrt(max(1.0 - r * r, 0.0));
+      n = normalize(n * 0.75 + (rt * uv.x + up * uv.y) * 0.45 + V * z * 0.25);
+      // single leaves: lighter blades with darker gaps toward the cluster's heart, a midrib down each
+      let rib = sstep(0.06, 0.0, abs(fract(a * 3.5 / 3.1416 + 0.5) - 0.5)) * sstep(0.15, 0.5, r);
+      alb *= (0.78 + 0.3 * lf * sstep(0.1, 0.6, r)) * (1.0 - 0.18 * rib) * (0.9 + 0.2 * in.shp.z);
+      ao = mix(0.72, 1.0, sstep(0.0, 0.7, r)) * mix(0.8, 1.0, sstep(-0.3, 0.5, in.n.y)); // lower clusters darker
+    } else {
+      let pw = in.wp * 3.0;
+      let na = vnoised(pw.xz + 0.37 * pw.y, 861u);
+      let nb = vnoised(pw.xy + 0.37 * pw.z, 862u);
+      n = normalize(n - vec3f(na.y + nb.y, nb.z, na.z) * 0.08 * sstep(60.0, 10.0, dist));
+      alb *= 0.82 + 0.25 * (0.6 * na.x + 0.4 * nb.x);
+      // the canopy's inner, lower layers are darker (older leaves, less light), but lit by the sky
+      ao = mix(0.62, 1.0, sstep(2.0, 6.5, in.loc.y));
+    }
+    ao = max(ao * in.prm.y, 0.6);
+    alb *= mix(0.88, 1.1, sstep(0.55, 1.0, in.prm.y));                // outer leaves on the sub-crowns lighter, younger
   } else if (kind == K_CRYSTAL || kind == K_SHARD) {
     n = normalize(cross(dpdx(in.wp), dpdy(in.wp)));
     if (dot(n, V) < 0.0) { n = -n; }
@@ -586,6 +649,9 @@ struct FOut { @location(0) c: vec4f, @location(1) d: vec4f }
   }
 
   var col = floraLit(n, V, alb, in.prm.x, ao, tr, kind);
+  // a canopy's underside and inner leaves glow with the sky light passing down through the leaves above: shade
+  // stays green, never black
+  if (kind == K_CROWN) { col += alb * vec3f(1.1, 1.5, 0.6) * lfAmb(1.0, alb) * tr * 0.7 * (1.0 - 0.5 * max(n.y, 0.0)); }
   if (VW.cam.w == 9.0) { col = emis; }
   if (VW.cam.w == 10.0) { col = col - emis; }
   col += emis;
