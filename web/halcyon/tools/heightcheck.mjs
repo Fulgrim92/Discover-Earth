@@ -1,7 +1,8 @@
 // tools/heightcheck.mjs: DESIGN section 6 gate. For each view in a step list, bake the clipmap, read back levels
 // 0,2,4,6,8 and compare 256 texels with world.heightAt (max error < 0.15 m), then 260 heights as the shaders sample
 // them (clip.wgsl clipH) with an f64 bilinear of those texels (max error < 0.15 m). Every view runs on both paths:
-// f32=0 (no float32-filterable, the target RX 6650 XT / D3D12) and f32=1. Exit 1 on failure.
+// f32=0 (no float32-filterable, the target RX 6650 XT / D3D12) and f32=1. Also the GPU realm map against realms.js
+// realmWeightsA at 500 points per realm (main.js realmCheck). Exit 1 on failure.
 // Usage: node tools/heightcheck.mjs [tools/shots/realms.json] [--f32 0|1|both]
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
@@ -26,7 +27,8 @@ for (const f32 of PATHS) for (const s of spec.shots) {
   if (!r.ok || !hc || !hc.pass) { bad++; console.log('FAIL ' + tag + ' ' + (r.error || JSON.stringify(hc))); continue; }
   worst = Math.max(worst, hc.maxErr); worstS = Math.max(worstS, hc.sampled.maxErr);
   console.log('ok   ' + tag + '  texels n=' + hc.n + ' max ' + hc.maxErr.toFixed(4) + ' m  mean ' + hc.meanErr.toFixed(5) +
-    ' m  sampled n=' + hc.sampled.n + ' max ' + hc.sampled.maxErr.toFixed(5) + ' m');
+    ' m  sampled n=' + hc.sampled.n + ' max ' + hc.sampled.maxErr.toFixed(5) + ' m  realm map vs CPU: max ' +
+    hc.realm.maxDiff.toFixed(3) + ', within a texel ' + hc.realm.maxTexel.toFixed(3) + ', dominant flips ' + hc.realm.dominantFlips);
 }
 await browser.close();
 console.log((bad ? 'FAILED ' + bad : 'PASS') + '  worst max error ' + worst.toFixed(4) + ' m, sampled ' + worstS.toFixed(5) + ' m');
