@@ -7,7 +7,7 @@ import { params as atmoParams, derive as atmoDerive, transmittanceA as atmoTrans
 export const CELL = 5500; // m, Voronoi cell pitch
 export const BAND = 2400; // m, blend band (in nearest-distance difference): the Drift, a ~2.4 km zone (DESIGN 11.1)
 export const JIT = 0.3; // site jitter as a fraction of the cell
-export const NREALM = 6;
+export const NREALM = 9;
 // the realm map (clip.wgsl realmWeightsMap) holds a fixed 12 weight slots (3 rgba8 layers): the per-pixel cost does not
 // grow with the realm count up to the atlas of twelve (DESIGN 13)
 export const MAX_REALM = 12;
@@ -73,6 +73,11 @@ export const FIELDS = [
   'V2', // fauna: flamingos, seabirds, geese, sky jellies
   'V3', // particles: pollen + seed fluff, salt glints, snow / diamond dust, spores
   'V4', // life modes: seabirds circle the cloud sea, seabirds are snow petrels, giant mushrooms, vines on rims
+  // wave 1 realms (DESIGN 13): appended so every earlier field keeps its index
+  'T9', // atoll: weight, ring radius (m), lagoon depth (m), volcanic core height (m)
+  'T10', // slot canyons: weight, slot width (m), slot depth (m), mesa height (m)
+  'T11', // alpine: weight, granite tower height (m), hanging glacier weight, 0
+  'M7', // material flags: atoll, slot canyon, alpine, 0
 ];
 export const ROW = Math.max(40, (FIELDS.length + 3) & ~3); // vec4 slots per realm row (>= FIELDS.length)
 export const ROWF = ROW * 4;
@@ -175,6 +180,48 @@ const R = [
     W0: [0.6, 0.12, 0.15, 0.2], W1: ['#0a3040', 0.06], W2: ['#30e8d0', 0.12],
     G0: [0.2, 1.05, 1.0, 0.6], G1: ['#000000', 0.6], G2: ['#ffffff', 0.06], G3: [1, 1, 1, 0.5],
   },
+  { // 6 Coral Atoll (Bora Bora, Maldives): ring reef, sand motus, turquoise lagoon, a jungle volcanic core
+    T0: [1 / 2500, 20, -2, 300], T1: [0, 0.2, 0.5, 1], T2: [0, 0.2, 0, 1], T3: [0, 12, 0, 8],
+    T4: [0, 140, 0, 0.3], T5: [0, 0, 0, 0], T6: [0, 0, 0, 0], T7: [0, 0, 0, 0], T8: [0, 90, 0, 0],
+    M0: ['#2f6a2a', 1], M1: ['#463d36', 0.7], M2: ['#3a7a34', 9000], M3: ['#f2ece0', 2.2],
+    M4: [0, 0, 0, 0], M5: [0, 0, 0.3, 0.3], M6: ['#000000', 0],
+    S0: [64, 200, 7.0, 0.53], S1: ['#ffffff', 0.6], S2: ['#3d7fd6', 2.0], S3: ['#b8d6f0', 1.2],
+    S4: ['#e8f0f4', 2.0], S5: [0, 0, 0, 0], S6: [1, 0.04, 0, 0.55], S7: ['#000000', 0],
+    S8: [-15, 22, 0.9, 1.0], A0: [1, 1.1, 0.8, 1], A1: [5.802, 13.558, 33.1, 1.2], A2: [1, 1, 1, 1],
+    F0: ['#c8dcf0', 1 / 40000], F1: ['#e8f0f4', 1 / 9000], F2: [5, 1 / 30, 1 / 1500, 0.5],
+    C0: [0.42, 650, 3200, 1.0], C1: ['#ffffff', 0], C2: [0, 0, 0, 7],
+    C3: [0.9, 1.0, 0.8, 0], C4: ['#000000', 0],
+    W0: [0.42, 0.065, 0.04, 0.45], W1: ['#0f5a96', 0.08], W2: ['#000000', 0],
+    G0: [-0.7, 1.05, 1.0, 0.6], G1: ['#000000', 0.5], G2: ['#ffffff', 0.04], G3: [1, 1, 1, 0.9],
+  },
+  { // 7 Slot Canyons (Antelope, Zion Narrows): a sandstone mesa cut by sinuous slots, amphitheatres, high sun
+    T0: [1 / 2600, 120, 180, 500], T1: [0.2, 0.3, 2, 1.2], T2: [0, 0.2, 0, 1], T3: [0, 12, 0, 8],
+    T4: [0, 140, 0, 0.3], T5: [0, 0, 0, 0], T6: [0, 0, 0, 0], T7: [0, 0, 0, 0], T8: [0, 90, 0, 0],
+    M0: ['#8a8a5a', 0.15], M1: ['#b8643a', 0.85], M2: ['#e8c890', 9000], M3: ['#d89a5a', 0],
+    M4: [0, 0, 0, 0], M5: [0, 0, 0, 0], M6: ['#000000', 0],
+    S0: [62, 160, 7.0, 0.53], S1: ['#fff4e4', 0.5], S2: ['#3a68c0', 2.0], S3: ['#c8d8ea', 1.2],
+    S4: ['#f0ecea', 2.0], S5: [0, 0, 0, 0], S6: [1, 0.03, 0, 0.8], S7: ['#000000', 0],
+    S8: [-15, 22, 0.9, 1.0], A0: [1, 1.6, 0.8, 1], A1: [5.802, 13.558, 33.1, 1.2], A2: [1, 1, 1, 1],
+    F0: ['#d8c8b0', 1 / 32000], F1: ['#f0e0c8', 1 / 5000], F2: [60, 1 / 30, 1 / 1500, 0.6],
+    C0: [0.22, 2600, 3400, 0.8], C1: ['#ffffff', 0], C2: [0, 0, 0, 4],
+    C3: [0.8, 0.6, 0.9, 0], C4: ['#000000', 0],
+    W0: [0.4, 0.06, 0.03, 0.3], W1: ['#2a5a50', 0.1], W2: ['#000000', 0],
+    G0: [-1.0, 1.05, 1.0, 0.6], G1: ['#000000', 0.5], G2: ['#ffffff', 0.04], G3: [1, 1, 1, 0.2],
+  },
+  { // 8 Alpine Crown (Dolomites, Moraine Lake): granite towers, hanging glaciers, turquoise lakes, larch and meadow
+    T0: [1 / 1800, 1800, 20, 600], T1: [0.9, 0.45, 4, 1.5], T2: [0.85, 0.8, 70, 0.9], T3: [0, 12, 0, 8],
+    T4: [0, 140, 0, 0.3], T5: [0, 0, 0, 0], T6: [0, 0, 0, 0], T7: [0, 0, 0, 0], T8: [0, 90, 0, 0],
+    M0: ['#4f7a33', 1], M1: ['#7d7a76', 0.7], M2: ['#f4f6fa', 850], M3: ['#8c8a80', 1.5],
+    M4: [0, 0, 0, 0], M5: [0, 0, 1, 0.6], M6: ['#000000', 0],
+    S0: [16, 110, 7.0, 0.53], S1: ['#ffb27a', 1.0], S2: ['#4a78c0', 2.4], S3: ['#f0d0b8', 1.0],
+    S4: ['#ffb890', 3.0], S5: [0, 0, 0, 0], S6: [1, 0.05, 0, 0.4], S7: ['#000000', 0],
+    S8: [-15, 22, 0.9, 1.0], A0: [1, 0.8, 0.8, 1], A1: [5.802, 13.558, 33.1, 1.2], A2: [1, 1, 1, 1],
+    F0: ['#c4d4ec', 1 / 45000], F1: ['#e0e6ee', 1 / 3000], F2: [30, 1 / 40, 1 / 1800, 0.5],
+    C0: [0.45, 2400, 3600, 0.9], C1: ['#ffffff', 0], C2: [0, 0, 0, 5],
+    C3: [0.4, 0.6, 0.8, 0], C4: ['#000000', 0],
+    W0: [0.26, 0.085, 0.065, 0.15], W1: ['#3fb5b0', 0.05], W2: ['#000000', 0.05],
+    G0: [-0.5, 1.0, 1.0, 0.6], G1: ['#000000', 0.5], G2: ['#ffffff', 0.04], G3: [1, 1, 1, 0.2],
+  },
 ];
 
 // Life per realm (appended fields V0..V3, merged into R so the realm rows above stay untouched).
@@ -185,19 +232,30 @@ const LIFE = [
   { V0: [0, 0, 0, 0], V1: [0, 1, 0, 0], V2: [0, 0.7, 0, 0], V3: [0, 0, 0, 0], V4: [1, 0, 0, 1] }, // Stone Forest: ferns, crowns, vines, fireflies, birds over the cloud sea
   { V0: [0, 0, 0, 0], V1: [0, 0, 0, 1], V2: [0, 1, 0, 0], V3: [0, 0, 1, 0], V4: [0, 1, 0, 0] }, // Aurora Ice: shards, snow petrels, diamond dust
   { V0: [0, 0, 0, 0], V1: [0, 0, 1, 0], V2: [0, 0, 0, 1], V3: [0, 0, 0, 1], V4: [0, 0, 1, 0] }, // Lumen Deep: garden, giant mushrooms, jellies, spores
+  // wave 1: first guesses for living-world to refine
+  { V0: [0.4, 0.2, 0, 0], V1: [0, 0.6, 0, 0], V2: [0, 1, 0, 0], V3: [0, 0, 0, 0], V4: [0, 0, 0, 0] }, // Coral Atoll: motu grass, jungle, seabirds
+  { V0: [0, 0, 0, 0.5], V1: [0, 0, 0, 0], V2: [0, 0, 0, 0], V3: [0.15, 0, 0, 0], V4: [0, 0, 0, 0] }, // Slot Canyons: dry tussock, dust
+  { V0: [1, 1, 0, 0], V1: [0, 0, 0, 0], V2: [0, 0, 0, 0], V3: [0.4, 0, 0, 0], V4: [0, 0, 0, 0] }, // Alpine Crown: meadow grass and flowers
 ];
+// the wave 1 fields default to off in the first six realms
+const WAVE1 = { T9: [0, 1450, 0, 0], T10: [0, 0, 0, 0], T11: [0, 0, 0, 0], M7: [0, 0, 0, 0] };
+for (let r = 0; r < 6; r++) for (const k in WAVE1) if (!R[r][k]) R[r][k] = WAVE1[k];
+R[6].T9 = [1, 1450, 12, 330]; R[6].T10 = [0, 0, 0, 0]; R[6].T11 = [0, 0, 0, 0]; R[6].M7 = [1, 0, 0, 0];
+R[7].T9 = [0, 1450, 0, 0]; R[7].T10 = [1, 22, 62, 320]; R[7].T11 = [0, 0, 0, 0]; R[7].M7 = [0, 1, 0, 0];
+R[8].T9 = [0, 1450, 0, 0]; R[8].T10 = [0, 0, 0, 0]; R[8].T11 = [1, 260, 1, 0]; R[8].M7 = [0, 0, 1, 0];
 for (let r = 0; r < R.length; r++) Object.assign(R[r], LIFE[r]);
 
-export const REALM_NAMES = ['Home Fjords', 'Painted Range', 'Mirror Salt', 'Stone Forest', 'Aurora Ice', 'Lumen Deep'];
+export const REALM_NAMES = ['Home Fjords', 'Painted Range', 'Mirror Salt', 'Stone Forest', 'Aurora Ice', 'Lumen Deep',
+  'Coral Atoll', 'Slot Canyons', 'Alpine Crown'];
 
 // curated cells around the origin, CUR_N x CUR_N, index (i+CUR_R) + (j+CUR_R)*CUR_N; -z is north, +x is east.
 // [jitterX, jitterZ, realm]; realm -1 = hashed like every other cell.
 const H_ = [0.0, 0.0, -1];
 const CUR = [
   H_, H_, H_, H_, H_, //                                                       j=-2
-  H_, [-0.05, 0.1, 2], [0.0, -0.12, 4], [0.22, -0.22, 5], H_, //              j=-1 (north): NW Mirror repeat, N Ice, NE Lumen
-  H_, [0.08, -0.05, 2], [0, 0, 0], [-0.06, 0.08, 1], H_, //                    j= 0: W Mirror, Home, E Painted
-  H_, [0.0, 0.0, -1], [0.05, 0.1, 3], [0.0, 0.0, -1], H_, //                   j=+1 (south): SW hashed, S Stone, SE hashed
+  H_, [-0.05, 0.1, 2], [0.0, -0.12, 4], [0.22, -0.22, 5], [-0.15, 0.15, 7], // j=-1 (north): NW Mirror repeat, N Ice, NE Lumen, ENE Slot Canyons
+  H_, [0.08, -0.05, 2], [0, 0, 0], [-0.06, 0.08, 1], [-0.1, 0.1, 1], //       j= 0: W Mirror, Home, E Painted, EE Painted repeat
+  H_, [0.05, -0.05, 8], [0.05, 0.1, 3], [-0.05, -0.05, 6], H_, //               j=+1 (south): SW Alpine, S Stone, SE Atoll
   H_, H_, H_, H_, H_, //                                                       j=+2
 ];
 if (CUR.length !== CUR_N * CUR_N) throw new Error('curated table size');
@@ -244,7 +302,7 @@ for (let r = 0; r < NREALM; r++) {
 // skyTick() rewrites S0, S8 and the derived light S1..S4 of every realm in TABLE for the frame's s, so all realm
 // blending (per pixel and at the camera) follows; the light comes from tables baked here along each arc (S2..S4,
 // log-interpolated) and the sun's own colour from the transmittance, exactly, per frame.
-export const SKY_ARC = [[16, 18, 0], [28, 40, 0], [9, 12, 0], [12, 20, 0], [8, 10, -10], [5, 8, 0]];
+export const SKY_ARC = [[16, 18, 0], [28, 40, 0], [9, 12, 0], [12, 20, 0], [8, 10, -10], [5, 8, 0], [12, 30, 0], [14, 25, 0], [8, 10, 0]];
 export const SKY_IN = new Float64Array(1); // s in -1..1 (main.js from the time of day); read by skyTick()
 const ARC_K = 7, ARC_V = 9;
 const ARC = new Float32Array(NREALM * ARC_K * ARC_V); // log of S2, S3, S4 rgb per arc sample

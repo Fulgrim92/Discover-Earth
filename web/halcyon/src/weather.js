@@ -11,9 +11,9 @@ import { hu8, W_ID, W_W } from './realms.js';
 const WIND_X = 4.2, WIND_Z = 1.7; // m/s, common.wgsl CLOUD_WIND
 const OFS_X = 1448825, OFS_Z = -259896; // common.wgsl WX_OFS
 // per realm id: liquid rain on the ground, visible precipitation, kind (0 rain, 1 virga, 2 snow, 3 spores)
-export const WX_LIQUID = new Float64Array([1.0, 0.0, 0.55, 0.85, 0.0, 0.0]);
-export const WX_PRECIP = new Float64Array([1.0, 0.7, 0.55, 0.85, 0.85, 0.7]);
-export const WX_KIND = new Int32Array([0, 1, 0, 0, 2, 3]);
+export const WX_LIQUID = new Float64Array([1.0, 0.0, 0.55, 0.85, 0.0, 0.0, 1.0, 0.0, 0.8]); // + wave 1 (terrain-art placeholder; sky owns)
+export const WX_PRECIP = new Float64Array([1.0, 0.7, 0.55, 0.85, 0.85, 0.7, 1.0, 0.6, 0.85]);
+export const WX_KIND = new Int32Array([0, 1, 0, 0, 2, 3, 0, 1, 0]);
 
 // inputs: camera x, z, time (s). Outputs: WX_CAM = liquid rain, precipitation, kind, fog bank (all at the camera);
 // WX_BOLT = lightning x, z, intensity (0 when none), seconds into the flash

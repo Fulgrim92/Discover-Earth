@@ -9,7 +9,7 @@ const [cx, cz, size, px, out] = [+process.argv[2] || 0, +process.argv[3] || 0, +
 const hs = new Float64Array((px + 1) * (px + 1));
 const step = size / px;
 for (let j = 0; j <= px; j++) for (let i = 0; i <= px; i++) hs[j * (px + 1) + i] = heightAt(cx - size / 2 + i * step, cz - size / 2 + j * step);
-const tint = [[0.45, 0.6, 0.3], [0.8, 0.45, 0.3], [0.9, 0.9, 0.9], [0.35, 0.55, 0.35], [0.7, 0.8, 0.95], [0.55, 0.4, 0.8]];
+const tint = [[0.45, 0.6, 0.3], [0.8, 0.45, 0.3], [0.9, 0.9, 0.9], [0.35, 0.55, 0.35], [0.7, 0.8, 0.95], [0.55, 0.4, 0.8], [0.4, 0.85, 0.8], [0.9, 0.55, 0.25], [0.75, 0.75, 0.8]];
 const raw = Buffer.alloc((px * 3 + 1) * px);
 let mn = 1e9, mx = -1e9;
 for (let j = 0; j < px; j++) {
