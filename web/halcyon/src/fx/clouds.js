@@ -25,6 +25,8 @@ let pMarch, blMarch, bgMarch = null, pWeather, bgWeather, cuBuf, wxV, wyV, baseV
 let WN = 512, WTEX = 128;
 // empty-space maps (cloudskip.wgsl): fine 1/8 of the window (1 km texels at normal quality), coarse 1/4 of that
 let pSkipF, pSkipC, bgSkipF, bgSkipC, skFV, skCV, SKF = 64;
+// column occupancy (clouds.wgsl csColumn), one texel per window texel
+let pCol, bgCol, colV, pOcc, bgOcc, occV;
 const CU = new Float32Array(32);
 // march cost instrumentation (URL steps=1): stats buffer (clouds.wgsl CST), read back every 16 frames into STEPS
 const NST = 84;
@@ -55,6 +57,7 @@ export function init(ctx) {
   CU[6] = slo; CU[7] = shi;
   cuBuf = buffer(128, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'cloudU');
   CU[28] = new URLSearchParams(location.search).get('steps') === '1' ? 1 : 0;
+  CU[29] = +(new URLSearchParams(location.search).get('noskip') || 0); // 1: no empty-space skipping, 2: no column level (A/B)
   stBuf = buffer(NST * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST, 'cloudSteps');
   if (CU[28] > 0) stRead = buffer(NST * 4, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST, 'cloudStepsRead');
 
@@ -110,19 +113,27 @@ export function init(ctx) {
   const tx = { sampleType: 'float', viewDimension: '2d' };
   const sto = { access: 'write-only', format: 'rgba16float', viewDimension: '2d' };
   const lSkF = layout([{ binding: 0, visibility: CS(), texture: tx }, { binding: 1, visibility: CS(), texture: tx },
-    { binding: 2, visibility: CS(), storageTexture: sto }], 'cnSkipF');
+    { binding: 2, visibility: CS(), storageTexture: sto }, { binding: 5, visibility: CS(), texture: { sampleType: 'unfilterable-float', viewDimension: '2d' } }], 'cnSkipF');
+  colV = tex(WN, WN, 'r32float', U.STORAGE_BINDING | U.TEXTURE_BINDING, { label: 'cloudColumn' }).createView();
+  occV = tex(WN, WN, 'rgba16float', U.STORAGE_BINDING | U.TEXTURE_BINDING, { label: 'cloudOcc' }).createView();
+  const lOcc = layout([{ binding: 0, visibility: CS(), texture: tx }, { binding: 1, visibility: CS(), texture: tx },
+    { binding: 5, visibility: CS(), texture: { sampleType: 'unfilterable-float', viewDimension: '2d' } }, { binding: 6, visibility: CS(), storageTexture: sto }], 'cnOcc');
   const lSkC = layout([{ binding: 3, visibility: CS(), texture: tx }, { binding: 4, visibility: CS(), storageTexture: sto }], 'cnSkipC');
   const smod = shader(SKIP, 'cloudskip');
   const sp = (l, entry) => d.createComputePipeline({ label: entry, layout: d.createPipelineLayout({ bindGroupLayouts: [ctx.bgl0, l] }), compute: { module: smod, entryPoint: entry } });
-  pSkipF = sp(lSkF, 'csSkipF'); pSkipC = sp(lSkC, 'csSkipC');
-  bgSkipF = bgOf(lSkF, [{ binding: 0, resource: wxV }, { binding: 1, resource: wyV }, { binding: 2, resource: skFV }]);
+  pSkipF = sp(lSkF, 'csSkipF'); pSkipC = sp(lSkC, 'csSkipC'); pOcc = sp(lOcc, 'csOcc');
+  bgOcc = bgOf(lOcc, [{ binding: 0, resource: wxV }, { binding: 1, resource: wyV }, { binding: 5, resource: colV }, { binding: 6, resource: occV }]);
+  bgSkipF = bgOf(lSkF, [{ binding: 0, resource: wxV }, { binding: 1, resource: wyV }, { binding: 2, resource: skFV }, { binding: 5, resource: colV }]);
   bgSkipC = bgOf(lSkC, [{ binding: 3, resource: skFV }, { binding: 4, resource: skCV }]);
 
   // ---- march ----
-  blMarch = bgl('uFFffnssBff', 'clouds');
+  blMarch = bgl('uFFffnssBfff', 'clouds');
   const mmod = shader(CLIP + SKY + CLOUDS, 'clouds');
   pMarch = pipeline({ label: 'clouds', module: mmod, vs: 'vsC', fs: 'fsC', layouts: [ctx.bgl0, clip.bgl, blMarch],
     targets: [{ format: 'rgba16float' }, { format: 'rgba16float' }, { format: 'r16float' }] });
+  const lCol = layout([{ binding: 0, visibility: CS(), storageTexture: { access: 'write-only', format: 'r32float', viewDimension: '2d' } }], 'cnCol');
+  pCol = d.createComputePipeline({ label: 'csColumn', layout: d.createPipelineLayout({ bindGroupLayouts: [ctx.bgl0, clip.bgl, blMarch, lCol] }), compute: { module: mmod, entryPoint: 'csColumn' } });
+  bgCol = d.createBindGroup({ layout: lCol, entries: [{ binding: 0, resource: colV }] });
 }
 
 export function bind(ctx, tg) {
@@ -137,7 +148,7 @@ export function bind(ctx, tg) {
   clouds.w = w; clouds.h = h;
   CU[12] = w; CU[13] = h; CU[14] = 1 / w; CU[15] = 1 / h;
   const rep = G.device.createSampler({ magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear', addressModeU: 'repeat', addressModeV: 'repeat', addressModeW: 'repeat' });
-  bgMarch = bindGroup(blMarch, [cuBuf, baseV, detV, wxV, wyV, tg.distV, rep, ctx.linear, stBuf, skFV, skCV]);
+  bgMarch = bindGroup(blMarch, [cuBuf, baseV, detV, wxV, wyV, tg.distV, rep, ctx.linear, stBuf, skFV, skCV, occV]);
   const at = (v) => ({ view: v, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } });
   marchDesc = { colorAttachments: [at(clouds.view), at(clouds.reflView), at(clouds.distView)], timestampWrites: tsBoth(TS_CLOUDS) };
   return clouds.view;
@@ -169,9 +180,12 @@ export function draw(ctx, enc, view) {
     wx = 1;
     c.setPipeline(pWeather); c.setBindGroup(0, view.bg0); c.setBindGroup(1, clip.bg); c.setBindGroup(2, bgWeather);
     c.dispatchWorkgroups(WN / 8, WN / 8);
+    // column occupancy from the real cloud density (needs the march bind group: noise, window)
+    if (bgMarch) { c.setPipeline(pCol); c.setBindGroup(2, bgMarch); c.setBindGroup(3, bgCol); c.dispatchWorkgroups(WN / 8, WN / 8); }
     // empty-space maps from the window just written (the march skips clear air with them)
     c.setPipeline(pSkipF); c.setBindGroup(1, bgSkipF); c.dispatchWorkgroups(SKF / 8, SKF / 8);
     c.setPipeline(pSkipC); c.setBindGroup(1, bgSkipC); c.dispatchWorkgroups(SKF / 16, SKF / 16);
+    c.setPipeline(pOcc); c.setBindGroup(1, bgOcc); c.dispatchWorkgroups(WN / 8, WN / 8);
     c.end();
   }
   const counting = CU[28] > 0 && view === ctx.views[0];
@@ -203,7 +217,7 @@ export function stepReport() {
   const pct = (q) => { let c = 0; for (let b = 0; b < 64; b++) { c += STEPS[8 + b]; if (c >= q * n) return b * 16 + 16; } return 1024; };
   return { rays: n, perRay: { mainIter: r(1), dense: r(2), light: r(3), veil: r(4), precip: r(5), mirror: r(6), total: r(7) },
     byClass: { sky: [STEPS[72], STEPS[73] / Math.max(STEPS[72], 1)], ground: [STEPS[74], STEPS[75] / Math.max(STEPS[74], 1)],
-      skipFetches: r(80),
+      skipFetches: r(80), seaIter: r(81), notPossible: r(82), possibleEmpty: r(83),
     horizon: [STEPS[76], STEPS[77] / Math.max(STEPS[76], 1)], mirror: [STEPS[78], STEPS[79] / Math.max(STEPS[78], 1)] },
     totalP50: pct(0.5), totalP90: pct(0.9), totalP99: pct(0.99), hist16: Array.from(STEPS.subarray(8, 72)) };
 }
