@@ -15,6 +15,7 @@ struct Frame {
   wx: vec4f,     // xyz: camera velocity (m/s), w: precipitation kind at the camera (0 rain, 1 virga, 2 snow, 3 spores)
   wxp: vec4f,    // a pinned squall (URL wx=dx,dz[,r]; captures): centre x, z, radius (m, 0 = none);
                  // w: 1 when any squall lies within 16 km of the camera (weather.js; 0 skips all rain work)
+  ske: vec4f,    // sky encounters (skyenc.js): lunar eclipse, giant-eclipse motion, Milky Way night, aurora surge (0..1)
 }
 
 // Ablation bits (URL ?off=flora,fauna,...; main.js OFF_NAMES). A set bit switches that cost off: draws are skipped
@@ -275,7 +276,8 @@ struct CloudU {
   camId: vec4f, // realm ids blended at the camera (-1 = none)
   camW: vec4f,  // their weights
   bolt: vec4f,  // lightning: x, z, intensity (0 none), seconds into the flash (weather.js)
-  dbg: vec4f,   // x: 1 = count march steps into the stats buffer (URL steps=1, fx/clouds.js)
+  dbg: vec4f,   // x: 1 = count march steps into the stats buffer (URL steps=1, fx/clouds.js); y: noskip;
+                // z, w: csColumn row phase and stride
 }
 
 // Sun transmittance through the clouds at world point p: one fetch of the baked cloud-shadow map (fx/atmo.js) at
@@ -295,7 +297,17 @@ fn cloudShadowF(p: vec3f, L: vec3f, c0: vec4f, c1: vec4f, c2: vec4f, c3: vec4f) 
     let xz = p.xz + L.xz * ((mid - p.y) / ly);
     let uv = csmUV(xz);
     if (csmIn(uv)) {
-      tr = 1.0 - textureSampleLevel(csmT, atmoS, uv, 0.0).x;
+      var occ = textureSampleLevel(csmT, atmoS, uv, 0.0).x;
+      // by moonlight (the sun down) cloud shadows are soft and partial: the moon is a broad, weak light and the sky
+      // and aurora fill in (black blotches on night snow otherwise); four taps 2.5 texels out, strength 60 %
+      let sunUp = sstep(-0.035, 0.06, sunDirFrom(FR.row[S0], FR.sun.w).y);
+      if (sunUp < 0.999) {
+        let e = 2.5 / f32(textureDimensions(csmT).x);
+        let soft = 0.25 * (textureSampleLevel(csmT, atmoS, uv + vec2f(e, e), 0.0).x + textureSampleLevel(csmT, atmoS, uv + vec2f(-e, e), 0.0).x
+          + textureSampleLevel(csmT, atmoS, uv + vec2f(e, -e), 0.0).x + textureSampleLevel(csmT, atmoS, uv + vec2f(-e, -e), 0.0).x);
+        occ = mix(mix(occ, soft, 0.7) * 0.6, occ, sunUp);
+      }
+      tr = 1.0 - occ;
     } else if (c0.x > 0.005) {
       let cv = cloudCov(cloudField(xz, c3.x), c0.x);
       tr = 1.0 - sstep(0.05, 0.6, cv) * clamp(c0.w * 0.85, 0.0, 0.88);
@@ -345,7 +357,8 @@ fn keyLight(s0: vec4f, s1: vec4f, s8: vec4f, drift: f32) -> KL {
   let sd = sunDirFrom(s0, drift);
   let sc = s1.rgb * s0.z * sstep(-0.035, 0.06, sd.y);
   let md = moonDirFrom(s8, drift);
-  let mc = MOON_COL * s8.z * sstep(-0.035, 0.06, md.y) * exp(-0.22 * airMass(md.y));
+  // a total lunar eclipse (skyenc.js) turns the moonlight copper
+  let mc = MOON_COL * mix(vec3f(1.0), vec3f(1.55, 0.62, 0.34), FR.ske.x) * s8.z * sstep(-0.035, 0.06, md.y) * exp(-0.22 * airMass(md.y));
   let ws = luma(sc) + 1e-5; let wm = luma(mc);
   var o: KL;
   o.dir = normalize(sd * ws + md * wm);
@@ -366,7 +379,8 @@ fn wxCell(xz: vec2f) -> f32 {
   let q = xz - CLOUD_WIND * FR.time.x + WX_OFS;
   var n = vn(q * (1.0 / 16000.0), 720u) * 0.72 + vn(q * (1.0 / 5200.0), 721u) * 0.28;
   if (FR.wxp.z > 0.0) {
-    let e = length(xz - FR.wxp.xy) / FR.wxp.z;
+    // a pinned cell is not a disc: its radius wanders with 2.2 km noise (0.75 to 1.25 of the pin radius)
+    let e = length(xz - FR.wxp.xy) / FR.wxp.z * (0.75 + 0.5 * vn(q * (1.0 / 2200.0), 722u));
     n = max(n, 1.0 - 0.9 * e * e);
   }
   return n;
@@ -379,9 +393,10 @@ fn wxFogBank(xz: vec2f) -> f32 {
   if (isOff(OFF_RAIN)) { return 0.0; }
   return sstep(0.72, 0.92, vn(q * (1.0 / 5200.0) + vec2f(427.0, 303.0), 730u));
 }
-fn wxLiquid(id: i32) -> f32 { return select(select(select(0.0, 0.85, id == 3), 0.55, id == 2), 1.0, id == 0); }
-fn wxPrecip(id: i32) -> f32 { return select(select(select(0.7, 0.85, id == 3 || id == 4), 0.55, id == 2), 1.0, id == 0); }
-fn wxKind(id: i32) -> i32 { return select(select(select(0, 3, id == 5), 2, id == 4), 1, id == 1); }
+// (realms 6-8, DESIGN 13: Coral Atoll tropical rain, Slot Canyons virga, Alpine Crown rain; weather.js mirrors)
+fn wxLiquid(id: i32) -> f32 { return select(select(select(select(0.0, 0.85, id == 3), 0.55, id == 2), 1.0, id == 0 || id == 6), 0.8, id == 8); }
+fn wxPrecip(id: i32) -> f32 { return select(select(select(0.7, 0.85, id == 3 || id == 4 || id == 8), 0.55, id == 2), 1.0, id == 0 || id == 6); }
+fn wxKind(id: i32) -> i32 { return select(select(select(0, 3, id == 5), 2, id == 4), 1, id == 1 || id == 7); }
 // Rain intensity 0..1 falling on the ground at xz (terrain-art: wet ground; 0 where it snows or nothing falls)
 fn rainAtW(xz: vec2f, rw: RWt) -> f32 {
   if (FR.wxp.w == 0.0 || isOff(OFF_RAIN)) { return 0.0; } // no squall within 16 km of the camera

@@ -329,8 +329,12 @@ struct VO { @builtin(position) pos: vec4f }
     let us = sstep(sb + 25.0, sb - 15.0, P.y) * c1.w;
     col *= mix(vec3f(1.0), vec3f(0.5, 0.56, 0.52), us);
   }
+  // sky encounters drawn behind the clouds: a meteor, the other sky through the veil (sky programmer)
+  if (isSky && VW.cam.w != 8.0) { col = encSky(col, d, pix); }
   // volumetric clouds in front of whatever we hit (aerial perspective is already in them)
   col = col * (1.0 - cu.front.a) + cu.front.rgb;
+  // the Brocken spectre on the cloud below: a glory round the drone's shadow
+  if (VW.cam.w != 8.0) { col = encGlory(col, d, cu.front, pix); }
   // sun shafts: in-scattered sun along open lines of sight toward the sun, scaled by the air in front
   let mu = dot(d, FR.sun.xyz);
   let ph = hg(mu, 0.8) * 0.5;
@@ -341,6 +345,118 @@ struct VO { @builtin(position) pos: vec4f }
   }
   col = rainNear(col, d, pix);
   return vec4f(col, 1.0);
+}
+
+// ---- sky encounters (sky programmer, encounters.js 16, 21, 25; skyenc.js) ----
+fn envOf(ph: vec4f) -> f32 { // 0..1: rising through the build-up, full at the peak, falling in the afterimage
+  if (ph.x < 0.0) { return 0.0; }
+  if (ph.x == 0.0) { return 0.1 * ph.y; }
+  if (ph.x == 1.0) { return 0.1 + 0.9 * sstep(0.0, 1.0, ph.y); }
+  if (ph.x == 2.0) { return 1.0; }
+  return 1.0 - sstep(0.0, 1.0, ph.y);
+}
+// angle of d across (x) and along (y, from A) the great circle A -> B
+fn arcCoord(d: vec3f, A: vec3f, B: vec3f) -> vec2f {
+  let n = normalize(cross(A, B));
+  let t = cross(n, A);
+  return vec2f(asin(clamp(dot(d, n), -1.0, 1.0)), atan2(dot(d, t), dot(d, A)));
+}
+fn encSky(c0: vec3f, d: vec3f, pix: f32) -> vec3f {
+  var c = c0;
+  let unit = 0.9 * 8.3e-6; // a magnitude-0 star (sky.wgsl skyFull)
+  // 16 meteor: a fireball crossing ~35 degrees high over the place it was set, green-white head, orange wake, a
+  // flare as it breaks up, then a faint glowing train that drifts and fades
+  let sm = lfSlot(16.0);
+  if (sm >= 0) {
+    let ph = lfPhase(sm);
+    let a = LFX.enc[sm * 2]; let b = LFX.enc[sm * 2 + 1];
+    let hz = normalize(vec2f(a.y - VW.cam.x, a.w - VW.cam.z) + vec2f(1e-4, 0.0));
+    let sg = select(-1.0, 1.0, fract(b.z * 0.137) > 0.5);
+    let az = atan2(hz.x, -hz.y);
+    let A = dirAzEl(degrees(az) - 14.0 * sg, 52.0);
+    let B = dirAzEl(degrees(az) + 22.0 * sg, 18.0);
+    let ac = arcCoord(d, A, B);
+    let L = acos(clamp(dot(A, B), -1.0, 1.0));
+    // flight: from the end of the cue to the end of the peak (4 s), easing in
+    let p = LFX.ph[sm];
+    let u = clamp((ph.z - p.x) / max(p.z - p.x, 1e-3), 0.0, 1.0);
+    let head = L * (u * (0.6 + 0.4 * u));
+    let w = max(pix * 0.7, 2.5e-4);
+    let gx = exp(-ac.x * ac.x / (2.0 * w * w));
+    if (ph.x >= 1.0 && ph.x <= 2.0) {
+      let flare = 1.0 + 5.0 * sstep(0.78, 0.92, u) * sstep(1.0, 0.94, u);
+      let fl = 400.0 * flare * unit; // about magnitude -6.5, a fireball (brighter as it breaks up)
+      let dh = ac.y - head;
+      let r2 = ac.x * ac.x + dh * dh;
+      // head: a point with a soft glow round it (the air it lights, and the lens)
+      let hd = exp(-r2 / (2.0 * w * w)) / (2.0 * PI * w * w) + 0.15 * exp(-sqrt(r2) / (w * 5.0)) / (2.0 * PI * 25.0 * w * w);
+      // wake: up to 9 degrees behind the head, tapering, about as much light as the head in all
+      let tl = radians(9.0) * (0.3 + 0.7 * u);
+      let wk = gx * sstep(-tl, 0.0, dh) * sstep(0.002, -0.001, dh) * pow(clamp(1.0 + dh / tl, 0.0, 1.0), 2.0) / (2.5066 * w);
+      c += (vec3f(0.75, 1.0, 0.8) * hd + vec3f(1.0, 0.7, 0.4) * wk * 10.0) * fl * sstep(0.0, 0.08, u);
+    }
+    // the train: where the fireball flew, glowing faintly, widening and drifting with the high wind
+    if (ph.x >= 2.0) {
+      let age = max(ph.z - p.z, 0.0); // since the fireball went out
+      let tw = max(w * 3.0 + age * 0.0008, 6e-4);
+      let off = ac.x - age * 0.00025 - 0.0008 * sin(ac.y * 40.0 + age * 0.3);
+      let tr = exp(-off * off / (2.0 * tw * tw)) * sstep(0.0, 0.02, ac.y) * sstep(head + 0.002, head - 0.03, ac.y);
+      c += vec3f(0.5, 1.0, 0.75) * tr * 160.0 * unit / (2.5066 * tw) * exp(-age / 3.5) * select(0.0, 1.0, ph.x >= 2.0);
+    }
+  }
+  // 25 both skies (the Drift): the sky is cut along a great circle through the event; beyond the seam the other sky
+  // shows, a deep night with its stars, the Milky Way and an aurora; the seam itself shimmers
+  let sv = lfSlot(25.0);
+  if (sv >= 0) {
+    let e = envOf(lfPhase(sv));
+    let dv = lfDir(sv);
+    let n = normalize(vec3f(dv.x, 0.0, dv.y));
+    let ds = starFrame(d);
+    let wob = 0.025 * vn(vec2f(atan2(d.x, d.z) * 3.0, d.y * 4.0 + FR.time.x * 0.15), 590u) + 0.012 * sin(d.y * 23.0 + FR.time.x * 0.7);
+    let side = dot(d, n) + wob - (1.0 - e) * 1.2; // the other sky opens from one side as the event builds
+    let m = sstep(-0.006, 0.006, side) * sstep(0.0, 0.04, d.y + 0.01);
+    if (m > 0.0 || abs(side) < 0.05) {
+      let day = luma(skyBase(vec3f(0.0, 1.0, 0.0)));
+      // the other realm's night, lifted to read against this day (a window, not an exposure)
+      var o = vec3f(0.012, 0.022, 0.065) * day * (1.6 - d.y) * 6.0;
+      let k = day * 260.0;
+      o += (stars(ds, pix, unit) + milkyWay(ds) * 1.5) * k / max(unit * 9e3, 1e-9) * 2e-5;
+      o += aurora(d) * k * 0.0012;
+      c = mix(c, o, m);
+      // the seam: a thin bright shimmer, iridescent
+      let sw = exp(-side * side / (2.0 * 0.0025 * 0.0025)) * e;
+      let ir = 0.5 + 0.5 * cos(vec3f(0.0, 2.1, 4.2) + side * 900.0 + FR.time.x * 1.3 + d.y * 30.0);
+      c += mix(vec3f(1.0), ir, 0.6) * day * 0.6 * sw * (0.6 + 0.4 * vn(vec2f(d.y * 60.0, FR.time.x * 2.0), 591u));
+    }
+  }
+  return c;
+}
+// 21 Brocken spectre: with the sun behind the drone and cloud below, the drone's shadow on the cloud (a dark, slightly
+// blurred cross) sits in a glory: coloured rings 1-4 degrees round the antisolar point, red outside
+fn encGlory(c0: vec3f, d: vec3f, cf: vec4f, pix: f32) -> vec3f {
+  let sb = lfSlot(21.0);
+  if (sb < 0 || cf.a < 0.05) { return c0; }
+  let e = envOf(lfPhase(sb));
+  let L = sunDirFrom(rowv(S0), 0.0);
+  let th = acos(clamp(dot(d, -L), -1.0, 1.0));
+  if (th > 0.12 || e <= 0.0) { return c0; }
+  // the rings scale with wavelength (red widest); two orders, fading out
+  let k = vec3f(1.0, 0.86, 0.72) * 0.021; // ring spacing, rad
+  let q = th / k;
+  var g = (0.5 + 0.5 * cos(q * 6.2832)) * exp(-q * 0.55) * smoothstep(vec3f(0.35), vec3f(0.9), q);
+  g += vec3f(1.0) * exp(-th * th / 2e-5) * 0.8; // the bright heart behind the shadow
+  // drone shadow: a cross of two arms on the diagonals of the view, softened by the sun's disc
+  let up = vec3f(0.0, 1.0, 0.0);
+  let ex = normalize(cross(-L, up)); let ey = cross(ex, -L);
+  let pq = vec2f(dot(d, ex), dot(d, ey)) / 0.0045;
+  let r1 = vec2f(pq.x + pq.y, pq.x - pq.y) * 0.7071;
+  let arm = min(max(abs(r1.x) - 1.0, abs(r1.y) - 0.12), max(abs(r1.y) - 1.0, abs(r1.x) - 0.12));
+  let body = length(pq) - 0.32;
+  let sh = 1.0 - sstep(-0.1, 0.25, min(arm, body));
+  let lit = cf.rgb / max(cf.a, 1e-3);
+  var c = c0 + lit * g * 0.75 * e * cf.a;
+  c = mix(c, c * 0.35, sh * e * cf.a);
+  return c;
 }
 
 // ---- precipitation around the camera (sky programmer): three shells of drops at 1.5, 4 and 10 m, anchored in the
@@ -359,7 +475,11 @@ fn rainNear(col: vec3f, d: vec3f, pix: f32) -> vec3f {
   let vu = dot(rel.xz, tang); let vv = rel.y;
   let sp = max(length(vec2f(vu, vv)), 0.3);
   let dir = vec2f(vu, vv) / sp;
-  let lit = luma(mix(rowv(S3).rgb, rowv(S2).rgb, 0.5) * rowv(S3).w) * 0.9 + luma(sunCol()) * 0.06;
+  // drops and flakes are lit by the sky, the key light (flakes scatter the moon strongly: snow reads at night) and the
+  // realm's night light (aurora)
+  let s7 = rowv(S7);
+  let lit = luma(mix(rowv(S3).rgb, rowv(S2).rgb, 0.5) * rowv(S3).w) * 0.9 + luma(sunCol()) * select(0.06, 0.3, kind == 2)
+    + select(0.0, luma(s7.rgb) * s7.w * 0.8, kind == 2);
   var acc = 0.0;
   for (var k = 0; k < 3; k++) {
     let R = 1.5 * pow(2.6, f32(k));
@@ -388,5 +508,9 @@ fn rainNear(col: vec3f, d: vec3f, pix: f32) -> vec3f {
   acc = min(acc, 1.0) * sstep(0.0, 0.3, amt);
   var tint = vec3f(1.0);
   if (kind == 3) { tint = rowv(S7).rgb / max(luma(rowv(S7).rgb), 1e-3) * 1.5; }
-  return mix(col, vec3f(lit) * tint * select(1.0, 1.4, kind == 2), acc * 0.35);
+  // against a background brighter than the drops (open sky, sunlit snow) they read as grey streaks, darker than it:
+  // with the same blend they all but vanished there
+  let tg = vec3f(lit) * tint * select(1.0, 1.4, kind == 2);
+  let bright = sstep(1.2, 3.0, luma(col) / max(luma(tg), 1e-6));
+  return mix(col, mix(tg, col * 0.6, bright), acc * mix(0.35, 0.6, bright));
 }

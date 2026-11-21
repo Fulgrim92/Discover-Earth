@@ -117,6 +117,28 @@ fn aurF(p: vec2f, off: f32, r: f32, tm: f32) -> f32 {
   let dc = 0.2 * cos(a1) + 0.18 * cos(a2);
   return (p.y - c) * inverseSqrt(1.0 + dc * dc);
 }
+// aurora surge (FR.ske.w): a corona opens near the magnetic zenith (az 180, el 78): rays fanning out from one point
+fn auroraCorona(d: vec3f) -> vec3f {
+  let s = FR.ske.w;
+  if (s <= 0.0 || d.y < 0.2) { return vec3f(0.0); }
+  let Z = dirAzEl(180.0, 78.0);
+  let ang = acos(clamp(dot(d, Z), -1.0, 1.0));
+  let e1 = normalize(cross(Z, vec3f(1.0, 0.0, 0.0))); let e2 = cross(Z, e1);
+  let az = atan2(dot(d, e2), dot(d, e1));
+  let tm = FR.time.x;
+  // rays: streaks fanning out from one point, twisting a little with distance from it (folds seen end-on), in
+  // brighter and quieter sectors, flickering. Noise on the unit circle (no seam where the angle wraps)
+  let tw = az + ang * 0.9 + 0.15 * sin(ang * 6.0 + tm * 0.2);
+  let cs = vec2f(cos(tw), sin(tw));
+  let r1 = vn(cs * 9.0 + vec2f(tm * 0.04, 0.0), 465u) * 0.5 + 0.5;
+  let r2 = vn(cs * 2.2 + vec2f(0.0, tm * 0.03), 466u) * 0.5 + 0.5;
+  let r3 = vn(cs * 24.0 + vec2f(ang * 3.0, tm * 0.25), 467u) * 0.5 + 0.5;
+  let rays = pow(r1, 4.0) * sstep(0.35, 0.75, r2) * (0.6 + 0.7 * r3);
+  // the rays start a few degrees out (the heart is a dark-ish knot where they converge) and fade by ~45 degrees
+  let rad = sstep(0.04, 0.16, ang) * exp(-ang * 3.2);
+  let col = mix(vec3f(0.12, 1.0, 0.36), vec3f(0.5, 0.15, 0.8), sstep(0.25, 0.6, ang) * 0.5 * r3);
+  return col * rays * rad * 3.0 * s * sstep(0.2, 1.0, s);
+}
 fn aurora(d: vec3f) -> vec3f {
   if (d.y < 0.003) { return vec3f(0.0); }
   let tm = FR.time.x;
@@ -183,6 +205,7 @@ fn aurora(d: vec3f) -> vec3f {
   acc *= 1.0 / (1.0 + l * 0.2);
   // diffuse airglow under the curtains near the horizon
   acc += green * 0.08 * exp(-d.y * 9.0);
+  acc += auroraCorona(d);
   return acc * sstep(0.003, 0.06, d.y) * 0.16;
 }
 
@@ -192,7 +215,17 @@ fn ringDens(rr: f32) -> f32 {
   dens *= sstep(1.3, 1.42, rr) * sstep(2.25, 2.1, rr) * (1.0 - 0.9 * sstep(1.83, 1.87, rr) * sstep(1.96, 1.92, rr));
   return clamp(dens, 0.0, 1.0) * 0.75;
 }
-fn giantDir() -> vec3f { return dirAzEl(38.0, 26.0); }
+// home at az 38, el 26; in an eclipse (FR.ske.y, skyenc.js giantOcc mirrors this) it swings in front of the sun until
+// its centre is 0.6 radii from it
+fn giantDir() -> vec3f {
+  let H = dirAzEl(38.0, 26.0);
+  let m = FR.ske.y;
+  if (m <= 0.0) { return H; }
+  let Ls = sunDirFrom(rowv(S0), 0.0);
+  let tg = normalize(H - Ls * dot(H, Ls) + vec3f(0.0, 1e-6, 0.0));
+  let T = normalize(Ls + tg * tan(0.6 * radians(12.5)));
+  return normalize(mix(H, T, m));
+}
 fn giant(d: vec3f) -> vec4f {
   let G = giantDir();
   let rad = sin(radians(12.5));
@@ -281,6 +314,34 @@ fn starFrame(d: vec3f) -> vec3f {
   let a = -FR.sky.y; let c = cos(a); let s = sin(a);
   return d * c + cross(POLE, d) * s + POLE * dot(POLE, d) * (1.0 - c);
 }
+// the giant in front of the sun (FR.ske.y): its air is lit from behind as a thin ring all round the limb, brightest
+// toward the sun; while the sun sits at the limb a diamond flares there (the ring's bright stone)
+fn giantEclipse(d: vec3f, Ls: vec3f, pix: f32) -> vec3f {
+  let G = giantDir();
+  let R = radians(12.5);
+  let ga = acos(clamp(dot(d, G), -1.0, 1.0));
+  let sa = acos(clamp(dot(Ls, G), -1.0, 1.0));
+  let hid = sstep(R + 0.01, R - 0.004, sa); // how far behind the limb the sun is
+  if (hid <= 0.0) { return vec3f(0.0); }
+  // the limb point nearest the sun, and the angle around the limb from it
+  let tS = normalize(Ls - G * dot(Ls, G) + vec3f(0.0, 1e-6, 0.0));
+  let tD = normalize(d - G * dot(d, G) + vec3f(0.0, 1e-6, 0.0));
+  let around = acos(clamp(dot(tS, tD), -1.0, 1.0));
+  // the star's irradiance at the camera before the giant hid it (skyenc.js dims S0.z by the hidden fraction)
+  let rs = radians(rowv(S0).w * 0.5);
+  let occ = clamp((R + rs - sa) / (2.0 * rs), 0.0, 1.0);
+  let E = atmoInfo(0) / max(1.0 - 0.995 * occ, 0.005);
+  let x = (ga - R) / 0.004; // outside the limb, in units of the air's thickness
+  let ring = exp(-max(x, 0.0) * 1.4) * sstep(-1.2, 0.0, x);
+  let deep = sa / R; // 0 centre .. 1 limb
+  let toward = exp(-around * around * mix(0.5, 3.0, sstep(0.7, 1.0, deep)));
+  var c = vec3f(1.0, 0.55, 0.32) * ring * (0.06 + 0.5 * toward) * luma(E) * 0.03;
+  // the diamond: the sun just at the limb
+  let dia = sstep(0.82, 0.99, deep) * hid;
+  let gd = acos(clamp(dot(d, normalize(G + (Ls - G) * (R / max(sa, 1e-4)))), -1.0, 1.0));
+  c += vec3f(1.0, 0.92, 0.8) * luma(E) * dia * (exp(-gd * gd / 1e-5) * 0.05 / (PI * 1e-5) + exp(-gd / 0.02) * 0.6); // a few % of the sun, through a sliver of its disc
+  return c;
+}
 fn skyFull(d: vec3f, pix: f32) -> vec3f {
   let A = atmoSky(d);
   var c = skyBase(d);
@@ -289,7 +350,14 @@ fn skyFull(d: vec3f, pix: f32) -> vec3f {
   // the sun: limb-darkened disc
   let Ls = sunDirFrom(rowv(S0), drift);
   let rs = radians(rowv(S0).w * 0.5);
-  let ds = bodyDisc(d, Ls, rs, pix);
+  var ds = bodyDisc(d, Ls, rs, pix);
+  // the ringed giant passes in front of the sun (an eclipse, FR.ske.y): its disc hides it
+  let gec = FR.ske.y;
+  if (gec > 0.0) {
+    let Gd = giantDir();
+    let ga = acos(clamp(dot(d, Gd), -1.0, 1.0));
+    ds *= sstep(radians(12.5) - pix, radians(12.5) + pix, ga);
+  }
   if (ds > 0.0) {
     let om = 2.0 * PI * (1.0 - cos(rs));
     let rho = clamp(acos(clamp(dot(d, Ls), -1.0, 1.0)) / rs, 0.0, 1.0);
@@ -309,7 +377,10 @@ fn skyFull(d: vec3f, pix: f32) -> vec3f {
     let mar = sstep(0.05, 0.45, fbm(q * 1.7 + 3.0, 4, 470u) * 0.5 + 0.5);
     let cr = 1.0 - 0.2 * sstep(0.55, 0.8, vn(q * 7.0, 471u) * 0.5 + 0.5);
     let om = 2.0 * PI * (1.0 - cos(rm));
-    c += atmoInfo(1) / om * (mix(1.15, 0.7, mar) * cr * ph) * dm * up;
+    // lunar eclipse: the earth's umbra crosses (a dark limb leading), then the whole disc glows copper
+    let lu = FR.ske.x;
+    let um = mix(vec3f(1.0), vec3f(1.0, 0.36, 0.16) * (0.35 + 0.65 * sstep(0.2, 1.0, -q.x * 0.8 + 1.6 - 2.6 * lu)), sstep(0.0, 0.35, lu));
+    c += atmoInfo(1) / om * (mix(1.15, 0.7, mar) * cr * ph) * dm * up * um;
   }
   // stars and the Milky Way come out as the sun goes down (or always in a realm that asks for them, S5.x)
   let s5 = rowv(S5);
@@ -331,6 +402,7 @@ fn skyFull(d: vec3f, pix: f32) -> vec3f {
   if (aw > 0.01) { c += aurora(d) * aw * mix(1.0, A.a, 0.6); }
   // the giant is seen through the air in front of it: dimmed by its transmittance, the in-scatter stays
   if (g.a > 0.0) { c += g.rgb * gw * A.a; }
+  if (gec > 0.0 && gw > 0.001) { c += giantEclipse(d, Ls, pix) * gw * A.a; }
   return c;
 }
 
@@ -390,7 +462,11 @@ fn rainFog(col: vec3f, ro: vec3f, d: vec3f, t: f32) -> vec3f {
   var tb = min(t, 12000.0);
   if (d.y > 0.001) { tb = min(tb, max(base - ro.y, 0.0) / d.y); }
   if (tb < 1.0) { return col; }
-  let s = (wxStorm(wxCell(ro.xz)) * 2.0 + wxStorm(wxCell(ro.xz + d.xz * tb * 0.5)) + wxStorm(wxCell(ro.xz + d.xz * tb))) * 0.25;
+  // the haze of the rain the camera is in (a distant squall is drawn by the clouds' precipitation march; sampled
+  // here at three points it cut grey fins into the open sky beside it)
+  let s0 = wxStorm(wxCell(ro.xz));
+  if (s0 < 0.005) { return col; }
+  let s = s0 * (s0 * 2.0 + wxStorm(wxCell(ro.xz + d.xz * tb * 0.5)) + wxStorm(wxCell(ro.xz + d.xz * tb))) * 0.25;
   if (s < 0.005) { return col; }
   let tr = exp(-0.0011 * s * tb);
   let amb = mix(rowv(S3).rgb, rowv(S2).rgb, 0.5) * rowv(S3).w;
