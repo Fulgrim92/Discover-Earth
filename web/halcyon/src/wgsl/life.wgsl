@@ -52,6 +52,14 @@ fn lfShadow(p: vec3f, dist: f32, jit: f32, steps: i32) -> f32 {
   if (sh < 0.02) { return sh; }
   return sh * lfCloudShadow(p);
 }
+// sky visibility of the ground at p, weighted as the terrain weights its ambient (mix(0.5, 1, vis))
+fn lfSkyVis(p: vec2f) -> f32 {
+  let n = nLevels() - 1u;
+  let l0 = clipLevel(p, 0u, 6.0);
+  let l1 = min(l0 + 2u, n);
+  let v = clipSH(l0, p).y * mix(1.0, clipSH(clipLevel(p, l1, 4.0), p).y, 0.7);
+  return mix(0.5, 1.0, v);
+}
 fn lfBakedSun(p: vec2f) -> f32 {
   let L = FR.sun.xyz;
   let n = nLevels() - 1u;

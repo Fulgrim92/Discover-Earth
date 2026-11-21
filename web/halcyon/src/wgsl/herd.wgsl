@@ -145,13 +145,19 @@ fn animal(ii: u32) -> Ani {
   // herd centre wanders slowly; the flee offset is the CPU's integrated reaction to the drone
   let ph = G2.w * 0.001;
   let hc = G0.xy + vec2f(sin(t * 0.0021 + ph), cos(t * 0.0017 + ph * 1.3)) * sb.z * 0.8 + G1.xy;
-  let ofs = vec2f(cos(r1 * 6.2832), sin(r1 * 6.2832)) * sb.z * sqrt(r2);
+  // each member keeps its own ground: home spots on a sunflower spiral (nearest neighbours 1.546 c apart) and a
+  // personal walk circle of radius Rw <= 0.8 L around it, so two members are never closer than 1.3 body lengths
+  // (of the largest scale), never one inside the other
+  let L0 = sa.x * G2.z;
+  let c = max(3.1 * L0 / 1.546, sb.z / 3.94);
+  let ka = f32(k) * 2.39996 + G2.w * 0.37;
+  let ofs = vec2f(cos(ka), sin(ka)) * c * sqrt(f32(k) + 0.5);
   // own walk: arcs of radius Rw walked for Tw seconds out of every T, standing (grazing) in between
   let T = 9.0 + 9.0 * r3; let Tw = T * (0.25 + 0.2 * r4);
   let tt = t / T + r2;
   let kk = floor(tt); let fw = clamp(fract(tt) * T, 0.0, Tw);
-  let Rw = (2.5 + 3.0 * r1) * A.sc;
-  let om = sb.w / Rw * select(1.0, -1.0, r3 > 0.5);
+  let Rw = 0.8 * L0 * (0.75 + 0.25 * r1);
+  let om = sb.w * 0.5 / Rw * select(1.0, -1.0, r3 > 0.5);
   let th = om * (kk * Tw + fw) + r4 * 6.2832;
   let walking = fract(tt) * T < Tw;
   var pos = hc + ofs + vec2f(cos(th), sin(th)) * Rw;
@@ -385,25 +391,28 @@ fn coat(sp: u32, part: u32, tint: vec4f, loc: vec2f, wp: vec3f) -> vec3f {
   switch sp {
     case 0u: {
       // Faroese sheep: mostly cream-white, some moorit brown and black; dark faces and legs on many
-      var w = mix(vec3f(0.55, 0.52, 0.45), vec3f(0.62, 0.6, 0.53), v2);
+      // white wool stays at or below 0.6 albedo, with the folds between the locks in occlusion
+      var w = mix(vec3f(0.47, 0.45, 0.39), vec3f(0.52, 0.5, 0.44), v2);
       if (v > 0.72) { w = vec3f(0.2, 0.13, 0.08); }
       if (v > 0.9) { w = vec3f(0.045, 0.04, 0.035); }
-      // face, ears and lower legs are short hair, not wool: black-faced or white-faced
-      let face = select(vec3f(0.5, 0.46, 0.4), vec3f(0.045, 0.038, 0.034), v2 > 0.5 || v > 0.9);
-      let bare = part == 2u || part == 12u || part == 13u || part == 14u || (part == 1u && loc.x > 0.35) ||
+      // face, ears and lower legs are short hair, not wool: black-faced, or a tan face on the white ones so the
+      // head reads against the fleece
+      let face = select(vec3f(0.3, 0.25, 0.19), vec3f(0.045, 0.038, 0.034), v2 > 0.5 || v > 0.9);
+      let bare = part == 2u || part == 12u || part == 13u || part == 14u || (part == 1u && loc.x > 0.2) ||
         (part >= 4u && part <= 11u && loc.x > -0.45);
       if (bare) { return face * (0.9 + 0.2 * vn(wp.xz * 20.0 + wp.y * 9.0, 962u)); }
-      return w * (0.85 + 0.25 * vn(wp.xz * 9.0 + wp.y * 7.0, 961u));
+      let lk = vn(wp.xz * 9.0 + wp.y * 7.0, 961u);
+      return w * (0.82 + 0.22 * lk) * mix(0.62, 1.0, sstep(0.15, 0.55, vn(wp.xz * 17.0 - wp.y * 13.0, 963u)));
     }
     case 1u: {
       // bay (black points), chestnut, dark brown; one grey in some herds. Mane and tail dark, muzzle paler, hooves
       let dark = vec3f(0.025, 0.02, 0.017);
-      var w = vec3f(0.14, 0.068, 0.032);                                 // bay
+      var w = vec3f(0.13, 0.075, 0.045);                                 // bay
       var pts = dark;
-      if (v >= 0.45 && v < 0.75) { w = vec3f(0.2, 0.085, 0.035); pts = vec3f(0.13, 0.055, 0.025); }   // chestnut
+      if (v >= 0.45 && v < 0.75) { w = vec3f(0.17, 0.09, 0.05); pts = vec3f(0.12, 0.06, 0.035); }   // chestnut
       if (v >= 0.75 && v < 1.0) { w = vec3f(0.055, 0.036, 0.024); }      // dark brown
       if (v >= 1.0) {                                                    // grey, dappled
-        w = vec3f(0.3, 0.3, 0.29) * (0.8 + 0.35 * sstep(0.45, 0.6, vn(wp.xz * 7.0 + wp.y * 5.0, 966u)));
+        w = vec3f(0.21, 0.2, 0.185) * (0.8 + 0.35 * sstep(0.45, 0.6, vn(wp.xz * 7.0 + wp.y * 5.0, 966u)));
         pts = vec3f(0.12, 0.12, 0.12);
       }
       w *= 0.9 + 0.2 * v2;
@@ -501,7 +510,12 @@ fn herdShade(in: HV) -> vec3f {
   // occlusion: belly and the insides of the legs, darker toward the hips
   var ao = 1.0;
   if (in.part == 0u) { ao = mix(0.5, 1.0, sstep(-0.9, 0.25, n.y)); }
+  // the sky lights the back, not the flanks and throat: form in the shade (a grey must not go flat)
+  if (in.part == 1u || in.part == 2u || in.part == 12u) { ao = mix(0.55, 1.0, sstep(-0.7, 0.6, n.y)); }
+  if (in.part == 0u && in.sp <= 1u) { ao *= mix(0.75, 1.0, sstep(-0.2, 0.7, n.y)); }
   if (isLeg) { ao = select(0.85, mix(0.45, 0.95, sstep(-1.0, 0.0, in.loc.x)), ((in.part - 4u) & 1u) == 0u); }
+  // the sky an animal sees is the sky the ground under it sees (baked visibility, as the terrain uses it)
+  ao *= lfSkyVis(in.wp.xz);
   var col = alb * (sc * sh * max((ndl + wrapK) / (1.0 + wrapK), 0.0) + lfAmb(n.y, alb) * ao);
   // sheen along the hair (Kajiya-Kay), tinted by the coat
   let H = normalize(L + V);
