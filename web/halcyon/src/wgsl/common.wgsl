@@ -38,6 +38,7 @@ const OFF_SKY: u32 = 262144u;     // flat sky colour in the opaque pass
 const OFF_TGRID: u32 = 524288u;   // half-density terrain grid (112 quads per level side, 2x vertex spacing; JS, at init)
 const OFF_VEIL: u32 = 1048576u;     // the Drift veil in the cloud pass (clouds.wgsl veilMarch)
 const OFF_ATMO: u32 = 2097152u;    // the per-frame atmosphere LUT bake: baked once, then frozen (fx/atmo.js)
+const OFF_TLIVE: u32 = 4194304u;   // terrain material: the live path everywhere (no baked macro material; terrain-art)
 fn isOff(b: u32) -> bool { return (u32(FR.flags.x) & b) != 0u; }
 struct View {
   vp: mat4x4f,   // projection * view rotation (camera-relative world)

@@ -26,7 +26,11 @@ const SUN_REBAKE = 0.3;
 let cpSrcA, cpSrcB, cpDstA = [], cpDstB = [], cpSize;
 // bake counters since load: [full bakes, shade-only re-bakes] (read by the bench report and __halcyon.bakes)
 export const stats = new Float64Array(2);
-export const clip = { bgl: null, bg: null, data: null, height: null, format: '' };
+export const clip = { bgl: null, bg: null, data: null, height: null, format: '',
+  // baked macro material per level (terrain.wgsl fsMatBake; the pipeline and its bind groups come from fx/terrain.js)
+  matN: 512, matViews: null, pMat: null, matEmpty: null, matBG: [], bakeBuf: null };
+const MAT_FORMATS = ['rgba8unorm', 'rgba16float', 'rgba16float', 'rgba8unorm']; // 32 bytes per sample: the WebGPU default limit
+const matDesc = [];
 // realm map (terrain-art; clip.wgsl realmWeightsMap): skin weights of every realm on 1024^2 texels of 64 m around a
 // centre snapped to 1 km, recomputed (one compute dispatch) when the camera is more than RM_MOVE from it
 const RM_N = 1024, RM_MOVE = 8000;
@@ -48,6 +52,15 @@ export function init(ctx) {
   sunSrc = ctx.frame.subarray(FO.sky + 2, FO.sky + 3); // accumulated sun motion (deg, main.js skyTime)
   shade = tex(N, N, 'rgba8unorm', U.RENDER_ATTACHMENT | U.TEXTURE_BINDING, { layers: LEVELS, label: 'clipShade' });
   clip.data = data; clip.height = hgt; clip.format = 'r32float+rgba16float';
+  // baked material: albedo/roughness, detail gradient/f0, emission/grain, wet/flat/snow/thin ice
+  const MN = clip.matN;
+  const mat = MAT_FORMATS.map((f, k) => tex(MN, MN, f, U.RENDER_ATTACHMENT | U.TEXTURE_BINDING, { layers: LEVELS, label: 'clipMat' + k }));
+  clip.matViews = mat.map((t) => t.createView({ dimension: '2d-array' }));
+  for (let i = 0; i < LEVELS; i++) {
+    matDesc[i] = { colorAttachments: mat.map((t) => ({ view: t.createView({ dimension: '2d', baseArrayLayer: i, arrayLayerCount: 1 }),
+      loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } })), timestampWrites: undefined };
+  }
+  clip.matFormats = MAT_FORMATS;
 
   const mod = shader(CLIP + TERRFN + BAKE, 'bake');
   const bl1 = bgl('u', 'bake1'), bl2 = bgl('un', 'bake2');
@@ -64,6 +77,7 @@ export function init(ctx) {
   const tmpHView = tmpH.createView();
   for (let i = 0; i < LEVELS; i++) {
     bakeBuf[i] = buffer(16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'bakeU' + i);
+    clip.bakeBuf = bakeBuf;
     bakeBG[i] = bindGroup(bl1, [bakeBuf[i]]);
     gradBG[i] = bindGroup(bl2, [bakeBuf[i], tmpHView]);
     shadeBG[i] = bindGroup(bl2, [bakeBuf[i], hgt.createView({ dimension: '2d', baseArrayLayer: i, arrayLayerCount: 1 })]);
@@ -127,6 +141,15 @@ function bakeLevel(ctx, enc, i, shadeOnly) {
   have[i * 2] = cx; have[i * 2 + 1] = cz; baked[i] = 1;
   const o = FO.lv + i * 4;
   ctx.frame[o] = cx - 256 * t; ctx.frame[o + 1] = cz - 256 * t; ctx.frame[o + 2] = t; ctx.frame[o + 3] = ctx.frame[FO.time]; // .w: bake time (dbg=22)
+  // the macro material of this level (terrain.wgsl fsMatBake), read through FR.lv[i]: upload that entry first
+  if (clip.pMat) {
+    G.queue.writeBuffer(ctx.frameBuf, o * 4, ctx.frame, o, 4);
+    matDesc[i].timestampWrites = bakeTs();
+    const m = enc.beginRenderPass(matDesc[i]);
+    m.setPipeline(clip.pMat); m.setBindGroup(0, ctx.views[0].bg0); m.setBindGroup(1, clip.bg);
+    m.setBindGroup(2, clip.matEmpty); m.setBindGroup(3, clip.matBG[i]);
+    m.draw(3); m.end();
+  }
 }
 
 // realm map recentre: one compute pass (its encoder is the platform's)
@@ -193,6 +216,40 @@ export async function readLevel(ctx, i) {
   buf.unmap(); buf.destroy();
   const t = T0 * (1 << i);
   return { data: a, x0: have[i * 2] - 256 * t, z0: have[i * 2 + 1] - 256 * t, t };
+}
+
+// Harness: the realm skin weights the shaders see (clip.wgsl realmWeightsMap, from the baked realm map) at points
+// pts = [x, z, 0, 0, 0, 0, 0, 0, ...] (two vec4 per point); returns per point the weights of realms 0-3 and 4-7.
+const PROBE_RM = `
+@group(2) @binding(0) var<storage, read_write> PR: array<vec4f>;
+@compute @workgroup_size(64) fn cs(@builtin(global_invocation_id) id: vec3u) {
+  if (id.x * 2u >= arrayLength(&PR)) { return; }
+  let r = realmWeightsMap(PR[id.x * 2u].xy);
+  var a = vec4f(0.0); var b = vec4f(0.0);
+  for (var s = 0; s < 4; s++) {
+    let k = r.id[s];
+    if (k >= 0 && k < 4) { a[k] += r.w[s]; }
+    if (k >= 4 && k < 8) { b[k - 4] += r.w[s]; }
+  }
+  PR[id.x * 2u] = a; PR[id.x * 2u + 1u] = b;
+}`;
+export async function probeRealm(ctx, pts) {
+  const d = G.device;
+  const bl = bgl('b', 'probe realm');
+  const pp = computePipeline(shader(CLIP + PROBE_RM, 'realm probe'), [ctx.bgl0, clip.bgl, bl], 'realm probe');
+  const sb = d.createBuffer({ size: pts.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+  const rb = d.createBuffer({ size: pts.byteLength, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+  d.queue.writeBuffer(sb, 0, pts);
+  const enc = d.createCommandEncoder();
+  const c = enc.beginComputePass();
+  c.setPipeline(pp); c.setBindGroup(0, ctx.views[0].bg0); c.setBindGroup(1, clip.bg); c.setBindGroup(2, bindGroup(bl, [sb]));
+  c.dispatchWorkgroups(Math.ceil(pts.length / 8 / 64)); c.end();
+  enc.copyBufferToBuffer(sb, 0, rb, 0, pts.byteLength);
+  d.queue.submit([enc.finish()]);
+  await rb.mapAsync(GPUMapMode.READ);
+  const out = new Float32Array(rb.getMappedRange().slice(0));
+  rb.unmap(); rb.destroy(); sb.destroy();
+  return { w: out, at: [rmAt[0], rmAt[1]] };
 }
 
 // Harness: the heights the shaders see. Runs clip.wgsl clipH (the gather + bilinear every consumer uses) at points
