@@ -152,6 +152,20 @@ fn pebbles(xz: vec2f, c: f32) -> vec4f {
   return best;
 }
 
+// mixed stone sizes for scree and talus: blocks of ~1.2 m (rotated lattice) among cobbles of ~0.35 m, the blocks where
+// big is 1; returns (height above the gaps, gradient xz in world axes, tone 0..1) and the band-limit weight in .w of o2
+fn stones(xz: vec2f, fp: f32, big: f32, o2: ptr<function, f32>) -> vec4f {
+  var st = pebbles(rotq(xz) + 31.7, 1.2);
+  st = vec4f(st.x, rotT(st.yz), st.w);
+  var pw = bl(1.2, fp);
+  if (fp < 0.12 && (st.x < 0.05 || big < 0.5)) {
+    let ws = bl(0.35, fp) * (1.0 - big * sstep(0.0, 0.08, st.x));
+    st = mix(st, pebbles(xz, 0.35), ws); pw = mix(pw, bl(0.35, fp), ws);
+  }
+  *o2 = pw;
+  return st;
+}
+
 // irregular salt polygons (1-3 m): distance to the nearest cell edge in cell units (mirrored in composite.wgsl)
 fn saltEdge(xz: vec2f) -> f32 {
   let q = xz * (1.0 / 2.1);
@@ -540,6 +554,10 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   // scree collects in hollows under rock; soil shows at the edges of the turf
   let rockNear = sstep(0.12, 0.3, slope + 0.1 * nM);
   screeW = (1.0 - rockW) * rockNear * sstep(-0.1, 0.35, nS + 0.6 * conc + 0.3 * nM);
+  // ragged rim: turf tufts reach into the partly covered edge of a scree patch
+  if (screeW > 0.01 && screeW < 0.99 && fp < 0.5) {
+    screeW = clamp(screeW + 1.4 * screeW * (1.0 - screeW) * vn(rotq(p.xz * (1.0 / 1.3)) + 4.7, 267u) * bl(1.3, fp), 0.0, 1.0);
+  }
   let soilW = (1.0 - rockW) * (1.0 - screeW) * sstep(0.3, 0.6, rockMask + 0.25 * nS) * 0.55;
 
   // grass: wind-swept lighter ridges, darker damp hollows, heather and ochre patches on the slopes
@@ -593,9 +611,9 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   let soil = mix(vec3f(0.085, 0.07, 0.05), M1v.rgb * 1.4, 0.4) * (0.85 + 0.3 * gd.x);
   var scree = M1v.rgb * 1.35;
   var screeD = vec3f(0.0);
-  if (screeW > 0.01 && fp < 0.12) {
-    let pb = pebbles(p.xz, 0.32);
-    let pw = bl(0.32, fp);
+  if (screeW > 0.01 && fp < 0.4) {
+    var pw = 0.0;
+    let pb = stones(p.xz, fp, sstep(-0.2, 0.45, vn(rotq(p.xz * (1.0 / 6.0)) + 3.3, 268u) + 0.3 * nS), &pw);
     scree = mix(soil * 0.7, M1v.rgb * (1.0 + 0.9 * pb.w), sstep(0.02, 0.12, pb.x) * pw + (1.0 - pw) * 0.6);
     screeD = vec3f(pb.y, 0.0, pb.z) * 0.6 * pw;
   }
@@ -666,14 +684,21 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
     // talus: grey basalt scree in cones and aprons at the cliff foot (moderate slope, concave ground below the faces),
     // patchy, grassing over at its edges; pebble grain close up
     let apron = sstep(0.15, 0.24, slope) * sstep(0.5, 0.36, slope) * sstep(-0.02, 0.1, conc + 0.04 * nM) * sstep(3.0, 10.0, h);
-    let tal = apron * sstep(-0.15, 0.25, 0.6 * nM + 0.4 * nS + 0.25) * wHome;
+    var tal = apron * sstep(-0.15, 0.25, 0.6 * nM + 0.4 * nS + 0.25) * wHome;
     if (tal > 0.01) {
+      // ragged edge: turf tufts reach into the partly covered rim instead of a clean outline
+      let wE = bl(1.3, fp);
+      if (wE > 0.0) { tal = clamp(tal + 1.4 * tal * (1.0 - tal) * vn(rotq(p.xz * (1.0 / 1.3)) + 4.7, 267u) * wE, 0.0, 1.0); }
       var talus = M1v.rgb * 1.55 * (0.85 + 0.3 * gd.x + 0.15 * nS);
-      if (fp < 0.15) {
-        let pb = pebbles(p.xz, 0.4);
-        let pw = bl(0.4, fp);
-        talus *= 1.0 + (0.5 * pb.w - 0.15) * pw;
-        dg += vec3f(pb.y, 0.0, pb.z) * 0.5 * pw * tal;
+      if (fp < 0.4) {
+        // mixed sizes: blocks of ~1.2 m among cobbles of ~0.35 m, the blocks gathered where the apron is coarse (the
+        // foot of a fall), grit and soil in the gaps
+        let big = sstep(-0.2, 0.45, vn(rotq(p.xz * (1.0 / 7.0)) + 1.9, 268u) + 0.3 * nS);
+        var pw = 0.0;
+        let st = stones(p.xz, fp, big, &pw);
+        let gap = 1.0 - sstep(0.03, 0.12, st.x); // between stones: dark grit
+        talus *= (1.0 + (0.55 * st.w - 0.18) * pw) * (1.0 - 0.35 * gap * pw);
+        dg += vec3f(st.y, 0.0, st.z) * 0.5 * pw * tal;
       }
       alb = mix(alb, talus, tal * 0.85);
       screeW = max(screeW, tal);
@@ -697,19 +722,49 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
       let bog = sstep(0.08, 0.25, conc + 0.05 * m2);
       g2 = mix(g2, g2 * vec3f(0.62, 0.72, 0.5), bog * 0.45);
       wet = max(wet, bog * 0.3 * flatH);
-      // stream threads: a winding line along the hollows (1-2 m wide), dark wet sedge with a glint of water
-      let ws = bl(2.5, fp);
-      if (ws > 0.0) {
-        let sl = abs(vn(rotq(p.xz * (1.0 / 70.0) + vec2f(1.3, 0.4)), 264u) + 0.25 * vn(rotq(p.xz * (1.0 / 13.0)), 265u));
-        let thread = sstep(0.035, 0.012, sl) * sstep(0.0, 0.08, conc + 0.03) * ws;
-        g2 = mix(g2, vec3f(0.03, 0.045, 0.035), thread * 0.8);
-        wet = max(wet, thread * flatH);
+      // stream threads: water runs down the axis of each hollow. The axis is found in the terrain itself: across the
+      // slope (along the contour) the baked 4 m concavity peaks there, so the distance to it is |c'/c''| from three
+      // taps. Threads follow the fall line, join where hollows join, widen as the hollow deepens (more catchment) and
+      // run on into the fjord or a tarn; where the hollow is shallow there is no thread at all
+      let ws = bl(1.5, fp);
+      if (ws > 0.0 && ca > 0.02 && gl2 > 0.03) { // flat floors (tarns, bogs) pool instead
+        gCost += 3.0;
+        let dT = 3.0;
+        let cL = concL(3u, l0, e, p.xz - tng * dT);
+        let cR = concL(3u, l0, e, p.xz + tng * dT);
+        let c1 = (cR - cL) / (2.0 * dT);
+        let c2 = (cR + cL - 2.0 * ca) / (dT * dT);
+        if (c2 < -1e-4) {
+          let dAx = abs(c1 / c2);                                   // m to the hollow's axis, across the slope
+          let wid = 0.35 + 1.1 * sstep(0.03, 0.2, cb + 0.5 * ca);   // wider where the hollow is broad and deep
+          let wv = max(wid, fp * 0.8);
+          let thread = sstep(wv, wv * 0.35, dAx) * (wid / wv) * sstep(0.02, 0.08, ca) * ws;
+          g2 = mix(g2, vec3f(0.03, 0.045, 0.035), thread * 0.75);
+          wet = max(wet, thread * flatH);
+        }
       }
       // low outcrops on the knolls: lichen-grey basalt breaking the turf
       let oc = sstep(0.55, 0.8, vn(rotq(p.xz * (1.0 / 16.0) + vec2f(5.5, 2.2)), 266u) * bl(16.0, fp) + 0.25 * m2 - 0.6 * conc) * sstep(0.0, 0.5, m1);
       g2 = mix(g2, vec3f(0.11, 0.11, 0.1) * (0.85 + 0.3 * gd.x), oc * 0.75); // lichen-grey
       rockW = max(rockW, oc * 0.7 * flatH);
       alb = mix(alb, g2, flatH);
+    }
+    // steep meadow: short parallel rills straight down the fall line (5 m apart, 6-20 m long), damp darker sward,
+    // never loops; none on the dry convex crests
+    let rillW = sstep(0.18, 0.28, slope) * sstep(0.5, 0.4, slope) * (1.0 - rockW) * (1.0 - tal) * sstep(-0.06, 0.0, conc) * wHome * bl(1.2, fp);
+    if (rillW > 0.01) {
+      gCost += 1.0;
+      let rc = floor(u * 0.2); let rci = i32(rc);
+      let ru = u - (rc + 0.3 + 0.4 * hf(rci, 7, 269u)) * 5.0;
+      let sg = (dot(p.xz, down) + 37.0 * hf(rci, 8, 269u)) * (1.0 / 14.0);
+      let sgi = i32(floor(sg)); let sf = fract(sg);
+      let len = 0.4 + 0.5 * hf(rci, sgi, 270u);
+      let on = select(0.0, 1.0, hf(rci, sgi, 271u) < 0.45) * sstep(0.0, 0.1, sf) * sstep(len, len - 0.15, sf);
+      let rw0 = 0.18 + 0.12 * sf; // widening downhill
+      let rwv = max(rw0, fp * 0.8);
+      let rill = sstep(rwv, rwv * 0.3, abs(ru)) * (rw0 / rwv) * on * rillW;
+      alb = mix(alb, alb * vec3f(0.62, 0.74, 0.66), rill * 0.5);
+      wet = max(wet, rill * 0.5);
     }
     // thread-thin waterfalls on steep concave faces (coverage-preserving: thin threads stay visible far away)
     let steep = sstep(0.35, 0.6, slope);
@@ -859,11 +914,23 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
     let bedPos = 4.0 * (bk + 0.3 + 0.4 * hf(i32(bk), 2, 287u));
     let bw = max(0.12, fp * 0.6);
     let crack = (1.0 - sstep(bw * 0.4, bw, abs(bedS - bedPos))) * (0.12 / bw) * bl(1.0, fp) * wall;
-    // each bed its own tone (horizontal breakup of the walls), slightly darker near the cracks
-    var lime = M1v.rgb * (0.9 + 0.25 * flute + 0.15 * nS) * sd.x * (0.84 + 0.3 * hf(i32(bk), 5, 287u) * bl(3.0, fp));
-    lime = mix(lime, lime * vec3f(1.15, 0.95, 0.7), sstep(0.0, 0.6, vn(vec2f(u * 0.04, h * 0.01), 284u)) * 0.6); // ochre stain
+    // rillenkarren: sharp-crested runnels of ~0.7 m cut by rain into the upper walls, crests pale, troughs dark
+    let wkr = bl(0.7, fp) * wall;
+    var karr = 0.0;
+    if (wkr > 0.0) {
+      gCost += 4.0;
+      let kr = vnoised(vec2f(u * (1.0 / 0.7), h * (1.0 / 18.0)), 292u);
+      karr = (0.5 - abs(kr.x)) * wkr * mix(0.5, 1.0, sstep(40.0, 5.0, below)); // crest +0.5 .. trough -0.5, strongest high up
+      dg += vec3f(tng.x, 0.0, tng.y) * (-sign(kr.x) * kr.y * (1.0 / 0.7)) * 0.45 * wkr;
+    }
+    // each bed its own tone (horizontal breakup of the walls), slightly darker near the cracks; grey limestone,
+    // paler on the flute and karren crests
+    var lime = M1v.rgb * (1.0 + 0.25 * flute + 0.45 * karr + 0.15 * nS) * sd.x * (0.84 + 0.3 * hf(i32(bk), 5, 287u) * bl(3.0, fp));
+    lime = mix(lime, lime * vec3f(1.12, 0.97, 0.78), sstep(0.25, 0.75, vn(vec2f(u * 0.04, h * 0.01), 284u)) * 0.45); // rare ochre stain
+    // runoff biofilm: long blue-black streaks from the rims down, the darkest just below the canopy lip
     let streak = vn(vec2f(u * 0.3, h * 0.015), 280u) * 0.5 + vn(vec2f(u * 1.1, h * 0.05), 281u) * 0.3;
-    lime = mix(lime, lime * vec3f(0.45, 0.48, 0.42), sstep(0.05, 0.45, -streak) * 0.8); // water stains
+    let runoff = sstep(0.0, 0.4, -streak) * mix(0.55, 0.95, sstep(30.0, 4.0, below));
+    lime = mix(lime, luma(lime) * vec3f(0.36, 0.37, 0.4), runoff);
     lime *= 1.0 - 0.6 * min(crack, 1.0);
     // ledges with clinging green: any less-steep spot on a wall, and the lips of bedding cracks
     let ledgeV = sstep(0.5, 0.3, slope) * onPillar * fineGeo;
