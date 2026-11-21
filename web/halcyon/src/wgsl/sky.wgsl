@@ -385,7 +385,7 @@ fn applyFog(col: vec3f, ro: vec3f, d: vec3f, t: f32) -> vec3f {
 }
 // rain in the air (weather cells): visibility 1-3 km inside a squall, flat grey light, up to the cloud base
 fn rainFog(col: vec3f, ro: vec3f, d: vec3f, t: f32) -> vec3f {
-  if (isOff(OFF_RAIN)) { return col; }
+  if (isOff(OFF_RAIN) || FR.wxp.w == 0.0) { return col; }
   let base = rowv(C0).y;
   var tb = min(t, 12000.0);
   if (d.y > 0.001) { tb = min(tb, max(base - ro.y, 0.0) / d.y); }

@@ -14,7 +14,8 @@
 // march cost instrumentation (URL steps=1; dbg=17 shows it as a heat map): per-ray counters, summed with atomics
 // [0] rays [1] main iterations [2] dense (lit) samples [3] light steps [4] veil samples [5] precip samples
 // [6] mirror-march iterations [7] total, [8..71] histogram of the total per ray in bins of 16
-@group(2) @binding(8) var<storage, read_write> CST: array<atomic<u32>, 72>;
+// [72..79] count and total per ray class: sky, ground/water, near-horizon sky (d.y < 0.08), with a mirror march
+@group(2) @binding(8) var<storage, read_write> CST: array<atomic<u32>, 80>;
 var<private> cIt: u32; var<private> cD: u32; var<private> cL: u32; var<private> cV: u32; var<private> cP: u32; var<private> cR: u32;
 
 const BASE_TILE: f32 = 3600.0;  // m per base-noise tile (128 texels, 4 mips)
@@ -431,6 +432,10 @@ struct CF { @location(0) front: vec4f, @location(1) refl: vec4f, @location(2) di
     atomicAdd(&CST[0], 1u); atomicAdd(&CST[1], cIt); atomicAdd(&CST[2], cD); atomicAdd(&CST[3], cL);
     atomicAdd(&CST[4], cV); atomicAdd(&CST[5], cP); atomicAdd(&CST[6], cR); atomicAdd(&CST[7], tot);
     atomicAdd(&CST[8u + min(tot / 16u, 63u)], 1u);
+    let cls = select(74u, 72u, dist > 50000.0);
+    atomicAdd(&CST[cls], 1u); atomicAdd(&CST[cls + 1u], tot);
+    if (dist > 50000.0 && d.y < 0.08) { atomicAdd(&CST[76], 1u); atomicAdd(&CST[77], tot); }
+    if (cR > 0u) { atomicAdd(&CST[78], 1u); atomicAdd(&CST[79], tot); }
   }
   return o;
 }
@@ -525,7 +530,7 @@ fn rainbow(d: vec3f, L: vec3f) -> vec3f {
   return p + s;
 }
 fn precipMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
-  if (isOff(OFF_RAIN)) { return vec4f(0.0); }
+  if (isOff(OFF_RAIN) || FR.wxp.w == 0.0) { return vec4f(0.0); } // no squall within 16 km
   let tEnd = min(tmax, 16000.0);
   // only rays that pass a squall: five probes of the weather field along the ray
   // the march window is centred on the storm-weighted mean of the probes: continuous from pixel to pixel (an argmax

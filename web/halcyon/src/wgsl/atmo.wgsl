@@ -154,7 +154,7 @@ fn skyDir(uv: vec2f) -> vec3f {
   if (c0.x > 0.005) { occ = sstep(0.05, 0.6, cloudCov(cloudField(xz, bf(rw, C3).x), c0.x)) * clamp(c0.w * 0.85, 0.0, 0.88); }
   // weather: clear cells thin the shadow, squalls are solid (the land under them goes dark)
   let wn = wxCell(xz);
-  occ = max(occ * (1.0 - 0.75 * wxClear(wn)), wxStorm(wn) * 0.96);
+  occ = max(occ * (1.0 - 0.75 * wxClear(wn)), select(wxStorm(wn) * 0.96, 0.0, isOff(OFF_RAIN)));
   // the cloud sea: optical depth per metre of path (presence x coverage x density), and its top (-1000: none)
   let c1w = bf(rw, C1).w;
   var sea = 0.0; var seaTop = -1000.0;
