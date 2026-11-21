@@ -292,14 +292,18 @@ fn unproject(fragXY: vec2f, z: f32) -> vec3f {
       else { if (z1 < 0.0) { z1 = z; } n1 += 1.0; }
     }
   }
+  if (n1 > n0) { let zt = z0; z0 = z1; z1 = zt; let nt = n0; n0 = n1; n1 = nt; } // the majority surface first
   let p0 = unproject(fpos.xy, max(z0, 1e-9));
   let fwh = min(fwidth(p0.y), 4.0); // uniform control flow here
   if (n0 == 0.0) { return vec4f(0.0); }
   let inv = 1.0 / f32(TNS);
   var c = terrainShade(p0, fpos.xy, fwh).c.rgb * (n0 * inv);
-  // a second terrain surface in the pixel (a silhouette over farther ground): baked path only, so no pixel pays
-  // for the live material twice
-  if (n1 > 0.0) { gForceBake = true; c += terrainShade(unproject(fpos.xy, z1), fpos.xy, fwh).c.rgb * (n1 * inv); }
+  // a second terrain surface in the pixel (a ridge over farther ground) is shaded on its own only when it holds at
+  // least two samples and lies clearly behind (or before) the first (> 6 % in depth); a single stray sample is folded
+  // into the main surface, so few pixels pay for two shadings (baked path for it when tbake=1)
+  if (n1 >= 2.0 && n0 >= 2.0 && abs(z1 - z0) > 0.06 * max(z0, z1)) {
+    gForceBake = true; c += terrainShade(unproject(fpos.xy, z1), fpos.xy, fwh).c.rgb * (n1 * inv);
+  } else { c *= (n0 + n1) / max(n0, 1.0); }
   return vec4f(c, 0.0);
 }
 
