@@ -11,9 +11,10 @@ import { hu8, W_ID, W_W } from './realms.js';
 const WIND_X = 4.2, WIND_Z = 1.7; // m/s, common.wgsl CLOUD_WIND
 const OFS_X = 1448825, OFS_Z = -259896; // common.wgsl WX_OFS
 // per realm id: liquid rain on the ground, visible precipitation, kind (0 rain, 1 virga, 2 snow, 3 spores)
-export const WX_LIQUID = new Float64Array([1.0, 0.0, 0.55, 0.85, 0.0, 0.0]);
-export const WX_PRECIP = new Float64Array([1.0, 0.7, 0.55, 0.85, 0.85, 0.7]);
-export const WX_KIND = new Int32Array([0, 1, 0, 0, 2, 3]);
+// (6-8: Coral Atoll, Slot Canyons, Alpine Crown; DESIGN 13; common.wgsl mirrors)
+export const WX_LIQUID = new Float64Array([1.0, 0.0, 0.55, 0.85, 0.0, 0.0, 1.0, 0.0, 0.8]);
+export const WX_PRECIP = new Float64Array([1.0, 0.7, 0.55, 0.85, 0.85, 0.7, 1.0, 0.7, 0.85]);
+export const WX_KIND = new Int32Array([0, 1, 0, 0, 2, 3, 0, 1, 0]);
 
 // inputs: camera x, z, time (s). Outputs: WX_CAM = liquid rain, precipitation, kind, fog bank (all at the camera);
 // WX_BOLT = lightning x, z, intensity (0 when none), seconds into the flash
@@ -23,6 +24,8 @@ export const WX_BOLT = new Float32Array(4);
 // a pinned squall (main.js, URL wx=): centre x, z, radius (0 = none); [3] is set by wxTick: 1 when any squall lies
 // within 16 km of the camera (FR.wxp.w: the shaders skip all rain work without one)
 export const WX_PIN = new Float64Array(4);
+// forced lightning (skyenc.js, the dry thunderstorm): period s (0 = none), line centre x, z, line direction x, z
+export const WX_ENC = new Float64Array(5);
 const S = new Float64Array(8);
 
 function sstep(a, b, x) { const t = Math.min(Math.max((x - a) / (b - a), 0), 1); return t * t * (3 - 2 * t); }
@@ -42,8 +45,9 @@ function cell() {
   S[5] = qx / 5200; S[6] = qz / 5200; vn(721);
   S[3] = a * 0.72 + S[7] * 0.28;
   if (WX_PIN[2] > 0) {
-    const ex = (S[0] - WX_PIN[0]) / WX_PIN[2], ez = (S[1] - WX_PIN[1]) / WX_PIN[2];
-    S[3] = Math.max(S[3], 1 - 0.9 * (ex * ex + ez * ez));
+    const ex = (S[0] - WX_PIN[0]) / WX_PIN[2], ez = (S[1] - WX_PIN[1]) / WX_PIN[2], n0 = S[3];
+    S[5] = qx / 2200; S[6] = qz / 2200; vn(722); const g = 0.75 + 0.5 * S[7]; // ragged edge, as common.wgsl
+    S[3] = Math.max(n0, 1 - 0.9 * (ex * ex + ez * ez) * g * g);
   }
 }
 
@@ -66,6 +70,8 @@ export function wxTick() {
     S[0] = WX_IN[0] + i * 4000; S[1] = WX_IN[1] + j * 4000; cell();
     if (S[3] > 0.33) { near = 1; break; }
   }
+  // a pinned squall (captures, sky encounters) may be smaller than the 4 km grid: test its centre too
+  if (WX_PIN[2] > 0) { const dx = WX_PIN[0] - WX_IN[0], dz = WX_PIN[1] - WX_IN[1]; if (dx * dx + dz * dz < 18000 * 18000) near = 1; }
   WX_PIN[3] = near;
   WX_CAM[0] = st * liq; WX_CAM[1] = kind === 1 ? 0 : st * pre; WX_CAM[2] = kind;
   const fq = WX_IN[2] * 0.5;
@@ -81,4 +87,11 @@ export function wxTick() {
   // a flash with a second, weaker return stroke; 0.45 s in all
   const env = into < 0.08 ? 1 : into < 0.16 ? 0.25 : into < 0.24 ? 0.7 : Math.max(0, 1 - (into - 0.24) / 0.2) * 0.3;
   WX_BOLT[0] = S[0]; WX_BOLT[1] = S[1]; WX_BOLT[2] = go * env; WX_BOLT[3] = into;
+  if (WX_ENC[0] > 0) {
+    // a storm whose strikes walk along its line, 600 m a strike, back and forth over 5 km
+    const P = WX_ENC[0], sl = Math.floor(WX_IN[2] / P), u = WX_IN[2] - sl * P, k = sl % 16, j = k < 8 ? k : 16 - k;
+    const al = (j - 4) * 600 + ((hu8(sl, 6, 953) * (1 / 16777216)) - 0.5) * 300;
+    const e2 = u < 0.08 ? 1 : u < 0.16 ? 0.25 : u < 0.24 ? 0.7 : Math.max(0, 1 - (u - 0.24) / 0.2) * 0.3;
+    WX_BOLT[0] = WX_ENC[1] + WX_ENC[3] * al; WX_BOLT[1] = WX_ENC[2] + WX_ENC[4] * al; WX_BOLT[2] = e2; WX_BOLT[3] = u;
+  }
 }

@@ -27,6 +27,7 @@ let WN = 512, WTEX = 128;
 let pSkipF, pSkipC, bgSkipF, bgSkipC, skFV, skCV, SKF = 64;
 // column occupancy (clouds.wgsl csColumn), one texel per window texel
 let pCol, bgCol, colV, pOcc, bgOcc, occV;
+const COLW = new Float32Array([NaN, NaN, 0]); // last window origin, row phase
 const CU = new Float32Array(32);
 // march cost instrumentation (URL steps=1): stats buffer (clouds.wgsl CST), read back every 16 frames into STEPS
 const NST = 84;
@@ -168,6 +169,13 @@ export function prepare(view) {
   W_IN[0] = d[32]; W_IN[1] = d[34]; realmWeightsA();
   for (let i = 0; i < 4; i++) { CU[16 + i] = W_ID[i]; CU[20 + i] = W_W[i]; }
   CU.set(WX_BOLT, 24); // lightning (weather.js, set in prepareFrame)
+  // the cloud sea's slab follows the rows (the Brocken-spectre encounter raises the Stone Forest sea, skyenc.js)
+  if (CU[7] > 0) { let shi = 0; for (let r = 0; r < NREALM; r++) { const o = r * ROWF; if (TABLE[o + F.C1 * 4 + 3] > 0.001) shi = Math.max(shi, TABLE[o + F.C2 * 4 + 1] + 45); } CU[7] = shi; }
+  // column occupancy (csColumn): a quarter of the rows a frame while the window stands still (the clouds drift
+  // ~0.3 m in 4 frames, far inside the one-texel dilation); all of it when the window moved a texel
+  const moved = CU[0] !== COLW[0] || CU[1] !== COLW[1];
+  COLW[0] = CU[0]; COLW[1] = CU[1]; COLW[2] = (COLW[2] + 1) % 4;
+  CU[30] = COLW[2]; CU[31] = moved ? 1 : 4;
   G.queue.writeBuffer(cuBuf, 0, CU);
 }
 
