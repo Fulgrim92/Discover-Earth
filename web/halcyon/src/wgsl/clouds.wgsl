@@ -15,8 +15,12 @@
 // [0] rays [1] main iterations [2] dense (lit) samples [3] light steps [4] veil samples [5] precip samples
 // [6] mirror-march iterations [7] total, [8..71] histogram of the total per ray in bins of 16
 // [72..79] count and total per ray class: sky, ground/water, near-horizon sky (d.y < 0.08), with a mirror march
-@group(2) @binding(8) var<storage, read_write> CST: array<atomic<u32>, 80>;
-var<private> cIt: u32; var<private> cD: u32; var<private> cL: u32; var<private> cV: u32; var<private> cP: u32; var<private> cR: u32;
+// [80] empty-space map fetches
+@group(2) @binding(8) var<storage, read_write> CST: array<atomic<u32>, 84>;
+// empty-space maps (cloudskip.wgsl): fine 1/8 of the window per texel, coarse 4x4 fine texels
+@group(2) @binding(9) var skF: texture_2d<f32>;
+@group(2) @binding(10) var skC: texture_2d<f32>;
+var<private> cIt: u32; var<private> cD: u32; var<private> cL: u32; var<private> cV: u32; var<private> cP: u32; var<private> cR: u32; var<private> cS: u32;
 
 const BASE_TILE: f32 = 3600.0;  // m per base-noise tile (128 texels, 4 mips)
 const DET_TILE: f32 = 640.0;    // m per detail tile (64 texels)
@@ -242,6 +246,42 @@ fn shade(p: vec3f, d: vec3f, hf: f32, od: f32, dens: f32, sea: bool) -> vec3f {
   return gCL.tint * (sc * s * powder * sunK + amb * gCL.amb * 0.95) + gCL.emis + bolt;
 }
 
+// ---- empty-space skipping: from t, cross whole map cells in which no cloud can be (coarse 4 km cells first, then
+// fine 1 km ones; a cell is empty when its max coverage is zero, or the ray's whole stretch through it is above its
+// highest top or below its lowest base). At most six fetches per call; returns where the march should resume.
+fn cellExit(ro: vec3f, d: vec3f, lo: vec2f, size: f32, bs: f32) -> f32 {
+  let o = (ro.xz - CU.win.xy) / bs; let dv = d.xz / bs;
+  var tx = 1e9; var tz = 1e9;
+  if (abs(dv.x) > 1e-9) { tx = (select(lo.x, lo.x + size, dv.x > 0.0) - o.x) / dv.x; }
+  if (abs(dv.y) > 1e-9) { tz = (select(lo.y, lo.y + size, dv.y > 0.0) - o.y) / dv.y; }
+  return min(tx, tz);
+}
+fn cellEmpty(s: vec4f, y0: f32, y1: f32, sea: bool) -> bool {
+  if (sea) { return s.w <= 0.003; }
+  return s.x <= 0.004 || max(y0, y1) < s.y - 30.0 || min(y0, y1) > s.z + 30.0;
+}
+// returns (resume t, end of the non-empty fine cell it stopped in: no need to ask again before that)
+fn skipEmpty(ro: vec3f, d: vec3f, t: f32, t1: f32, sea: bool) -> vec2f {
+  let nf = f32(textureDimensions(skF).x);
+  let bs = CU.win.z * CU.win.w / nf; // metres per fine cell
+  var tt = t;
+  for (var k = 0; k < 6; k++) {
+    if (tt >= t1) { return vec2f(tt, 1e9); }
+    let p = ro + d * tt;
+    let b = (p.xz - CU.win.xy) / bs;
+    if (any(b < vec2f(0.0)) || any(b >= vec2f(nf))) { return vec2f(tt, 1e9); } // beyond the window: no map
+    cS++;
+    let bc = floor(b * 0.25) * 4.0;
+    var te = max(cellExit(ro, d, bc, 4.0, bs), tt);
+    if (cellEmpty(textureLoad(skC, vec2i(bc * 0.25), 0), p.y, ro.y + d.y * min(te, t1), sea)) { tt = te + 0.5; continue; }
+    let bf = floor(b);
+    te = max(cellExit(ro, d, bf, 1.0, bs), tt);
+    if (cellEmpty(textureLoad(skF, vec2i(bf), 0), p.y, ro.y + d.y * min(te, t1), sea)) { tt = te + 0.5; continue; }
+    return vec2f(tt, te);
+  }
+  return vec2f(tt, tt);
+}
+
 // Adaptive march: coarse steps through empty air (cheap coverage test), fine steps once inside cloud, back to
 // coarse after a few empty samples. Step length grows with distance (far clouds are small on screen).
 fn marchSeg(ro: vec3f, d: vec3f, t0: f32, t1: f32, n: i32, jit: f32, sea: bool, nl: i32, ms: ptr<function, MS>) {
@@ -252,10 +292,20 @@ fn marchSeg(ro: vec3f, d: vec3f, t0: f32, t1: f32, n: i32, jit: f32, sea: bool, 
   var t = t0 + clamp(t0 * kf, fmin, fmax) * jit * 2.0;
   var empty = 8;
   var lastDt = 0.0;
+  var askAt = 0.0; // the empty-space map is asked again only past the non-empty cell it last stopped in
   loop {
     // a shared budget of dense (lit) samples, twice that in iterations; it shrinks when the ray starts inside cloud
     // hard ceiling: n + 16 iterations per ray over both layers (was 2n: grazing rays through empty sky hit it)
     if (t >= t1 || (*ms).nd >= (*ms).cap || (*ms).it >= n + 16 || (*ms).T < T_MIN) { break; }
+    // out of cloud: jump over map cells where no cloud can be (resume jittered inside the next cell: no slicing)
+    if (empty > 0 && t >= askAt) {
+      let sk = skipEmpty(ro, d, t, t1, sea);
+      let tn = sk.x; askAt = sk.y;
+      if (tn > t + 0.5) {
+        t = tn + clamp(tn * kf, fmin, fmax) * jit; lastDt = 0.0;
+        if (t >= t1) { break; }
+      }
+    }
     (*ms).it++; cIt++;
     let p = ro + d * t;
     let dtf = clamp(t * kf, fmin, fmax);
@@ -431,7 +481,7 @@ struct CF { @location(0) front: vec4f, @location(1) refl: vec4f, @location(2) di
   if (CU.dbg.x > 0.0) {
     atomicAdd(&CST[0], 1u); atomicAdd(&CST[1], cIt); atomicAdd(&CST[2], cD); atomicAdd(&CST[3], cL);
     atomicAdd(&CST[4], cV); atomicAdd(&CST[5], cP); atomicAdd(&CST[6], cR); atomicAdd(&CST[7], tot);
-    atomicAdd(&CST[8u + min(tot / 16u, 63u)], 1u);
+    atomicAdd(&CST[8u + min(tot / 16u, 63u)], 1u); atomicAdd(&CST[80], cS);
     let cls = select(74u, 72u, dist > 50000.0);
     atomicAdd(&CST[cls], 1u); atomicAdd(&CST[cls + 1u], tot);
     if (dist > 50000.0 && d.y < 0.08) { atomicAdd(&CST[76], 1u); atomicAdd(&CST[77], tot); }
