@@ -45,6 +45,7 @@ fn sat(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }
   // the sea's own top and density are normalised by its weight, so the layer does not sag at realm borders
   let sw = max(c1.w, 1e-3);
   let sea = c1.w * seaCov(xz) * (c2.z / sw);
-  textureStore(outWy, id.xy, vec4f(c3.y, c3.z, sea, select(0.0, c2.y / sw, c1.w > 1e-3)));
+  // a squall is cumulonimbus in any realm: cumulus type (a stratus deck's flat lens stacked into pancakes)
+  textureStore(outWy, id.xy, vec4f(max(c3.y, wst), c3.z, sea, select(0.0, c2.y / sw, c1.w > 1e-3)));
 }
 

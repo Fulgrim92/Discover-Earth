@@ -385,6 +385,7 @@ fn wxPrecip(id: i32) -> f32 { return select(select(select(0.7, 0.85, id == 3 || 
 fn wxKind(id: i32) -> i32 { return select(select(select(0, 3, id == 5), 2, id == 4), 1, id == 1); }
 // Rain intensity 0..1 falling on the ground at xz (terrain-art: wet ground; 0 where it snows or nothing falls)
 fn rainAtW(xz: vec2f, rw: RWt) -> f32 {
+  if (FR.wxp.w == 0.0 || isOff(OFF_RAIN)) { return 0.0; } // no squall within 16 km of the camera
   let s = wxStorm(wxCell(xz));
   if (s <= 0.0) { return 0.0; }
   var a = 0.0;
@@ -392,6 +393,7 @@ fn rainAtW(xz: vec2f, rw: RWt) -> f32 {
   return s * a;
 }
 fn rainAt(xz: vec2f) -> f32 {
+  if (FR.wxp.w == 0.0) { return 0.0; }
   if (wxStorm(wxCell(xz)) <= 0.0) { return 0.0; }
   return rainAtW(xz, realmWeights(xz));
 }
