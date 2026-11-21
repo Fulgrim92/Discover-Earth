@@ -131,22 +131,24 @@ export function skyEncRows() {
   find(E_BROCKEN, t);
   if (E[1] >= 0) {
     const o = 3 * ROWF;
-    TABLE[o + F.C2 * 4 + 1] += 260 * E[0];
+    TABLE[o + F.C2 * 4 + 1] += 420 * E[0];
   }
   // weather encounters: a squall pinned where the event is (the view direction is DIR turned back: encounters.js
   // site() sets DIR = (-fz, fx)), lightning walking along the cell
   WX_ENC[0] = 0;
   let pin = 0;
-  find(E_RAINBOW, t); // 22: a squall rolls in ahead; its bow stands in the rain against the dark cell
+  find(E_RAINBOW, t); // 22: a squall rolls in opposite the sun; its bow stands in the rain against the dark cell
   if (E[1] >= 0 && E[0] > 0.01) {
-    const s = E[1], fx = DIR[s * 2 + 1], fz = -DIR[s * 2];
-    const r = 3500 * (0.45 + 0.55 * E[0]);
-    WX_PIN[0] = ENC[s * 8 + 1] + fx * 3500; WX_PIN[1] = ENC[s * 8 + 3] + fz * 3500; WX_PIN[2] = r; pin = 1;
+    // wide and centred on the antisolar side of the camera, so the whole 42 degree arc has rain behind it
+    const az = TABLE[Math.max(W_ID[0], 0) * ROWF + F.S0 * 4 + 1] * (Math.PI / 180);
+    const r = 4500 * (0.45 + 0.55 * E[0]);
+    WX_PIN[0] = IN[1] - Math.sin(az) * (r + 600); WX_PIN[1] = IN[3] + Math.cos(az) * (r + 600); WX_PIN[2] = r; pin = 1;
   }
   find(E_RAINSHAFT, t); // 24: a lone shaft far out over the salt, doubled in the mirror
   if (!pin && E[1] >= 0 && E[0] > 0.01) {
-    const s = E[1];
-    WX_PIN[0] = ENC[s * 8 + 1]; WX_PIN[1] = ENC[s * 8 + 3]; WX_PIN[2] = 900 + 900 * E[0]; pin = 1;
+    // 6 km out along the view the encounter was set in (DIR is the crossing direction, the view is (DIR.z, -DIR.x))
+    const s = E[1], fx = DIR[s * 2 + 1], fz = -DIR[s * 2];
+    WX_PIN[0] = ENC[s * 8 + 1] + fx * 3500; WX_PIN[1] = ENC[s * 8 + 3] + fz * 3500; WX_PIN[2] = 1500 + 1300 * E[0]; pin = 1;
   }
   find(E_DRYSTORM, t); // 23: a dry storm on the horizon; its strikes walk along it, the virga under it
   if (!pin && E[1] >= 0 && E[0] > 0.01) {

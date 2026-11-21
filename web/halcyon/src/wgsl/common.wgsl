@@ -16,6 +16,7 @@ struct Frame {
   wxp: vec4f,    // a pinned squall (URL wx=dx,dz[,r]; captures): centre x, z, radius (m, 0 = none);
                  // w: 1 when any squall lies within 16 km of the camera (weather.js; 0 skips all rain work)
   ske: vec4f,    // sky encounters (skyenc.js): lunar eclipse, giant-eclipse motion, Milky Way night, aurora surge (0..1)
+  bolt: vec4f,   // lightning (weather.js WX_BOLT): x, z, intensity (0 none), seconds into the flash
 }
 
 // Ablation bits (URL ?off=flora,fauna,...; main.js OFF_NAMES). A set bit switches that cost off: draws are skipped

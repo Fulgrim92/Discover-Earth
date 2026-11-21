@@ -68,7 +68,10 @@ fn sunShafts(uv: vec2f, jit: f32) -> f32 {
     dec *= 0.95;
     p += st;
   }
-  return acc / wsum;
+  // with the sun well off the screen the march runs into the clamped border: what lies along the screen's edge
+  // printed straight-sided panes into clear sky (a high sun over the Coral Atoll). Fade the shafts out there.
+  let off = max(max(-su.x, su.x - 1.0), max(-su.y, su.y - 1.0));
+  return acc / wsum * sstep(0.5, 0.1, off);
 }
 
 // ---- water ----
@@ -331,6 +334,13 @@ struct VO { @builtin(position) pos: vec4f }
   }
   // sky encounters drawn behind the clouds: a meteor, the other sky through the veil (sky programmer)
   if (isSky && VW.cam.w != 8.0) { col = encSky(col, d, pix); }
+  // the other sky through the veil; far land takes it too, through its haze (no bright day rim on a night ridge)
+  if (VW.cam.w != 8.0) {
+    let wv = select(sstep(2500.0, 30000.0, tEnd) * 0.9, 1.0, isSky);
+    if (wv > 0.0) { col = encVeil(col, select(normalize(vec3f(d.x, max(d.y, 0.0), d.z)), d, isSky), pix, wv); }
+  }
+  // a lightning channel under the cloud base, behind the clouds and rain in front of it
+  if (FR.bolt.z > 0.0 && VW.cam.w != 8.0 && !isOff(OFF_RAIN)) { col = boltChannel(col, ro, d, tEnd, pix); }
   // volumetric clouds in front of whatever we hit (aerial perspective is already in them)
   col = col * (1.0 - cu.front.a) + cu.front.rgb;
   // the Brocken spectre on the cloud below: a glory round the drone's shadow
@@ -404,33 +414,77 @@ fn encSky(c0: vec3f, d: vec3f, pix: f32) -> vec3f {
       c += vec3f(0.5, 1.0, 0.75) * tr * 160.0 * unit / (2.5066 * tw) * exp(-age / 3.5) * select(0.0, 1.0, ph.x >= 2.0);
     }
   }
-  // 25 both skies (the Drift): the sky is cut along a great circle through the event; beyond the seam the other sky
-  // shows, a deep night with its stars, the Milky Way and an aurora; the seam itself shimmers
+  return c;
+}
+fn encVeil(c0: vec3f, d: vec3f, pix: f32, wt: f32) -> vec3f {
+  var c = c0;
+  let unit = 0.9 * 8.3e-6; // a magnitude-0 star (sky.wgsl skyFull)
+  // 25 both skies (the Drift): across the dome the day sky gives way to the other realm's night, a deep blue with its
+  // stars, the Milky Way and an aurora, over some 50 degrees: no edge anywhere, the stars come out as the day fades
   let sv = lfSlot(25.0);
   if (sv >= 0) {
     let e = envOf(lfPhase(sv));
     let dv = lfDir(sv);
     let n = normalize(vec3f(dv.x, 0.0, dv.y));
     let ds = starFrame(d);
-    let wob = 0.025 * vn(vec2f(atan2(d.x, d.z) * 3.0, d.y * 4.0 + FR.time.x * 0.15), 590u) + 0.012 * sin(d.y * 23.0 + FR.time.x * 0.7);
-    let side = dot(d, n) + wob - (1.0 - e) * 1.2; // the other sky opens from one side as the event builds
-    let m = sstep(-0.006, 0.006, side) * sstep(0.0, 0.04, d.y + 0.01);
-    if (m > 0.0 || abs(side) < 0.05) {
+    let wob = 0.06 * vn(vec2f(atan2(d.x, d.z) * 1.5, d.y * 2.0 + FR.time.x * 0.05), 590u);
+    let side = dot(d, n) + wob - (1.0 - e) * 1.4; // the other sky spreads in from one side as the event builds
+    let m = sstep(-0.42, 0.42, side) * sstep(-0.02, 0.12, max(d.y, 0.0) + 0.02 * (1.0 - wt)) * wt;
+    if (m > 0.0) {
       let day = luma(skyBase(vec3f(0.0, 1.0, 0.0)));
       // the other realm's night, lifted to read against this day (a window, not an exposure)
       var o = vec3f(0.012, 0.022, 0.065) * day * (1.6 - d.y) * 6.0;
       let k = day * 260.0;
       o += (stars(ds, pix, unit) + milkyWay(ds) * 1.5) * k / max(unit * 9e3, 1e-9) * 2e-5;
       o += aurora(d) * k * 0.0012;
-      c = mix(c, o, m);
-      // the seam: a thin bright shimmer, iridescent
-      let sw = exp(-side * side / (2.0 * 0.0025 * 0.0025)) * e;
-      let ir = 0.5 + 0.5 * cos(vec3f(0.0, 2.1, 4.2) + side * 900.0 + FR.time.x * 1.3 + d.y * 30.0);
-      c += mix(vec3f(1.0), ir, 0.6) * day * 0.6 * sw * (0.6 + 0.4 * vn(vec2f(d.y * 60.0, FR.time.x * 2.0), 591u));
+      // the day light thins out first; the stars only show once it is mostly gone
+      c = c * (1.0 - m) + o * m * m;
     }
   }
   return c;
 }
+// lightning (weather.js schedule, the dry-storm encounter walks it along a line): a jagged channel from the cloud base
+// to the ground at the strike, three octaves of kinks and one short branch, a pixel wide or more, with a faint glow of
+// lit air round it; the clouds' own flash is clouds.wgsl shade's job
+fn boltLat(y: f32, seed: u32) -> f32 {
+  var x = 0.0; var L = 420.0; var A = 170.0;
+  for (var k = 0; k < 3; k++) {
+    let g = y / L; let i = i32(floor(g)); let f = g - floor(g);
+    x += (mix(hf(i, k, seed), hf(i + 1, k, seed), f) - 0.5) * 2.0 * A;
+    L *= 0.3; A *= 0.28;
+  }
+  return x;
+}
+fn boltChannel(c0: vec3f, ro: vec3f, d: vec3f, tEnd: f32, pix: f32) -> vec3f {
+  let hl = length(d.xz);
+  if (hl < 1e-3) { return c0; }
+  let h = d.xz / hl;
+  let rel = FR.bolt.xy - ro.xz;
+  let s = dot(rel, h);
+  if (s < 50.0) { return c0; }
+  let t = s / hl;
+  if (t > tEnd) { return c0; } // behind the ground
+  let y = ro.y + d.y * t;
+  let base = max(rowv(C0).y, 600.0);
+  if (y < -20.0 || y > base + 150.0) { return c0; }
+  let e = h.x * rel.y - h.y * rel.x; // lateral offset of the ray from the strike (m)
+  let seed = 960u + u32(abs(FR.bolt.x * 0.013 + FR.bolt.y * 0.029)) % 4096u;
+  let w = max(pix * t * 0.7, 2.5);
+  let dx = e - boltLat(base - y, seed);
+  var core = exp(-dx * dx / (w * w)) * min(3.0 / w, 1.0);
+  // a branch: leaves the channel a third of the way down and dies out over 700 m
+  let yb = base * 0.66;
+  if (y < yb && y > yb - 700.0) {
+    let db = e - boltLat(base - yb, seed) - (yb - y) * 0.55 - boltLat(yb - y, seed + 7u) * 0.4;
+    core += exp(-db * db / (w * w)) * min(2.0 / w, 1.0) * 0.5 * sstep(yb - 700.0, yb - 100.0, y);
+  }
+  core *= sstep(base + 150.0, base - 60.0, y) * sstep(-20.0, 10.0, y);
+  let glow = exp(-abs(dx) / 90.0) * 0.04 * sstep(base + 150.0, base - 60.0, y);
+  // as bright as a few times the day sky's zenith, never lost at night
+  let I = max(luma(skyBase(vec3f(0.0, 1.0, 0.0))) * 8.0, 2.0) * FR.bolt.z;
+  return c0 + vec3f(0.82, 0.86, 1.0) * I * (core + glow);
+}
+
 // 21 Brocken spectre: with the sun behind the drone and cloud below, the drone's shadow on the cloud (a dark, slightly
 // blurred cross) sits in a glory: coloured rings 1-4 degrees round the antisolar point, red outside
 fn encGlory(c0: vec3f, d: vec3f, cf: vec4f, pix: f32) -> vec3f {
@@ -454,7 +508,7 @@ fn encGlory(c0: vec3f, d: vec3f, cf: vec4f, pix: f32) -> vec3f {
   let body = length(pq) - 0.32;
   let sh = 1.0 - sstep(-0.1, 0.25, min(arm, body));
   let lit = cf.rgb / max(cf.a, 1e-3);
-  var c = c0 + lit * g * 0.75 * e * cf.a;
+  var c = c0 + lit * g * 1.6 * e * cf.a;
   c = mix(c, c * 0.35, sh * e * cf.a);
   return c;
 }
