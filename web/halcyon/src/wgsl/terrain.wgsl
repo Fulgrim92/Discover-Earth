@@ -85,6 +85,7 @@ fn rockDetail(p: vec3f, fp: f32, sc: f32, cr: f32) -> vec4f {
   var a = 1.0; var g = vec3f(0.0);
   let l0 = 3.1 * sc; let w0 = bl(l0, fp);
   if (w0 > 0.0) {
+    gCost += 4.0;
     let n0 = vn3d(RQ1 * (p / l0) + vec3f(0.0, 0.0, 17.0));
     let n = vec4f(n0.x, transpose(RQ1) * n0.yzw);  // gradient back to world axes
     g += n.yzw * (0.35 * w0);                 // lumps: 0.35 l0 amplitude
@@ -99,6 +100,7 @@ fn rockDetail(p: vec3f, fp: f32, sc: f32, cr: f32) -> vec4f {
   }
   let l1 = 0.42 * sc; let w1 = bl(l1, fp);
   if (w1 > 0.0) {
+    gCost += 2.0;
     let n0 = vn3d(RQ2 * (p / l1));
     let n = vec4f(n0.x, transpose(RQ2) * n0.yzw);
     g += n.yzw * (0.09 * w1);
@@ -106,6 +108,7 @@ fn rockDetail(p: vec3f, fp: f32, sc: f32, cr: f32) -> vec4f {
   }
   let l2 = 0.11 * sc; let w2 = bl(l2, fp);
   if (w2 > 0.0) {
+    gCost += 2.0;
     let n0 = vn3d(RQ1 * (p / l2) + vec3f(5.0, 3.0, 1.0));
     let n = vec4f(n0.x, transpose(RQ1) * n0.yzw);
     g += n.yzw * (0.07 * w2);
@@ -119,11 +122,11 @@ fn groundDetail(xz: vec2f, fp: f32) -> vec4f {
   var v = 0.0; var g = vec2f(0.0);
   let w0 = bl(1.7, fp);
   // rotated domains (rotq, ~37 deg; its transpose brings the gradient back), never on world axes
-  if (w0 > 0.0) { let n = vnoised(rotq(xz * (1.0 / 1.7)), 230u); g += rotT(n.yz) * (0.07 * w0); v += n.x * 0.5 * w0; }
+  if (w0 > 0.0) { gCost += 1.0; let n = vnoised(rotq(xz * (1.0 / 1.7)), 230u); g += rotT(n.yz) * (0.07 * w0); v += n.x * 0.5 * w0; }
   let w1 = bl(0.55, fp);
-  if (w1 > 0.0) { let n = vnoised(rotq(rotq(xz * (1.0 / 0.55))), 231u); g += rotT(rotT(n.yz)) * (0.07 * w1); v += n.x * 0.3 * w1; }
+  if (w1 > 0.0) { gCost += 1.0; let n = vnoised(rotq(rotq(xz * (1.0 / 0.55))), 231u); g += rotT(rotT(n.yz)) * (0.07 * w1); v += n.x * 0.3 * w1; }
   let w2 = bl(0.16, fp);
-  if (w2 > 0.0) { let n = vnoised(rotq(xz * (1.0 / 0.16)) + vec2f(3.7, 1.3), 232u); g += rotT(n.yz) * (0.05 * w2); v += n.x * 0.2 * w2; }
+  if (w2 > 0.0) { gCost += 1.0; let n = vnoised(rotq(xz * (1.0 / 0.16)) + vec2f(3.7, 1.3), 232u); g += rotT(n.yz) * (0.05 * w2); v += n.x * 0.2 * w2; }
   return vec4f(v, g, 0.0);
 }
 
@@ -289,14 +292,18 @@ fn unproject(fragXY: vec2f, z: f32) -> vec3f {
       else { if (z1 < 0.0) { z1 = z; } n1 += 1.0; }
     }
   }
+  if (n1 > n0) { let zt = z0; z0 = z1; z1 = zt; let nt = n0; n0 = n1; n1 = nt; } // the majority surface first
   let p0 = unproject(fpos.xy, max(z0, 1e-9));
   let fwh = min(fwidth(p0.y), 4.0); // uniform control flow here
   if (n0 == 0.0) { return vec4f(0.0); }
   let inv = 1.0 / f32(TNS);
   var c = terrainShade(p0, fpos.xy, fwh).c.rgb * (n0 * inv);
-  // a second terrain surface in the pixel (a silhouette over farther ground): baked path only, so no pixel pays
-  // for the live material twice
-  if (n1 > 0.0) { gForceBake = true; c += terrainShade(unproject(fpos.xy, z1), fpos.xy, fwh).c.rgb * (n1 * inv); }
+  // a second terrain surface in the pixel (a ridge over farther ground) is shaded on its own only when it holds at
+  // least two samples and lies clearly behind (or before) the first (> 6 % in depth); a single stray sample is folded
+  // into the main surface, so few pixels pay for two shadings (baked path for it when tbake=1)
+  if (n1 >= 2.0 && n0 >= 2.0 && abs(z1 - z0) > 0.06 * max(z0, z1)) {
+    gForceBake = true; c += terrainShade(unproject(fpos.xy, z1), fpos.xy, fwh).c.rgb * (n1 * inv);
+  } else { c *= (n0 + n1) / max(n0, 1.0); }
   return vec4f(c, 0.0);
 }
 
@@ -310,6 +317,7 @@ var<private> gBakeL: i32 = -1;       // >= 0: baking this level's material (terr
 var<private> gForceBake: bool = false; // the second surface of a silhouette pixel: baked path only (a cost cap)
 var<private> gMat: MatS;
 var<private> gPath: u32 = 0u;          // 0 baked, 1 live (dbg=23)
+var<private> gCost: f32 = 0.0;         // dbg=24: estimated work in 2D value-noise units (blocks entered x their noise count)
 // (replaced by a stub in the bake module, which writes these textures; the markers survive minification)
 const MAT_FETCH_BEGIN: i32 = 0;
 @group(2) @binding(2) var tMatA: texture_2d_array<f32>; // sqrt(albedo), roughness
@@ -383,6 +391,7 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   let V = toCam / dist;
   let tm = FR.time.x;
   let q = FR.time.w;
+  gCost += 10.0; // fetches, realm rows, shadows, lighting
   if (isOff(OFF_TFLAT)) { var ob: FOut; ob.c = vec4f(0.12, 0.14, 0.1, 1.0); ob.d = vec4f(dist, 0.0, 0.0, 1.0); return ob; }
 
   // clipmap data at the finest covering level, cross-faded to the next at its edge
@@ -401,9 +410,10 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   }
   // baked occlusion: ring concavity at fixed coarse scales (4 m, 16 m, 64 m texels)
   let lb = clipLevel(p.xz, max(l0, 5u), 4.0);
-  let ca = concL(3u, l0, e, p.xz);
-  let cb = concL(5u, l0, e, p.xz);
+  // the three coincide once l0 reaches their levels (concL takes max(l0, lmin)): fetch each distinct level once
   let cc = concL(7u, l0, e, p.xz);
+  var cb = cc; if (l0 < 7u) { cb = concL(5u, l0, e, p.xz); }
+  var ca = cb; if (l0 < 5u) { ca = concL(3u, l0, e, p.xz); }
   // texel size at this pixel, continuous across the level fade
   var tx = FR.lv[l0].z;
   if (e > 0.0 && l0 + 1u < nLevels()) { tx = mix(tx, FR.lv[l0 + 1u].z, e); }
@@ -436,12 +446,19 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
     rwm.w /= max(sw, 1e-6);
   }
   let M4v = bfx(rwm, M4); let M5v = bfx(rwm, M5); let M6v = bfx(rwm, M6);
-  var S0v = bfx(rw, S0); var S1v = bfx(rw, S1); var S2v = bfx(rw, S2); var S3v = bfx(rw, S3);
-  var S5v = bfx(rw, S5); var S6v = bfx(rw, S6); var S7v = bfx(rw, S7);
+  // a pixel of the camera's own pure realm (main.js FR.mc[9].w) has the camera row's light: read once per frame from
+  // the uniform block, key light included (no per-pixel sun and moon trig)
+  let camP = rw.id[1] < 0 && f32(rw.id[0]) == FR.mc[9].w;
+  var S0v = FR.row[S0]; var S1v = FR.row[S1]; var S2v = FR.row[S2]; var S3v = FR.row[S3];
+  var S5v = FR.row[S5]; var S6v = FR.row[S6]; var S7v = FR.row[S7];
+  if (!camP) {
+    S0v = bfx(rw, S0); S1v = bfx(rw, S1); S2v = bfx(rw, S2); S3v = bfx(rw, S3);
+    S5v = bfx(rw, S5); S6v = bfx(rw, S6); S7v = bfx(rw, S7);
+  }
   // far ground takes the light of the sky the camera sees (the camera realm's row): a neighbour realm on the horizon
   // is not sunlit under this realm's night sky (no pale sunlit pillars on the Aurora Ice horizon)
   let fcam = sstep(1500.0, 4000.0, dist);
-  if (fcam > 0.0) {
+  if (fcam > 0.0 && !camP) {
     S0v = mix(S0v, FR.row[S0], fcam); S1v = mix(S1v, FR.row[S1], fcam); S2v = mix(S2v, FR.row[S2], fcam);
     S3v = mix(S3v, FR.row[S3], fcam); S5v = mix(S5v, FR.row[S5], fcam); S6v = mix(S6v, FR.row[S6], fcam);
     S7v = mix(S7v, FR.row[S7], fcam);
@@ -528,6 +545,13 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   // grass: wind-swept lighter ridges, darker damp hollows, heather and ochre patches on the slopes
   let ridge = sstep(0.0, -0.25, conc);
   let hollow = sstep(0.02, 0.35, conc);
+  // the base cover's albedo (turf, soil, scree, uplands): only where some realm shows it (Home, and blends into
+  // Home); every other realm replaces the albedo with its own (a real branch: no turf noise under salt or ice)
+  let wBaseA = 1.0 - min(wPaint + wSalt + wStone + wIce + wLum, 1.0);
+  var heather = 0.0;
+  dg += rd.yzw * rockW;
+  if (wBaseA > 0.01) {
+  gCost += 8.0;
   var grass = M0v.rgb * (0.85 + 0.22 * nL + 0.12 * gd.x);
   grass = mix(grass, grass * vec3f(1.22, 1.28, 0.8), ridge * 0.6); // yellow-green on the dry crests
   grass = mix(grass, grass * vec3f(0.62, 0.78, 0.72), hollow * 0.7);
@@ -535,7 +559,7 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   let along0 = dot(p.xz, down);
   let patchN = vn(vec2f(u * (1.0 / 140.0), along0 * (1.0 / 45.0)), 255u) + 0.2 * vn(p.xz * (1.0 / 17.0), 256u) + 0.25 * nM;
   let onSlope = sstep(0.05, 0.14, slope) * sstep(0.42, 0.26, slope) * (1.0 - hollow);
-  let heather = sstep(0.25, 0.6, patchN) * onSlope * M5v.w;
+  heather = sstep(0.25, 0.6, patchN) * onSlope * M5v.w;
   let ochre = sstep(0.25, 0.6, 0.7 * ridge - 0.4 * patchN) * M5v.w;
   // heather: dark brown-green, darker than the grass rather than redder (no orange blotches under a low sun)
   grass = mix(grass, mix(grass * 0.55, vec3f(0.07, 0.05, 0.055), 0.5) * (0.85 + 0.3 * gd.x), heather * 0.3);
@@ -581,7 +605,7 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   alb = mix(alb, soil, soilW * M0v.w * 0.6);
   alb = mix(alb, scree, screeW);
   alb = mix(alb, rock, max(rockW, 1.0 - M0v.w * (1.0 - screeW)));
-  dg += rd.yzw * rockW + screeD * screeW;
+  dg += screeD * screeW;
   // uplands: one coherent cover by exposure and slope (drier paler grass in the shelter, dark heather on the exposed
   // convex ground, bare rock on the steep), with a broad altitude transition instead of khaki blotches
   let hi = sstep(M2v.w - 140.0, M2v.w + 90.0, h + 30.0 * nL) * (1.0 - rockW);
@@ -589,12 +613,14 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   let expo = sstep(-0.02, -0.22, conc + 0.04 * nM);
   let upland = mix(upl, mix(upl * 0.55, vec3f(0.065, 0.05, 0.05), 0.5) * (0.85 + 0.3 * gd.x + 0.15 * nM), expo * 0.35 * M5v.w);
   alb = mix(alb, upland, hi);
+  }
   let shore = sstep(M3v.w + 1.2, M3v.w - 0.6, h + nS * 0.6 + nM * 0.5);
   alb = mix(alb, M3v.rgb * (0.85 + 0.3 * nM), shore);
   wet = shore * 0.6 + hollow * 0.25 * M0v.w;
 
   // ---- Home Fjords: dark basalt with green ledges, waterfalls with spray, a pale tide line ----
   if (wHome > 0.01) {
+    gCost += 12.0;
     // basalt flows (only evaluated where there is rock: grass pixels skip all of this)
     if (rockW > 0.01) {
     // Faroese lava pile: flows 5-22 m thick (hashed per flow, three to a 38 m cycle), each a dark massive basalt
@@ -729,6 +755,7 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
 
   // ---- Painted Range: dipping, folded strata with sub-bands, rills across the beds, prismatic pools ----
   if (wPaint > 0.01) {
+    gCost += 8.0;
     var s = h - strataTilt(p.xz);
     // erosion rills run downhill across the beds; beds sag into them
     var rill = 0.0;
@@ -782,6 +809,7 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
 
   // ---- Mirror Salt: salt polygons; cone islands of dark volcanic rock, ochre lichen, salt crust ----
   if (wSalt > 0.01) {
+    gCost += 6.0;
     var salt = RT[2u * ROW + M0].rgb * (0.9 + 0.08 * nM); // the salt's own colour, not the blended M0 (no beige mix)
     if (fp < 0.3) {
       let ed = saltEdge(p.xz);
@@ -807,6 +835,7 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
 
   // ---- Stone Forest: fluted, bedded limestone pillars; canopy crowns that spill over the rims; jungle floor ----
   if (wStone > 0.01) {
+    gCost += 25.0;
     // pillar top height: max over the bilinear footprint, so walls never see a top blurred with the ground
     let tg = textureGather(1, clipA, clipSm, clipUV(l0, p.xz), l0);
     let topH = max(max(tg.x, tg.y), max(tg.z, tg.w)) * 600.0;
@@ -892,6 +921,7 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   // ---- Aurora Ice: a broad glacier tongue between dark nunataks, snowfields (the brightest ground), bare cyan ice
   //      with medial moraines, crevasse and serac fields, a blue calving cliff, black-sand outwash, bergs ----
   if (wIce > 0.01) {
+    gCost += 8.0;
     let gl = mB.w;
     // flow: the broad downhill direction (64 m level), moraines run along it, ogives across it
     let cl = clipS(lb, p.xz);
@@ -982,6 +1012,7 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   // ---- Lumen Deep: near-black velvet ground, delta veins pulsing out of glowing sinkholes, amber lichen,
   //      pale teal faceted crystals with inner glow ----
   if (wLum > 0.01) {
+    gCost += 3.0;
     // near-black indigo velvet
     var lg = mix(M1v.rgb, vec3f(0.012, 0.01, 0.032), 0.7) * (0.75 + 0.35 * gd.x + 0.25 * nM);
     // amber-gold lichen: large soft patches (tens of metres) with a speckled edge: the complementary accent
@@ -1027,6 +1058,7 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   var foamS = 0.0;
   let surfAmt = min(bfx(rw, G3).w * 1.6, 1.0);
   if (h < 3.0 && h > -0.6 && surfAmt > 0.01 && dist < 1500.0) {
+    gCost += 4.0;
     let sw = surfSwash(p.xz, h, shoreFrame(p.xz), surfAmt, tm);
     wet = max(wet, max(sw.z * 0.75, sw.x));
     rough = mix(rough, 0.06, sw.x);
@@ -1063,7 +1095,8 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
 
   // ---- light ----
   // key light: the sun or the moon (common.wgsl keyLight; they set and rise across a Drift)
-  let KLv = keyLight(S0v, S1v, bfx(rw, S8), FR.sun.w);
+  var KLv: KL; KLv.dir = FR.sun.xyz; KLv.col = FR.mc[9].xyz;
+  if (!camP) { KLv = keyLight(S0v, S1v, bfx(rw, S8), FR.sun.w); gCost += 2.0; }
   let L = KLv.dir;
   let horizon = select(0.0, 1.0, max(KLv.col.r, max(KLv.col.g, KLv.col.b)) > 1e-4);
   let sunC = KLv.col;
@@ -1077,11 +1110,12 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   let Lh = L.xz / max(length(L.xz), 1e-3);
   let nL1 = min(l0 + 2u, nLevels() - 1u); let nL2 = min(l0 + 4u, nLevels() - 1u);
   let sd1 = shadeL(2u, l0, e, p.xz + Lh * FR.lv[nL1].z);
-  let sd2 = shadeL(4u, l0, e, p.xz + Lh * FR.lv[nL2].z);
   var vis = sd0.y * mix(1.0, sd1.y, 0.7);
   if (isOff(OFF_TAO)) { vis = 1.0; }
   if (horizon > 0.0 && dot(gn, L) > -0.1) {
-    sh = min(sd0.x, min(sd1.x, sd2.x));
+    sh = min(sd0.x, sd1.x);
+    // the mountain-scale level only where the near two leave light (a min: a shadowed pixel stays shadowed)
+    if (sh > 0.0) { sh = min(sh, shadeL(4u, l0, e, p.xz + Lh * FR.lv[nL2].z).x); }
     if (isOff(OFF_TSHADOW)) { sh = 1.0; }
     sh *= cloudShadow(p, L, rw); // cloud shadows (common.wgsl, same coverage field as the cloud pass)
   }
@@ -1146,6 +1180,8 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   if (VW.cam.w == 21.0) { o.c = vec4f(lvlColor(l0), 1.0); } // (deferred: the drawn level is not known here)
   // dbg=23: material path (green baked, red live, blue: the baked second surface of a silhouette pixel)
   if (VW.cam.w == 23.0) { o.c = vec4f(select(select(vec3f(0.1, 0.8, 0.2), vec3f(0.9, 0.15, 0.1), gPath == 1u), vec3f(0.15, 0.3, 1.0), gForceBake), 1.0); }
+  // dbg=24: estimated cost heat (blue 10 .. green 30 .. red 60+ noise units; both shadings of a silhouette pixel)
+  if (VW.cam.w == 24.0) { let k = clamp((gCost - 10.0) / 50.0, 0.0, 1.0); o.c = vec4f(sstep(0.4, 0.8, k), sstep(0.0, 0.4, k) * sstep(1.0, 0.7, k), sstep(0.4, 0.0, k), 1.0); }
   if (VW.cam.w == 22.0) { let ag = clamp((FR.time.x - FR.lv[l0].w) / 10.0, 0.0, 1.0); o.c = vec4f(ag, 1.0 - ag, 0.0, 1.0); }
   o.d = vec4f(dist, 0.0, 0.0, 1.0);
   return o;
