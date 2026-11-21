@@ -33,22 +33,24 @@
       "name": "horses_10",
       "params": {
         "realm": 1,
-        "pos": "231,3,-186",
+        "pos": "-793,3,103",
         "agl": 1,
-        "yaw": 0,
+        "yaw": 90,
         "pitch": 0,
-        "track": "1,10,2.2"
+        "track": "1,10,2.2",
+        "tod": 0.75
       }
     },
     {
       "name": "horses_60",
       "params": {
         "realm": 1,
-        "pos": "231,3,-186",
+        "pos": "-793,3,103",
         "agl": 1,
-        "yaw": 180,
+        "yaw": 90,
         "pitch": 0,
-        "track": "1,60,10"
+        "track": "1,60,10",
+        "tod": 0.75
       }
     },
     {
