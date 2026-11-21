@@ -7,6 +7,25 @@
 @group(1) @binding(2) var sOutF: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(3) var sInF: texture_2d<f32>;
 @group(1) @binding(4) var sOutC: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(5) var sCol: texture_2d<f32>; // column occupancy (clouds.wgsl csColumn)
+@group(1) @binding(6) var sOcc: texture_storage_2d<rgba16float, write>;
+
+// finest level: one texel per window texel (128 m), dilated by one texel (the bilinear window fetch and the jittered
+// resume), from the real base-noise density of each column; same rgba as the maps below (x is 0 or the coverage)
+@compute @workgroup_size(8, 8) fn csOcc(@builtin(global_invocation_id) id: vec3u) {
+  let n = i32(textureDimensions(sWx).x);
+  if (i32(id.x) >= n || i32(id.y) >= n) { return; }
+  var mc = 0.0; var mb = 60000.0; var mt = -1000.0; var ms = 0.0;
+  for (var z = -1; z <= 1; z++) {
+    for (var x = -1; x <= 1; x++) {
+      let q = clamp(vec2i(id.xy) + vec2i(x, z), vec2i(0), vec2i(n - 1));
+      let w = textureLoad(sWx, q, 0);
+      if (w.x > 0.004 && textureLoad(sCol, q, 0).x > 0.0) { mc = max(mc, w.x); mb = min(mb, w.y); mt = max(mt, w.z); }
+      ms = max(ms, textureLoad(sWy, q, 0).z);
+    }
+  }
+  textureStore(sOcc, id.xy, vec4f(mc, mb, mt, ms));
+}
 
 @compute @workgroup_size(8, 8) fn csSkipF(@builtin(global_invocation_id) id: vec3u) {
   let nf = textureDimensions(sOutF).x;
@@ -19,7 +38,8 @@
     for (var x = 0; x < B + 2; x++) {
       let q = clamp(b0 + vec2i(x, z), vec2i(0), vec2i(n - 1));
       let w = textureLoad(sWx, q, 0);
-      if (w.x > 0.004) { mc = max(mc, w.x); mb = min(mb, w.y); mt = max(mt, w.z); }
+      // a texel counts only where its column can hold cloud (not merely where coverage is above zero)
+      if (w.x > 0.004 && textureLoad(sCol, q, 0).x > 0.0) { mc = max(mc, w.x); mb = min(mb, w.y); mt = max(mt, w.z); }
       ms = max(ms, textureLoad(sWy, q, 0).z);
     }
   }

@@ -20,7 +20,9 @@
 // empty-space maps (cloudskip.wgsl): fine 1/8 of the window per texel, coarse 4x4 fine texels
 @group(2) @binding(9) var skF: texture_2d<f32>;
 @group(2) @binding(10) var skC: texture_2d<f32>;
-var<private> cIt: u32; var<private> cD: u32; var<private> cL: u32; var<private> cV: u32; var<private> cP: u32; var<private> cR: u32; var<private> cS: u32;
+@group(2) @binding(11) var skO: texture_2d<f32>; // finest: 128 m columns (cloudskip.wgsl csOcc)
+var<private> gSp: f32; // the cumulonimbus share of the sample being shaded (marchSeg -> shade)
+var<private> cIt: u32; var<private> cD: u32; var<private> cL: u32; var<private> cV: u32; var<private> cP: u32; var<private> cR: u32; var<private> cS: u32; var<private> cSea: u32; var<private> cNP: u32; var<private> cPE: u32;
 
 const BASE_TILE: f32 = 3600.0;  // m per base-noise tile (128 texels, 4 mips)
 const DET_TILE: f32 = 640.0;    // m per detail tile (64 texels)
@@ -58,7 +60,7 @@ fn densMain(p: vec3f, w: vec4f, y: vec4f, lod: f32, det: f32) -> f32 {
   let vh = 0.5 * sqrt(cov);
   let pv = sstep(0.5 - vh, 0.5, hf) * sstep(0.5 + vh, 0.5, hf);
   let prof = mix(pv, pc, sstep(0.2, 0.6, ty));
-  if (prof <= 0.001) { return 0.0; }
+  if (prof <= 0.001 && w.z - w.y < 3300.0) { return 0.0; }
   let wo = windOfs();
   // veils are sheared flat along the wind; cumulus slightly tall
   let q = vec3f(p.x - wo.x, p.y * mix(2.6, 0.85, ty), (p.z - wo.y) * mix(0.55, 1.0, ty));
@@ -75,6 +77,16 @@ fn densMain(p: vec3f, w: vec4f, y: vec4f, lod: f32, det: f32) -> f32 {
   if (em > 0.0 && c > 0.0) {
     let rb = sin(dot(q.xz, vec2f(0.017, 0.011)) + n.g * 6.0 + FR.time.x * 0.05);
     c *= mix(1.0, 0.45 + 0.55 * sstep(-0.7, 0.9, rb), sat(em * 4.0));
+  }
+  // a squall's cumulonimbus (cloudwx.wgsl: only a squall makes the layer this thick): one solid tower with billowed
+  // flanks, widening into a flat anvil at the top, instead of a 5 km stack of popcorn
+  let sp = sstep(3300.0, 5400.0, w.z - w.y);
+  if (sp > 0.0) {
+    let anvil = sstep(0.78, 0.9, hf);
+    let need = mix(0.62, 0.3, anvil) - 0.1 * sstep(0.12, 0.0, hf);
+    let edge = sp + 0.4 * (low - 0.5) + 0.22 * (n.r - 0.5);
+    let core = sstep(need, need + 0.1, edge) * sstep(0.0, 0.02, hf) * sstep(1.0, 0.955, hf) * mix(1.0, 0.75, anvil);
+    c = max(c, core * min(cov + 0.2, 1.0));
   }
   if (c > 0.0 && det > 0.0) {
     let tm = FR.time.x;
@@ -230,11 +242,13 @@ fn shade(p: vec3f, d: vec3f, hf: f32, od: f32, dens: f32, sea: bool) -> vec3f {
   }
   // squalls (held in the cloud-shadow map as occlusion above 0.9; ordinary cloud stops at 0.88): the tower above
   // takes the sky light from its own base, which goes dark grey while the sunlit top stays white
+  // far squalls lie outside the map: the tower itself (gSp, from the layer's thickness) darkens its lower half too,
+  // so the base stays dark grey with the sun behind the viewer
   let cq = csmUV(p.xz);
-  if (!sea && csmIn(cq)) {
-    let sq = sstep(0.885, 0.95, textureSampleLevel(csmT, atmoS, cq, 0.0).x);
-    amb *= mix(1.0, mix(0.18, 0.85, sat(hf * 1.4)), sq);
-  }
+  var sq = select(0.0, gSp, !sea);
+  if (!sea && csmIn(cq)) { sq = max(sq, sstep(0.885, 0.95, textureSampleLevel(csmT, atmoS, cq, 0.0).x)); }
+  amb *= mix(1.0, mix(0.16, 0.85, sat(hf * 1.5)), sq);
+  s *= mix(1.0, mix(0.3, 1.0, sat(hf * 2.2)), select(0.0, gSp, !sea));
   // aurora light on night clouds
   amb += vec3f(0.05, 0.4, 0.2) * gCL.aur * 0.08;
   // lightning (weather.js schedule): the cloud lit from inside around the strike, bluish white
@@ -281,6 +295,45 @@ fn skipEmpty(ro: vec3f, d: vec3f, t: f32, t1: f32, sea: bool) -> vec2f {
   }
   return vec2f(tt, tt);
 }
+// finest level: walk the 128 m columns (one fetch each) to the first one whose cloud could touch the ray there
+fn skipCols(ro: vec3f, d: vec3f, t: f32, t1: f32, sea: bool) -> f32 {
+  let nf = f32(textureDimensions(skO).x);
+  let bs = CU.win.z;
+  var tt = t;
+  for (var k = 0; k < 160; k++) {
+    if (tt >= t1) { return tt; }
+    let p = ro + d * tt;
+    let b = (p.xz - CU.win.xy) / bs;
+    if (any(b < vec2f(0.0)) || any(b >= vec2f(nf))) { return tt; }
+    cS++;
+    let bf = floor(b);
+    let te = max(cellExit(ro, d, bf, 1.0, bs), tt);
+    if (!cellEmpty(textureLoad(skO, vec2i(bf), 0), p.y, ro.y + d.y * min(te, t1), sea)) { return tt; }
+    tt = te + 0.05;
+  }
+  return tt;
+}
+
+// ---- column occupancy (compute, in the weather pass): could cloud be anywhere in this 128 m column? Base-noise
+// density at 8 heights through the local layer, without the detail erosion (it only removes density) and with the
+// coverage relaxed (x1.6 + 0.1), so it errs on the side of cloud; the empty-space maps are built from it ----
+@group(3) @binding(0) var colOut: texture_storage_2d<r32float, write>;
+@compute @workgroup_size(8, 8) fn csColumn(@builtin(global_invocation_id) id: vec3u) {
+  let N = u32(CU.win.w);
+  if (id.x >= N || id.y >= N) { return; }
+  let w = textureLoad(wxT, id.xy, 0);
+  var m = 0.0;
+  if (w.x > 0.004) {
+    let y = textureLoad(wyT, id.xy, 0);
+    let xz = CU.win.xy + (vec2f(id.xy) + 0.5) * CU.win.z;
+    let wr = vec4f(min(w.x * 1.6 + 0.1, 1.0), w.y, w.z, max(w.w, 1e-3));
+    for (var k = 0; k < 8; k++) {
+      let h = mix(w.y, w.z, (f32(k) + 0.5) / 8.0);
+      m = max(m, densMain(vec3f(xz.x, h, xz.y), wr, y, 2.0, 0.0));
+    }
+  }
+  textureStore(colOut, id.xy, vec4f(m, 0.0, 0.0, 0.0));
+}
 
 // Adaptive march: coarse steps through empty air (cheap coverage test), fine steps once inside cloud, back to
 // coarse after a few empty samples. Step length grows with distance (far clouds are small on screen).
@@ -298,9 +351,17 @@ fn marchSeg(ro: vec3f, d: vec3f, t0: f32, t1: f32, n: i32, jit: f32, sea: bool, 
     // hard ceiling: n + 16 iterations per ray over both layers (was 2n: grazing rays through empty sky hit it)
     if (t >= t1 || (*ms).nd >= (*ms).cap || (*ms).it >= n + 16 || (*ms).T < T_MIN) { break; }
     // out of cloud: jump over map cells where no cloud can be (resume jittered inside the next cell: no slicing)
-    if (empty > 0 && t >= askAt) {
+    if (empty > 0 && t >= askAt && CU.dbg.y != 1.0) {
       let sk = skipEmpty(ro, d, t, t1, sea);
       let tn = sk.x; askAt = sk.y;
+      if (tn > t + 0.5) {
+        t = tn + clamp(tn * kf, fmin, fmax) * jit; lastDt = 0.0;
+        if (t >= t1) { break; }
+      }
+    }
+    // then column by column inside the non-empty cell (most of a fair-weather cumulus cell is clear air)
+    if (empty > 0 && CU.dbg.y == 0.0) {
+      let tn = skipCols(ro, d, t, t1, sea);
       if (tn > t + 0.5) {
         t = tn + clamp(tn * kf, fmin, fmax) * jit; lastDt = 0.0;
         if (t >= t1) { break; }
@@ -316,13 +377,14 @@ fn marchSeg(ro: vec3f, d: vec3f, t0: f32, t1: f32, n: i32, jit: f32, sea: bool, 
     let lod = clamp(log2(dtf / select(28.0, 6.0, sea)), 0.0, 3.0);
     var possible = true;
     if (sea) {
-      dens = densSea(p, y, lod, det) * SEA_EXT;
-      hf = (p.y - CU.slab.z) / max(y.w - CU.slab.z, 1.0);
       possible = y.z > 0.003;
+      if (possible) { dens = densSea(p, y, lod, det) * SEA_EXT; cSea++; }
+      hf = (p.y - CU.slab.z) / max(y.w - CU.slab.z, 1.0);
     } else {
       let w = wxAt(p.xz);
       possible = w.x > 0.004 && p.y > w.y - 30.0 && p.y < w.z + 30.0;
       if (possible) {
+        gSp = sstep(3300.0, 5400.0, w.z - w.y);
         dens = densMain(p, w, y, lod, det) * EXT;
         hf = (p.y - w.y) / max(w.z - w.y, 1.0);
       }
@@ -349,7 +411,7 @@ fn marchSeg(ro: vec3f, d: vec3f, t0: f32, t1: f32, n: i32, jit: f32, sea: bool, 
       (*ms).tw += (*ms).T * a * t; (*ms).ww += (*ms).T * a;
       (*ms).T *= 1.0 - a;
     } else {
-      empty++;
+      empty++; if (!possible) { cNP++; } else if (!sea) { cPE++; }
       // no cloud possible here (window coverage 0 or outside the layer): stride over it; 7% of the distance per
       // step keeps a grazing ray through 30 km of clear sky to ~40 iterations instead of ~100; where there is no cloud
       // sea at all (most of the planet) its slab, which hugs the height the drone flies at, is crossed in 900 m strides
@@ -482,6 +544,7 @@ struct CF { @location(0) front: vec4f, @location(1) refl: vec4f, @location(2) di
     atomicAdd(&CST[0], 1u); atomicAdd(&CST[1], cIt); atomicAdd(&CST[2], cD); atomicAdd(&CST[3], cL);
     atomicAdd(&CST[4], cV); atomicAdd(&CST[5], cP); atomicAdd(&CST[6], cR); atomicAdd(&CST[7], tot);
     atomicAdd(&CST[8u + min(tot / 16u, 63u)], 1u); atomicAdd(&CST[80], cS);
+    atomicAdd(&CST[81], cSea); atomicAdd(&CST[82], cNP); atomicAdd(&CST[83], cPE);
     let cls = select(74u, 72u, dist > 50000.0);
     atomicAdd(&CST[cls], 1u); atomicAdd(&CST[cls + 1u], tot);
     if (dist > 50000.0 && d.y < 0.08) { atomicAdd(&CST[76], 1u); atomicAdd(&CST[77], tot); }
