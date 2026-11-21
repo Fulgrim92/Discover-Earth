@@ -24,7 +24,7 @@ let pMarch, blMarch, bgMarch = null, pWeather, bgWeather, cuBuf, wxV, wyV, baseV
 let WN = 512, WTEX = 128;
 const CU = new Float32Array(32);
 // march cost instrumentation (URL steps=1): stats buffer (clouds.wgsl CST), read back every 16 frames into STEPS
-const NST = 72;
+const NST = 80;
 let stBuf = null, stRead = null, stBusy = false, stFrame = 0;
 const STEPS = new Float64Array(NST); // summed over all read-back frames
 
@@ -180,5 +180,7 @@ export function stepReport() {
   const n = STEPS[0], r = (i) => Math.round(STEPS[i] / n * 10) / 10;
   const pct = (q) => { let c = 0; for (let b = 0; b < 64; b++) { c += STEPS[8 + b]; if (c >= q * n) return b * 16 + 16; } return 1024; };
   return { rays: n, perRay: { mainIter: r(1), dense: r(2), light: r(3), veil: r(4), precip: r(5), mirror: r(6), total: r(7) },
+    byClass: { sky: [STEPS[72], STEPS[73] / Math.max(STEPS[72], 1)], ground: [STEPS[74], STEPS[75] / Math.max(STEPS[74], 1)],
+      horizon: [STEPS[76], STEPS[77] / Math.max(STEPS[76], 1)], mirror: [STEPS[78], STEPS[79] / Math.max(STEPS[78], 1)] },
     totalP50: pct(0.5), totalP90: pct(0.9), totalP99: pct(0.99), hist16: Array.from(STEPS.subarray(8, 72)) };
 }

@@ -13,7 +13,8 @@ struct Frame {
   sky: vec4f,    // x: time of day 0..1, y: star-field turn (rad), z: accumulated sun motion (deg, for re-bakes),
                  // w: visible precipitation at the camera 0..1 (weather.js)
   wx: vec4f,     // xyz: camera velocity (m/s), w: precipitation kind at the camera (0 rain, 1 virga, 2 snow, 3 spores)
-  wxp: vec4f,    // a pinned squall (URL wx=dx,dz[,r]; captures): centre x, z, radius (m), 1 when on
+  wxp: vec4f,    // a pinned squall (URL wx=dx,dz[,r]; captures): centre x, z, radius (m, 0 = none);
+                 // w: 1 when any squall lies within 16 km of the camera (weather.js; 0 skips all rain work)
 }
 
 // Ablation bits (URL ?off=flora,fauna,...; main.js OFF_NAMES). A set bit switches that cost off: draws are skipped
@@ -356,14 +357,15 @@ fn keyLight(s0: vec4f, s1: vec4f, s8: vec4f, drift: f32) -> KL {
 // One deterministic field drifting with the wind: wxCell > 0.28 is a rain squall, < -0.22 clear sky, between them
 // building cumulus; fog banks have their own slower field. What falls depends on the realm (wxLiquid: rain on the
 // ground; wxPrecip: what you see fall; wxKind: 0 rain, 1 virga, 2 snow, 3 spores).
-// WX_OFS places the field so every realm's curated views are fair at t = 20 s (the captures), squalls nearby
-const WX_OFS: vec2f = vec2f(-12644.0, 110304.0);
+// WX_OFS places the field so no realm centre has a squall within 22 km at t = 20 s: the curated views and captures
+// are fair weather, weather is an event that drifts in (tools: scratchpad search, mirrored in weather.js)
+const WX_OFS: vec2f = vec2f(1448825.0, -259896.0);
 // Squalls are rare and large: cells of 3-8 km where the broad octave peaks; a pinned squall (FR.wxp) is a dome of
 // the field around its centre, full rain inside ~0.65 r, gone by ~0.8 r
 fn wxCell(xz: vec2f) -> f32 {
   let q = xz - CLOUD_WIND * FR.time.x + WX_OFS;
   var n = vn(q * (1.0 / 16000.0), 720u) * 0.72 + vn(q * (1.0 / 5200.0), 721u) * 0.28;
-  if (FR.wxp.w > 0.0) {
+  if (FR.wxp.z > 0.0) {
     let e = length(xz - FR.wxp.xy) / FR.wxp.z;
     n = max(n, 1.0 - 0.9 * e * e);
   }
@@ -373,7 +375,9 @@ fn wxStorm(n: f32) -> f32 { return sstep(0.40, 0.62, n); }
 fn wxClear(n: f32) -> f32 { return sstep(0.22, 0.52, -n); }
 fn wxFogBank(xz: vec2f) -> f32 {
   let q = xz - CLOUD_WIND * 0.5 * FR.time.x;
-  return sstep(0.3, 0.62, vn(q * (1.0 / 5200.0) + vec2f(40.0, -7.0), 730u));
+  // rare (the top of the field) and placed so no realm centre has one within 10 km at t = 20: fair by default
+  if (isOff(OFF_RAIN)) { return 0.0; }
+  return sstep(0.72, 0.92, vn(q * (1.0 / 5200.0) + vec2f(427.0, 303.0), 730u));
 }
 fn wxLiquid(id: i32) -> f32 { return select(select(select(0.0, 0.85, id == 3), 0.55, id == 2), 1.0, id == 0); }
 fn wxPrecip(id: i32) -> f32 { return select(select(select(0.7, 0.85, id == 3 || id == 4), 0.55, id == 2), 1.0, id == 0); }

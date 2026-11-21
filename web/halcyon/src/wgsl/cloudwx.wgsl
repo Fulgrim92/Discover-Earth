@@ -15,7 +15,7 @@ fn sat(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }
   var cov = cloudCov(f, c0.x);
   // weather cells (common.wgsl wxCell): clear sky thins the realm's cover, a squall closes it and towers up
   let wn = wxCell(xz);
-  let wst = wxStorm(wn);
+  let wst = select(wxStorm(wn), 0.0, isOff(OFF_RAIN));
   cov *= 1.0 - 0.75 * wxClear(wn);
   // cumulus grow taller the further the field is above the threshold: separate towers instead of one slab
   let tower = sat(0.2 + 2.2 * (f - (1.0 - c0.x)));

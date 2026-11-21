@@ -525,9 +525,9 @@ function prepareFrame() {
   skyTime(fr);
   W_IN[0] = cam[0]; W_IN[1] = cam[2]; blendAtA(rowTmp);
   // weather at the camera (realm weights from blendAtA) and the camera's velocity for the rain streaks
-  if (frameNo === 0 && WXQ) { WX_PIN[0] = cam[0] + (WXQ[0] || 0); WX_PIN[1] = cam[2] + (WXQ[1] || 0); WX_PIN[2] = WXQ[2] > 0 ? WXQ[2] : 4000; WX_PIN[3] = 1; }
-  for (let i = 0; i < 4; i++) fr[FO.wxp + i] = WX_PIN[i];
+  if (frameNo === 0 && WXQ) { WX_PIN[0] = cam[0] + (WXQ[0] || 0); WX_PIN[1] = cam[2] + (WXQ[1] || 0); WX_PIN[2] = WXQ[2] > 0 ? WXQ[2] : 4000; }
   WX_IN[0] = cam[0]; WX_IN[1] = cam[2]; WX_IN[2] = CLK[C_TIME]; wxTick();
+  for (let i = 0; i < 4; i++) fr[FO.wxp + i] = WX_PIN[i];
   SKYM[3] = 1 / Math.max(CLK[C_DT], 1e-3);
   for (let i = 0; i < 3; i++) { fr[FO.wx + i] = frameNo === 0 ? 0 : Math.min(Math.max((cam[i] - CAMP[i]) * SKYM[3], -60), 60); CAMP[i] = cam[i]; }
   fr[FO.wx + 3] = WX_CAM[2]; fr[FO.sky + 3] = WX_CAM[1];

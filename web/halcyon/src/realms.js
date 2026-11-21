@@ -229,11 +229,12 @@ for (let r = 0; r < NREALM; r++) {
 
 // ---- the sky turns (DESIGN 12.1): each realm's sun and moon swing along a slow arc around its signature light ----
 // SKY_ARC per realm: sun elevation and azimuth swing, moon elevation swing (degrees), at s = -1..1 (s = 0 is the
-// signature light of section 11). Home: late afternoon to blue hour; Ice: dusk to deep night while the moon climbs.
+// signature light of section 11). Home: late afternoon to blue hour; Ice: dusk to deep night while the moon climbs;
+// Painted: 36 +- 28 deg, a desert day from near noon to golden hour (+-12 barely changed the light).
 // skyTick() rewrites S0, S8 and the derived light S1..S4 of every realm in TABLE for the frame's s, so all realm
 // blending (per pixel and at the camera) follows; the light comes from tables baked here along each arc (S2..S4,
 // log-interpolated) and the sun's own colour from the transmittance, exactly, per frame.
-export const SKY_ARC = [[16, 18, 0], [12, 22, 0], [9, 12, 0], [12, 20, 0], [8, 10, -10], [5, 8, 0]];
+export const SKY_ARC = [[16, 18, 0], [28, 40, 0], [9, 12, 0], [12, 20, 0], [8, 10, -10], [5, 8, 0]];
 export const SKY_IN = new Float64Array(1); // s in -1..1 (main.js from the time of day); read by skyTick()
 const ARC_K = 7, ARC_V = 9;
 const ARC = new Float32Array(NREALM * ARC_K * ARC_V); // log of S2, S3, S4 rgb per arc sample
