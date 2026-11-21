@@ -616,6 +616,12 @@ function cameraFromUrl() {
     const d = P.track[1] || 10, hy = P.track[2] || 2, fx = Math.sin(yaw), fz = -Math.cos(yaw);
     cam[0] = HERD_AIM[0] - fx * d; cam[2] = HERD_AIM[2] - fz * d;
     cam[1] = Math.max(heightAt(cam[0], cam[2]) + 0.5, HERD_AIM[1] + hy);
+    // keep the herd in sight: lift the camera until no ground rises above the sight line to the herd
+    for (let i = 1; i < 12; i++) {
+      const f = i / 12, gx = cam[0] + (HERD_AIM[0] - cam[0]) * f, gz = cam[2] + (HERD_AIM[2] - cam[2]) * f;
+      const ly = cam[1] + (HERD_AIM[1] + 0.7 - cam[1]) * f, gh = heightAt(gx, gz) + 0.3;
+      if (gh > ly) cam[1] += (gh - ly) / (1 - f);
+    }
     quatFromYawPitchRoll(q4, yaw, Math.atan2(HERD_AIM[1] + 0.7 - cam[1], d), 0);
     cam[3] = q4[0]; cam[4] = q4[1]; cam[5] = q4[2]; cam[6] = q4[3];
   }
