@@ -304,8 +304,8 @@ fn marchSeg(ro: vec3f, d: vec3f, t0: f32, t1: f32, n: i32, jit: f32, sea: bool, 
       // sea at all (most of the planet) its slab, which hugs the height the drone flies at, is crossed in 900 m strides
       if (!possible) { dt = max(dtf * 5.0, min(t * 0.07, select(3000.0, 900.0, sea))); }
       // gaps between clouds: widen the stride the longer the gap (the back-up above re-enters a cloud finely)
-      else if (empty > 8) { dt = max(dtf * 4.0, t * select(0.045, 0.012, sea)); }
-      else if (empty > 3) { dt = max(dtf * 2.5, t * select(0.022, 0.008, sea)); }
+      else if (empty > 4) { dt = max(dtf * 4.0, t * select(0.06, 0.012, sea)); }
+      else if (empty > 1) { dt = max(dtf * 2.0, t * select(0.025, 0.008, sea)); }
     }
     lastDt = dt;
     t += dt;
