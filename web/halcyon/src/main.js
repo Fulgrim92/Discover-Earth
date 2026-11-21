@@ -547,6 +547,7 @@ function prepareFrame() {
   WX_IN[0] = cam[0]; WX_IN[1] = cam[2]; WX_IN[2] = CLK[C_TIME]; wxTick();
   for (let i = 0; i < 4; i++) fr[FO.wxp + i] = WX_PIN[i];
   skyEncFrame(fr, FO.ske);
+  for (let i = 0; i < 4; i++) fr[FO.bolt + i] = WX_BOLT[i];
   SKYM[3] = 1 / Math.max(CLK[C_DT], 1e-3);
   for (let i = 0; i < 3; i++) { fr[FO.wx + i] = frameNo === 0 ? 0 : Math.min(Math.max((cam[i] - CAMP[i]) * SKYM[3], -60), 60); CAMP[i] = cam[i]; }
   fr[FO.wx + 3] = WX_CAM[2]; fr[FO.sky + 3] = WX_CAM[1];

@@ -82,10 +82,22 @@ fn densMain(p: vec3f, w: vec4f, y: vec4f, lod: f32, det: f32) -> f32 {
   // flanks, widening into a flat anvil at the top, instead of a 5 km stack of popcorn
   let sp = sstep(3300.0, 5400.0, w.z - w.y);
   if (sp > 0.0) {
-    let anvil = sstep(0.78, 0.9, hf);
-    let need = mix(0.62, 0.3, anvil) - 0.1 * sstep(0.12, 0.0, hf);
-    let edge = sp + 0.4 * (low - 0.5) + 0.22 * (n.r - 0.5);
-    let core = sstep(need, need + 0.1, edge) * sstep(0.0, 0.02, hf) * sstep(1.0, 0.955, hf) * mix(1.0, 0.75, anvil);
+    // heights in the whole storm (5.4 km), not in the local layer: the anvil is flat, not bent down into a lens
+    let hs = (p.y - w.y) * (1.0 / 5400.0);
+    let anvil = sstep(0.8, 0.9, hs);
+    // the tower's outline is the squall field itself (common.wgsl wxCell, high in the cell's heart), read at a point
+    // pushed about by 3D noise: big lobes (~1-2 km, the base noise) and turrets (~150-700 m, billows of the detail
+    // noise) that change with height, so the flanks bulge in and out like cauliflower; the erosion below carves the
+    // finer curls into the soft edge this leaves
+    let bn = textureSampleLevel(detT, repS, q * vec3f(0.45, 1.1, 0.45) * (1.0 / DET_TILE), 0.0).rgb; // finer in height: no columns
+    let wp = p.xz + (vec2f(n.g, n.b) - 0.5) * 1600.0 + (vec2f(bn.r, bn.g) - 0.5) * 900.0;
+    let cn = wxCell(wp);
+    // narrow in the middle, wide in the anvil, a little wider at the base
+    let need = mix(0.8, 0.64, anvil) + 0.03 * sstep(0.3, 0.7, hs) - 0.05 * sstep(0.12, 0.0, hs);
+    // a dark ragged base: lobes up to ~350 m deep eaten out of it from below (no ruler-straight lower edge); the
+    // rain under it hides where it ends
+    let bz = 0.012 + 0.06 * sat(0.5 + (low - 0.5) * 0.8 + (bn.b - 0.5) * 1.3);
+    let core = sstep(need, need + 0.06, cn) * sstep(bz - 0.012, bz + 0.012, hs) * sstep(1.0, 0.96, hs) * mix(1.0, 0.75, anvil) * sp;
     c = max(c, core * min(cov + 0.2, 1.0));
   }
   if (c > 0.0 && det > 0.0) {
@@ -100,7 +112,7 @@ fn densMain(p: vec3f, w: vec4f, y: vec4f, lod: f32, det: f32) -> f32 {
     let md = mix(hfb, 1.0 - hfb, sat(hf * 4.0));
     // (veils erode relative to their own thin density, cumulus absolutely)
     let cm = mix(ce * mix(prof, 1.0, pk), 1.0, pk);
-    c = sat(remap(c, md * y.y * 0.95 * min(det, 1.0) * cm, cm, 0.0, cm));
+    c = sat(remap(c, md * max(y.y, 0.4 * sp) * 0.95 * min(det, 1.0) * cm, cm, 0.0, cm));
   }
   // cumulus are crisp (dense right behind the edge), veils stay soft
   c = sat(c * mix(1.3, 5.0, ty * ty));
@@ -646,7 +658,10 @@ fn rainbow(d: vec3f, L: vec3f) -> vec3f {
 }
 fn precipMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
   if (isOff(OFF_RAIN) || FR.wxp.w == 0.0) { return vec4f(0.0); } // no squall within 16 km
-  let tEnd = min(tmax, 16000.0);
+  var tEnd = min(tmax, 16000.0);
+  // rain is only under the cloud base: a ray climbing out of that height meets none beyond it (the probes and the
+  // march window are spent where the rain is, so the upper half of a rainbow has rain behind it too)
+  if (d.y > 0.0) { tEnd = min(tEnd, max(rowv(C0).y + 800.0 - ro.y, 200.0) / d.y); }
   // only rays that pass a squall: five probes of the weather field along the ray
   // the march window is centred on the storm-weighted mean of the probes: continuous from pixel to pixel (an argmax
   // jumps between probes and cut the curtains along straight lines)
@@ -656,6 +671,14 @@ fn precipMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
     let sk = wxStorm(wxCell(ro.xz + d.xz * tk));
     cP++;
     smax = max(smax, sk); sw += sk; stw += sk * tk;
+  }
+  // a pinned cell (a lone shaft far out) can sit between the probes: probe where the ray passes closest to it too
+  if (FR.wxp.z > 0.0) {
+    let hl2 = max(dot(d.xz, d.xz), 1e-6);
+    let tk = clamp(dot(FR.wxp.xy - ro.xz, d.xz) / hl2, 0.0, tEnd);
+    let sk = wxStorm(wxCell(ro.xz + d.xz * tk));
+    cP++;
+    smax = max(smax, sk); sw += sk * 2.0; stw += sk * 2.0 * tk;
   }
   if (smax < 0.02) { return vec4f(0.0); }
   let tb = stw / sw;
@@ -686,9 +709,12 @@ fn precipMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
   for (var i = 0; i < N; i++) {
     let t1 = mix(wa, wb, f32(i + 1) / f32(N));
     let p = ro + d * mix(t0, t1, jit);
-    let st = wxStorm(wxCell(p.xz));
+    let wn = wxCell(p.xz);
+    let st = wxStorm(wn);
     cP++;
     if (st > 0.01) {
+      // the rain itself thickens toward the cell's heart over most of its radius: soft-sided shafts, no wall
+      let sr = sstep(0.4, 0.95, wn);
       let w = wxAt(p.xz);
       let base = w.y;
       if (p.y < base) {
@@ -703,12 +729,17 @@ fn precipMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
         // grows out of the base over 300 m (no hard top line where the base is thin)
         var fade = (sstep(base - 2600.0, base - 300.0, p.y) * 0.6 + 0.4) * sstep(base, base - 300.0, p.y);
         if (kind == 1) { fade = sstep(base - 900.0, base - 150.0, p.y); }
-        let dn = 0.0009 * st * amt * cur * stk * fade * select(1.0, 1.3, kind == 2);
+        let dn = 0.0011 * sr * amt * cur * stk * fade * select(1.0, 1.3, kind == 2);
         let a = 1.0 - exp(-dn * (t1 - t0));
+        // the bow is scattered by every drop on the line of sight, the thin rain between the curtains too: its
+        // brightness follows the depth of rain behind it, so it runs along the whole arc wherever rain falls in the sun
+        let ab = 1.0 - exp(-0.0011 * sr * amt * (0.45 + 0.55 * cur) * fade * (t1 - t0));
         // lit by the sky, and by the sun where it gets under the cloud (forward scattering)
         let sv = cloudShadowF(p, L, rowv(C0), rowv(C1), rowv(C2), rowv(C3)) * sstep(0.0, 0.04, L.y);
         // under the tower little sky light reaches the rain: the curtain reads darker than the open sky
-        var lit = amb * select(0.75, 1.0, kind == 2) * (1.0 - select(0.75, 0.35, kind >= 2) * st) + sc * sv * (0.08 + 0.5 * hg(dot(d, L), 0.7)) + sc * sv * bow * 1.1;
+        var lit = amb * select(0.75, 1.0, kind == 2) * (1.0 - select(0.75, 0.35, kind >= 2) * st) + sc * sv * (0.08 + 0.5 * hg(dot(d, L), 0.7));
+        // the sun reaches the rain under the edge of the tower from the side: the bow keeps part of it in the shadow
+        acc += T * sc * mix(0.45, 1.0, sv) * sstep(0.0, 0.04, L.y) * bow * 1.4 * ab;
         if (kind == 3) { lit += rowv(S7).rgb * (0.4 + rowv(S7).w * 4.0); } // spores glow
         if (kind == 1) { lit *= vec3f(1.05, 0.92, 0.95); }                // virga takes the dust's tint
         acc += T * lit * a; T *= 1.0 - a;
@@ -716,5 +747,8 @@ fn precipMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
     }
     t0 = t1;
   }
-  return vec4f(acc, 1.0 - T);
+  // rain and snow scatter the light behind them forward as much as they block it: the curtain dims what is behind it
+  // only a little by day (grey shafts against a bright sky) and not at all by night (no dark slashes over the stars)
+  let hide = mix(0.12, 0.6, sstep(-0.04, 0.15, L.y));
+  return vec4f(acc, (1.0 - T) * hide);
 }

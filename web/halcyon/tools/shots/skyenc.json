@@ -8,8 +8,8 @@
     { "name": "enc_eclipse_peak",   "params": { "realm": 5, "pos": "0,120,0",   "yaw": 62,  "pitch": 10, "enc": "eclipse", "et": 50 } },
     { "name": "enc_lunar_peak",     "params": { "realm": 4, "pos": "0,40,0",    "yaw": 270, "pitch": 16, "enc": "lunar", "et": 70 } },
     { "name": "enc_milkyway_peak",  "params": { "realm": 2, "pos": "0,6,0",     "yaw": 20,  "pitch": 12, "enc": "milkyway", "et": 40 } },
-    { "name": "enc_brocken_peak",   "params": { "realm": 3, "pos": "0,480,0",   "agl": 0, "yaw": 330, "pitch": -24, "enc": "brocken", "et": 20 } },
-    { "name": "enc_rainbow_peak",   "params": { "realm": 0, "pos": "0,120,0",   "yaw": 68,  "pitch": 5,  "enc": "rainbow", "et": 30 } },
+    { "name": "enc_brocken_peak",   "params": { "realm": 3, "pos": "0,620,0",   "agl": 0, "yaw": 327, "pitch": -22, "enc": "brocken", "et": 20 } },
+    { "name": "enc_rainbow_peak",   "params": { "realm": 0, "pos": "0,120,0",   "yaw": 68,  "pitch": 9,  "fov": 90,  "enc": "rainbow", "et": 30 } },
     { "name": "enc_drystorm_peak",  "params": { "realm": 1, "pos": "0,300,0",   "yaw": 32,  "pitch": 4,  "t": 19.64, "enc": "drystorm", "et": 60 } },
     { "name": "enc_rainshaft_peak", "params": { "realm": 2, "pos": "0,6,0",     "yaw": 0,   "pitch": 2,  "enc": "rainshaft", "et": 40 } },
     { "name": "enc_veil_peak",      "params": { "realm": 0, "pos": "0,120,0",   "yaw": 0,   "pitch": 12, "enc": "veil", "et": 30 } }

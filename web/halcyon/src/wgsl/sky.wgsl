@@ -90,13 +90,19 @@ fn milkyWay(d: vec3f) -> vec3f {
   if (band < 0.01) { return vec3f(0.0); }
   let u = normalize(cross(n, vec3f(0.0, 1.0, 0.0)));
   let v = cross(n, u);
-  let q = vec2f(atan2(dot(d, v), dot(d, u)) * 2.2, b * 9.0);
+  let lon = atan2(dot(d, v), dot(d, u));
+  let q = vec2f(lon * 2.2, b * 9.0);
+  // star clouds: a broad glow broken into fine grainy patches (unresolved stars), brightest toward the centre
   let cl = fbm(q * 1.4, 5, 450u) * 0.5 + 0.5;
-  let dust = sstep(0.05, 0.4, fbm(q * vec2f(3.0, 5.0) + 7.0, 4, 451u) + (0.25 - abs(b) * 3.0));
+  let gr = fbm(q * vec2f(7.0, 9.0), 3, 452u) * 0.5 + 0.5;
+  let cen = 0.55 + 0.45 * exp(-lon * lon * 1.2);
   let core = exp(-b * b * 60.0);
-  var c = vec3f(0.55, 0.6, 0.85) * band * (0.5 + cl) + vec3f(0.95, 0.8, 0.6) * core * cl * 0.8;
-  c *= 1.0 - 0.75 * dust * sstep(0.0, 0.4, band);
-  return c * 0.012;
+  var c = (vec3f(0.55, 0.6, 0.85) * band * (0.45 + 0.8 * cl) + vec3f(0.95, 0.8, 0.6) * core * cl * 0.7) * cen * (0.6 + 0.6 * gr);
+  // the dark rift: one narrow ragged lane of dust along the middle of the bright part, dimming the band's own light
+  // (never the sky behind it); no long black slashes across the whole band
+  let rift = sstep(0.1, 0.55, fbm(q * vec2f(1.6, 4.0) + 7.0, 4, 451u) * 0.5 + 0.5) * exp(-(b - 0.015) * (b - 0.015) * 220.0);
+  c *= 1.0 - 0.55 * rift * sstep(-1.6, 0.0, lon) * sstep(1.4, 0.2, lon);
+  return c * 0.008;
 }
 
 // ---- aurora: a few long ribbons (thin, softly folding vertical sheets) high above the ground ----
@@ -279,8 +285,11 @@ fn giant(d: vec3f) -> vec4f {
         // lit face vs. back face of the rings
         let face = 0.55 + 0.45 * abs(dot(L, pole));
         let rc = vec3f(0.9, 0.8, 0.7) * rowv(A2).rgb * rowv(S0).z * 0.5 * (0.85 * shadow * face + 0.01);
-        if (tr < tp) { col = mix(col, rc, dens); a = max(a, dens); }
-        else if (a < 1.0) { col = mix(rc, col, a); a = max(a, dens); }
+        // in the planet's shadow the thin rings are dim and let most starlight through: a faint veil, not black
+        // glass laid over the stars
+        let rd = dens * mix(0.25, 1.0, shadow);
+        if (tr < tp) { col = mix(col, rc, rd); a = max(a, rd); }
+        else if (a < 1.0) { col = mix(rc, col, a); a = max(a, rd); }
       }
     }
   }
@@ -373,7 +382,9 @@ fn skyFull(d: vec3f, pix: f32) -> vec3f {
     let tv = cross(tu, Lm);
     let q = vec2f(dot(d, tu), dot(d, tv)) / sin(rm);
     let N = normalize(-Lm + (tu * q.x + tv * q.y) * 0.98);
-    let ph = sstep(-0.05, 0.15, dot(N, Ls)) + 0.015;
+    // a lunar eclipse happens at full moon (the sun behind the earth): the disc is lit whole while it lasts
+    let Lph = normalize(mix(Ls, -Lm, sstep(0.0, 0.1, FR.ske.x)) + vec3f(0.0, 1e-5, 0.0));
+    let ph = sstep(-0.05, 0.15, dot(N, Lph)) + 0.015;
     let mar = sstep(0.05, 0.45, fbm(q * 1.7 + 3.0, 4, 470u) * 0.5 + 0.5);
     let cr = 1.0 - 0.2 * sstep(0.55, 0.8, vn(q * 7.0, 471u) * 0.5 + 0.5);
     let om = 2.0 * PI * (1.0 - cos(rm));
