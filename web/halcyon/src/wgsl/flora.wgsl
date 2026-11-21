@@ -37,12 +37,18 @@ const MUSH_SEG = 20u; const MUSH_RING = 12u; const CROWN_SEG = 20u; const CROWN_
 fn latheVerts(kind: u32) -> u32 {
   if (kind == K_MUSH) { return MUSH_SEG * MUSH_RING * 6u; }
   if (kind == K_CROWN) { return CROWN_SEG * CROWN_RING * 6u; }
+  if (kind == K_PALM) { return PALM_VERTS; }
   return 288u;
 }
 
 const K_GRASS = 0u; const K_HEATHER = 1u; const K_TUSSOCK = 2u; const K_REED = 3u; const K_FERN = 4u;
 const K_FLOWER = 5u; const K_STALK = 6u; const K_TENDRIL = 7u; const K_MUSH = 8u; const K_CROWN = 9u;
 const K_CRYSTAL = 10u; const K_SHARD = 11u; const K_SHRUB = 12u; const K_TUFT = 13u; const K_VINE = 14u;
+const K_PALM = 15u;
+// coconut palm (Coral Atoll, V5.x): a curved trunk of PALM_TS sides x PALM_TR rings, then up to PALM_NF fronds of
+// PALM_FS segments, each in two halves (a V fold): 216 + 720 = 936 vertices, inside the crown layer's 960
+const PALM_TS = 6u; const PALM_TR = 6u; const PALM_NF = 15u; const PALM_FS = 4u;
+const PALM_TRUNK = 216u; const PALM_VERTS = 936u;
 
 struct Inst {
   ok: bool,
@@ -75,6 +81,7 @@ fn kindRadius(k: u32) -> f32 {
     case 6u, 7u: { return 2.0; }
     case 8u: { return 9.0; }
     case 9u: { return 9.0; }
+    case 15u: { return 7.0; }
     case 10u: { return 3.0; }
     case 11u: { return 1.5; }
     case 13u: { return 2.5; }
@@ -223,6 +230,14 @@ fn place(L: u32, li: u32) -> Inst {
     keep = veg * (0.05 + 0.95 * gully(p2)) * min(1.0, 0.32 * cell * cell);
     alb = mix(vec3f(0.36, 0.28, 0.13), vec3f(0.22, 0.24, 0.16), lfRand(h, 7u)) * (0.85 + 0.3 * lfRand(h, 9u));
     if (lfRand(h, 8u) < 0.25) { kind = K_SHRUB; alb = vec3f(0.16, 0.18, 0.12) * (0.7 + 0.5 * lfRand(h, 7u)); }
+    if (lrow(V5).x > 0.5) {
+      // Coral Atoll: low beach scrub (naupaka, beach heliotrope) and creeping beach vines on the sand above the tide
+      // line, in a band behind the beach, thinning inland under the palms
+      keep = sstep(0.35, 0.2, slope) * sstep(0.9, 1.6, y) * sstep(9.0, 4.0, y) * (0.25 + 0.6 * sstep(-0.2, 0.4, vn(p2 * (1.0 / 13.0), 844u)))
+        * min(1.0, 0.32 * cell * cell);
+      kind = K_SHRUB;
+      alb = select(vec3f(0.11, 0.17, 0.07), vec3f(0.16, 0.2, 0.08), lfRand(h, 8u) < 0.45) * (0.8 + 0.4 * lfRand(h, 7u));
+    }
   } else if (kind == K_REED) {
     I.mB = clipMB(lv, p2);
     let isl = sstep(0.05, 0.25, I.mB.z) * sstep(0.02, 0.15, y);
@@ -234,6 +249,7 @@ fn place(L: u32, li: u32) -> Inst {
   } else if (kind == K_FERN) {
     I.mA = clipMA(lv, p2);
     keep = sstep(0.42, 0.25, slope) * mix(0.55, 0.9, onPillarTop(I.mA.y, y)) * sstep(0.0, 1.0, y);
+    if (lrow(V5).x > 0.5) { keep *= sstep(3.0, 6.0, y); } // atoll: undergrowth under the trees, not on the beach
     alb = lrow(M0).rgb * mix(vec3f(0.45, 0.55, 0.38), vec3f(0.8, 0.78, 0.5), lfRand(h, 7u));
   } else if (kind == K_STALK || kind == K_TENDRIL) {
     I.mB = clipMB(lv, p2); I.mA = clipMA(lv, p2);
@@ -257,6 +273,15 @@ fn place(L: u32, li: u32) -> Inst {
       I.x = dir;
       alb = lrow(M0).rgb * mix(vec3f(0.42, 0.55, 0.36), vec3f(0.6, 0.66, 0.4), lfRand(h, 7u));
     }
+  } else if (kind == K_CROWN && lrow(V5).x > 0.5 && y < 26.0) {
+    // Coral Atoll: coconut palms on the motu and the lower slopes, thickest along the beach line; they lean out
+    // over the sand toward the water (downhill), more so at the beach (I.x: lean, its sign unused)
+    kind = K_PALM;
+    let beach = sstep(5.0, 2.0, y);
+    keep = sstep(0.4, 0.22, slope) * sstep(0.7, 1.4, y) * sstep(26.0, 14.0, y) * mix(0.16, 0.5, beach)
+      * (0.5 + 0.5 * sstep(-0.3, 0.3, vn(p2 * (1.0 / 45.0), 843u)));
+    I.x = (0.06 + 0.14 * lfRand(h, 13u)) * (1.0 + 1.0 * beach);
+    alb = mix(vec3f(0.07, 0.12, 0.03), vec3f(0.12, 0.15, 0.045), lfRand(h, 7u));
   } else if (kind == K_CROWN) {
     I.mA = clipMA(lv, p2);
     keep = sstep(0.32, 0.18, slope) * mix(0.35, 0.95, onPillarTop(I.mA.y, y)) * sstep(0.5, 2.0, y);

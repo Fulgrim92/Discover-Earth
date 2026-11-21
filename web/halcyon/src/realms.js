@@ -78,6 +78,7 @@ export const FIELDS = [
   'T10', // slot canyons: weight, slot width (m), slot depth (m), mesa height (m)
   'T11', // alpine: weight, granite tower height (m), hanging glacier weight, 0
   'M7', // material flags: atoll, slot canyon, alpine, 0
+  'V5', // wave 1 life modes: palms + beach scrub (atoll), reef life (atoll), alpine (larches, ibex), canyon (cottonwoods, swifts)
 ];
 export const ROW = Math.max(40, (FIELDS.length + 3) & ~3); // vec4 slots per realm row (>= FIELDS.length)
 export const ROWF = ROW * 4;
@@ -226,16 +227,16 @@ const R = [
 
 // Life per realm (appended fields V0..V3, merged into R so the realm rows above stay untouched).
 const LIFE = [
-  { V0: [1, 1, 1, 0], V1: [0, 0, 0, 0], V2: [0, 1, 1, 0], V3: [1, 0, 0, 0], V4: [0, 0, 0, 0] }, // Home Fjords: meadows, seabirds, geese, pollen
-  { V0: [0, 0, 0, 1], V1: [0, 0, 0, 0], V2: [0, 0, 0.5, 0], V3: [0.25, 0, 0, 0], V4: [0, 0, 0, 0] }, // Painted Range: nearly bare
-  { V0: [0, 0, 0, 0], V1: [1, 0, 0, 0], V2: [1, 0, 0, 0], V3: [0, 1, 0, 0], V4: [0, 0, 0, 0] }, // Mirror Salt: reeds on islands, flamingos
-  { V0: [0, 0, 0, 0], V1: [0, 1, 0, 0], V2: [0, 0.7, 0, 0], V3: [0, 0, 0, 0], V4: [1, 0, 0, 1] }, // Stone Forest: ferns, crowns, vines, fireflies, birds over the cloud sea
-  { V0: [0, 0, 0, 0], V1: [0, 0, 0, 1], V2: [0, 1, 0, 0], V3: [0, 0, 1, 0], V4: [0, 1, 0, 0] }, // Aurora Ice: shards, snow petrels, diamond dust
-  { V0: [0, 0, 0, 0], V1: [0, 0, 1, 0], V2: [0, 0, 0, 1], V3: [0, 0, 0, 1], V4: [0, 0, 1, 0] }, // Lumen Deep: garden, giant mushrooms, jellies, spores
+  { V0: [1, 1, 1, 0], V1: [0, 0, 0, 0], V2: [0, 1, 1, 0], V3: [1, 0, 0, 0], V4: [0, 0, 0, 0], V5: [0, 0, 0, 0] }, // Home Fjords: meadows, seabirds, geese, pollen
+  { V0: [0, 0, 0, 1], V1: [0, 0, 0, 0], V2: [0, 0, 0.5, 0], V3: [0.25, 0, 0, 0], V4: [0, 0, 0, 0], V5: [0, 0, 0, 0] }, // Painted Range: nearly bare
+  { V0: [0, 0, 0, 0], V1: [1, 0, 0, 0], V2: [1, 0, 0, 0], V3: [0, 1, 0, 0], V4: [0, 0, 0, 0], V5: [0, 0, 0, 0] }, // Mirror Salt: reeds on islands, flamingos
+  { V0: [0, 0, 0, 0], V1: [0, 1, 0, 0], V2: [0, 0.7, 0, 0], V3: [0, 0, 0, 0], V4: [1, 0, 0, 1], V5: [0, 0, 0, 0] }, // Stone Forest: ferns, crowns, vines, fireflies, birds over the cloud sea
+  { V0: [0, 0, 0, 0], V1: [0, 0, 0, 1], V2: [0, 1, 0, 0], V3: [0, 0, 1, 0], V4: [0, 1, 0, 0], V5: [0, 0, 0, 0] }, // Aurora Ice: shards, snow petrels, diamond dust
+  { V0: [0, 0, 0, 0], V1: [0, 0, 1, 0], V2: [0, 0, 0, 1], V3: [0, 0, 0, 1], V4: [0, 0, 1, 0], V5: [0, 0, 0, 0] }, // Lumen Deep: garden, giant mushrooms, jellies, spores
   // wave 1: first guesses for living-world to refine
-  { V0: [0.4, 0.2, 0, 0], V1: [0, 0.6, 0, 0], V2: [0, 1, 0, 0], V3: [0, 0, 0, 0], V4: [0, 0, 0, 0] }, // Coral Atoll: motu grass, jungle, seabirds
-  { V0: [0, 0, 0, 0.5], V1: [0, 0, 0, 0], V2: [0, 0, 0, 0], V3: [0.15, 0, 0, 0], V4: [0, 0, 0, 0] }, // Slot Canyons: dry tussock, dust
-  { V0: [1, 1, 0, 0], V1: [0, 0, 0, 0], V2: [0, 0, 0, 0], V3: [0.4, 0, 0, 0], V4: [0, 0, 0, 0] }, // Alpine Crown: meadow grass and flowers
+  { V0: [0.4, 0.2, 0, 0.35], V1: [0, 0.6, 0, 0], V2: [0, 1, 0, 0], V3: [0, 0, 0, 0], V4: [0, 0, 0, 0], V5: [1, 1, 0, 0] }, // Coral Atoll: motu grass, beach scrub, coconut palms (crowns in the core), seabirds, reef life
+  { V0: [0, 0, 0, 0.5], V1: [0, 0, 0, 0], V2: [0, 0, 0, 0], V3: [0.15, 0, 0, 0], V4: [0, 0, 0, 0], V5: [0, 0, 0, 1] }, // Slot Canyons: dry tussock, dust
+  { V0: [1, 1, 0, 0], V1: [0, 0, 0, 0], V2: [0, 0, 0, 0], V3: [0.4, 0, 0, 0], V4: [0, 0, 0, 0], V5: [0, 0, 1, 0] }, // Alpine Crown: meadow grass and flowers
 ];
 // the wave 1 fields default to off in the first six realms
 const WAVE1 = { T9: [0, 1450, 0, 0], T10: [0, 0, 0, 0], T11: [0, 0, 0, 0], M7: [0, 0, 0, 0] };

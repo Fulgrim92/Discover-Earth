@@ -352,7 +352,65 @@ fn crownAt(tp: f32, a: f32, H: f32, R: f32, h: u32) -> vec3f {
   let sizeF = 0.25 + 0.75 * I.fade;
   var wp: vec3f; var n: vec3f; var loc: vec2f; var alb = I.alb; var emis = vec3f(0.0); var tr = 0.3;
   var shp = vec4f(0.0); var lobe = 1.0;
-  if (I.kind == K_CROWN) {
+  if (I.kind == K_PALM) {
+    if (vi >= PALM_VERTS) { return dead(); }
+    // coconut palm: a slender ringed trunk that curves out from a flared base (leaning downhill, toward the water),
+    // and a crown of 12-15 long pinnate fronds: the youngest stand up, the older ones arch out and hang
+    let H = (5.0 + 3.0 * r2) * sizeF;
+    let up = vec3f(0.0, 1.0, 0.0);
+    var ld = -I.g; let gl = length(ld);
+    ld = select(vec2f(cos(r3 * 6.2832), sin(r3 * 6.2832)), ld / max(gl, 1e-5), gl > 0.02);
+    let lean = vec3f(ld.x, 0.0, ld.y) * I.x * H;
+    let wv = lfWind(I.p.xz, t);
+    let sway = vec3f(wv.x, 0.0, wv.y) * 0.12 * H + vec3f(0.6, 0.0, 0.8) * sin(t * 0.7 + r1 * 9.0) * 0.05 * H;
+    if (vi < PALM_TRUNK) {
+      let q = vi / 6u; let c = CO[vi % 6u];
+      let seg = q % PALM_TS + c.x; let ring = q / PALM_TS + c.y;
+      let sT = f32(ring) / f32(PALM_TR);
+      let a = f32(seg) / f32(PALM_TS) * 6.2832 + r1 * 6.2832;
+      let rad = (0.17 * (1.0 - 0.3 * sT) + 0.1 * sstep(0.12, 0.0, sT)) * (0.85 + 0.3 * r3) * sizeF;
+      let ctrT = up * H * sT + lean * pow(sT, 1.7) + sway * sT * sT;
+      let ca = vec3f(cos(a), 0.0, sin(a));
+      wp = I.p + ctrT + ca * rad - up * 0.1;
+      n = normalize(ca + vec3f(0.0, 0.15, 0.0));
+      loc = vec2f(f32(seg) / f32(PALM_TS), sT * H);
+      alb = mix(vec3f(0.3, 0.26, 0.2), vec3f(0.42, 0.37, 0.3), r3);
+      shp = vec4f(H, rad, r1, 3.0);
+      tr = 0.0;
+    } else {
+      let v = vi - PALM_TRUNK;
+      let f = v / (PALM_FS * 12u); let w = v % (PALM_FS * 12u);
+      let hside = w / (PALM_FS * 6u); let qq = (w % (PALM_FS * 6u)) / 6u; let c = CO[w % 6u];
+      let hf = hu(i32(I.h), i32(f), 0xA1u);
+      let nf = 12u + u32(lfRand(I.h, 24u) * 3.99);
+      if (f >= nf) { return dead(); }
+      let top = up * H + lean + sway;
+      let age = fract(f32(f) * 0.618 + r1);               // 0 young (upright) .. 1 old (hanging)
+      let az = f32(f) * 2.39996 + r1 * 6.2832 + (lfRand(hf, 1u) - 0.5) * 0.3;
+      let e0 = mix(1.05, -0.05, age) + 0.06 * sin(t * 1.3 + az * 3.0 + wv.z);
+      let Lf = (3.0 + 1.6 * lfRand(hf, 2u)) * (0.75 + 0.5 * age) * (H / 6.5);
+      let droop = mix(0.25, 0.85, age) + 0.15 * lfRand(hf, 3u);
+      let s = f32(qq + c.y) / f32(PALM_FS);
+      let dh = vec3f(cos(az), 0.0, sin(az));
+      let p = top + dh * Lf * s * cos(e0) + up * Lf * (s * sin(e0) - droop * s * s) + vec3f(wv.x, 0.0, wv.y) * 0.25 * s * s;
+      let T = normalize(dh * cos(e0) + up * (sin(e0) - 2.0 * droop * s) + vec3f(1e-4, 0.0, 0.0));
+      let side = normalize(cross(T, up) + vec3f(0.0, 0.0, 1e-4));
+      let sg = select(-1.0, 1.0, hside == 1u);
+      let x = f32(c.x) * sg;                                // 0 on the rachis, +-1 at the leaflet tips
+      let wdt = Lf * 0.2 * sstep(0.04, 0.25, s) * (1.0 - 0.75 * s * s);
+      let E = side * sg - up * 0.55;                        // the leaflets hang off the rachis in a V
+      wp = I.p + p + E * abs(x) * wdt;
+      n = normalize(cross(T, E) * sg);
+      if (n.y < 0.0) { n = -n; }
+      n = normalize(n + vec3f(0.0, 0.35, 0.0));
+      loc = vec2f(x, s);
+      alb = I.alb * mix(1.1, 0.8, age) * (0.9 + 0.2 * lfRand(hf, 4u));
+      alb = mix(alb, vec3f(0.36, 0.3, 0.12), sstep(0.85, 1.0, age) * 0.6); // the oldest fronds yellow
+      shp = vec4f(Lf, wdt, lfRand(hf, 5u), 2.0);
+      tr = 0.4;
+      lobe = mix(0.5, 1.0, s);
+    }
+  } else if (I.kind == K_CROWN) {
     var H = 4.0 + 6.0 * r2; var R = H * (0.42 + 0.16 * r3); // broad crowns that close into a canopy
     if (I.x > 0.5) { H = 13.0 + 6.0 * r2; R = H * (0.26 + 0.08 * r3); } // emergent
     H *= sizeF; R *= sizeF;
@@ -623,6 +681,27 @@ struct FOut { @location(0) c: vec4f, @location(1) d: vec4f }
     let fr = pow(1.0 - abs(dot(n, V)), 2.5);
     // translucent cap flesh: the gill light scatters through the thin margin, softly, wider at grazing angles
     emis += in.emis * sstep(5.0, 5.5, ring) * sstep(6.3, 5.7, ring) * (0.04 + 0.3 * fr);
+  } else if (kind == K_PALM) {
+    if (in.shp.w > 2.5) {
+      // trunk: leaf-scar rings, grey-brown, a little lighter on the ridges
+      let rg = fract(in.loc.y * 2.4);
+      alb *= 0.78 + 0.3 * sstep(0.25, 0.45, rg) * sstep(0.95, 0.75, rg);
+      ao = 0.85;
+    } else {
+      // a pinnate frond: a rachis and some 40 narrow leaflets per side, angled toward the tip, a few torn away
+      let x = abs(in.loc.x); let s = in.loc.y;
+      let ph = s * 30.0 - x * 2.2;
+      let li = floor(ph);
+      let fl = fract(ph);
+      let torn = fract(sin(li * 12.9898 + in.shp.z * 78.233 + sign(in.loc.x) * 3.1) * 43758.5453);
+      let lw = 0.4 * (1.0 - 0.5 * x) * select(1.0, 0.0, torn > 0.9 && x > 0.3);
+      let leaf = aaStep(abs(fl - 0.5) - lw);
+      let rach = aaStep(x - 0.035);
+      alpha = max(leaf * aaStep(x - 1.0), rach);
+      alb *= mix(0.85, 1.05, x) * (0.9 + 0.2 * torn);
+      alb = mix(alb, vec3f(0.3, 0.27, 0.14), rach * (1.0 - leaf) * 0.7);
+      ao = mix(0.7, 1.0, sstep(0.0, 0.4, s));
+    }
   } else if (kind == K_CROWN) {
     // foliage: the shell is closed and opaque (its leaves are a soft mottle); the cards on it are leaf clusters, a
     // lobed outline of 7 leaves with a domed normal that blends into the crown's own volume. Shade is sky-lit, never

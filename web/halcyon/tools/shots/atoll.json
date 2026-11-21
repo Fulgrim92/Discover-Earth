@@ -1,0 +1,10 @@
+{
+ "_comment": "Coral Atoll life (realm 6): coconut palms leaning out over the beach, beach scrub, reef life. atoll_low is the coordinator's wave 1 view; motu_far / motu_near look west from the lagoon at the motu on the 180 degree bearing (ring at about 1400 m, land to 3.3 m). node tools/shot.mjs tools/shots/atoll.json --out out/atoll",
+ "defaults": { "w": 1920, "h": 1080, "hud": 0, "fov": 60, "t": 150 },
+ "shots": [
+  { "name": "atoll_low", "params": { "realm": 6, "pos": "-1100,3,300", "agl": 1, "yaw": 285, "pitch": 1 } },
+  { "name": "motu_far", "params": { "realm": 6, "pos": "-1230,4,0", "agl": 1, "yaw": 270, "pitch": 2 } },
+  { "name": "motu_near", "params": { "realm": 6, "pos": "-1330,3,-15", "agl": 1, "yaw": 255, "pitch": 6 } },
+  { "name": "atoll_high", "params": { "realm": 6, "pos": "2500,400,600", "yaw": 283, "pitch": -10 } }
+ ]
+}
