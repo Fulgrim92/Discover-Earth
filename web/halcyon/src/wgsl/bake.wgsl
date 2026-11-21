@@ -74,8 +74,12 @@ fn sH(q: vec2i) -> f32 { return textureLoad(lvH, clamp(q, vec2i(0), vec2i(511)),
     occ += mx * inverseSqrt(1.0 + mx * mx); // sine of the horizon angle
   }
   let rw = realmWeights(p);
-  let L = sunDirFrom(bf(rw, S0), FR.sun.w);
-  let soft = bf(rw, S6).y;
+  // the key light (common.wgsl keyLight): the sun by day, the moon by night, cross-faded through twilight; terrain.wgsl
+  // lights with the same direction, so a moonlit night has moon shadows instead of the set sun's black
+  let s0 = bf(rw, S0);
+  let L = keyLight(s0, bf(rw, S1), bf(rw, S8), FR.sun.w).dir;
+  // moonlight casts softer edges (a dimmer, broader-looking source after the eye adapts)
+  let soft = bf(rw, S6).y * mix(1.8, 1.0, sstep(-0.035, 0.06, sunDirFrom(s0, FR.sun.w).y));
   var sh = 1.0;
   if (L.y < -0.05) { sh = 0.0; }
   else {
