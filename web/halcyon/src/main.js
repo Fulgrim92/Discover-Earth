@@ -40,6 +40,7 @@ import { G, H, fail, initDevice, Unsupported, bgl, bindGroup, tex, buffer, FRAME
 import { TABLE, ROWF, F, realmCentre, CURATED, REALM_NAMES } from './realms.js';
 import { skyTick, SKY_IN } from './realms.js';
 import { wxTick, WX_IN, WX_CAM, WX_BOLT, WX_PIN } from './weather.js'; // weather at the camera (sky programmer) // the sky turns (sky programmer)
+import { skyEncRows, skyEncFrame, skyEncDirector } from './skyenc.js'; // sky encounters 16-25 (sky programmer)
 import { heightAt, heightBatch, blendAtA, W_IN, W_NEAR, setFootprint } from './world.js';
 import { realmWeightsA, W_ID, W_W } from './realms.js'; // heightcheck: CPU realm weights vs the GPU realm map
 import { CLK, C_DT, C_TIME, C_FRAME_MS, C_PREV } from './clock.js';
@@ -529,7 +530,10 @@ const SKY_TOD = Math.max(P.tod, -1); // a small int or a constant: read once
 function skyTime(fr) {
   SKYM[2] = SKY_TOD >= 0 ? SKY_TOD : (CLK[C_TIME] / SKY_PERIOD) % 1;
   SKY_IN[0] = -Math.sin(SKYM[2] * 2 * Math.PI); // from the signature light the sun first sinks
-  skyTick();
+  // the director runs here first (again in fx/lifefx.js, a no-op the second time at the same t): a sky encounter
+  // bends the realm rows uploaded before the draws, so it must be placed before them (a capture is one frame)
+  quatRotate(v3b, q4, FWD); skyEncDirector(cam, v3b);
+  skyTick(); skyEncRows();
   SKYM[1] += Math.abs(SKY_IN[0] - SKYM[0]) * 16; SKYM[0] = SKY_IN[0];
   fr[FO.sky] = SKYM[2]; fr[FO.sky + 1] = SKYM[2] * 2 * Math.PI; fr[FO.sky + 2] = SKYM[1];
 }
@@ -542,6 +546,7 @@ function prepareFrame() {
   if (frameNo === 0 && WXQ) { WX_PIN[0] = cam[0] + (WXQ[0] || 0); WX_PIN[1] = cam[2] + (WXQ[1] || 0); WX_PIN[2] = WXQ[2] > 0 ? WXQ[2] : 4000; }
   WX_IN[0] = cam[0]; WX_IN[1] = cam[2]; WX_IN[2] = CLK[C_TIME]; wxTick();
   for (let i = 0; i < 4; i++) fr[FO.wxp + i] = WX_PIN[i];
+  skyEncFrame(fr, FO.ske);
   SKYM[3] = 1 / Math.max(CLK[C_DT], 1e-3);
   for (let i = 0; i < 3; i++) { fr[FO.wx + i] = frameNo === 0 ? 0 : Math.min(Math.max((cam[i] - CAMP[i]) * SKYM[3], -60), 60); CAMP[i] = cam[i]; }
   fr[FO.wx + 3] = WX_CAM[2]; fr[FO.sky + 3] = WX_CAM[1];

@@ -20,7 +20,10 @@ fn sat(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }
   // cumulus grow taller the further the field is above the threshold: separate towers instead of one slab
   let tower = sat(0.2 + 2.2 * (f - (1.0 - c0.x)));
   // a squall towers (cumulonimbus) from a lower base
-  let top = max(c0.y + (c0.z - c0.y) * mix(1.0, tower, c3.y), c0.y + wst * 5200.0);
+  // (a snow shower in the polar night is a low convective deck, not a 5 km tower: a third of the height)
+  var tk = 0.0;
+  for (var i = 0; i < 4; i++) { if (rw.id[i] >= 0) { tk += rw.w[i] * select(1.0, 0.33, wxKind(rw.id[i]) == 2); } }
+  let top = max(c0.y + (c0.z - c0.y) * mix(1.0, tower, c3.y), c0.y + wst * 5200.0 * tk);
   let base = c0.y - wst * 250.0;
   // orographic lift: cloud gathers on the high ground (the Fjords' low cloud snags on the peaks)
   let h = heightAny(xz);

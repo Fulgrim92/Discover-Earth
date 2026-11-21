@@ -153,7 +153,7 @@ const R = [
     M0: ['#16161a', 0], M1: ['#3a3c40', 0.5], M2: ['#dfeaf4', 140], M3: ['#3a3a3d', 6],
     M4: [0, 0, 0, 1], M5: [0, 0, 0, 0], M6: ['#7fe9ff', 0.5],
     S0: [-14, 248, 7.0, 0.53], S1: ['#b4c8ff', 0.25], S2: ['#06122e', 4.5], S3: ['#1e3866', 0.55],
-    S4: ['#2c4878', 5.0], S5: [1, 1, 0, 1], S6: [1.4, 0.1, 0, 0.3], S7: ['#6ae8c0', 0.07],
+    S4: ['#2c4878', 5.0], S5: [1, 1, 0, 1], S6: [1.4, 0.1, 0, 0.3], S7: ['#b0d8e4', 0.09], // aurora fill: pale teal, snow stays white-blue
     S8: [15, 270, 0.12, 1.0], A0: [1, 0.3, 0.8, 1], A1: [5.802, 13.558, 33.1, 1.2], A2: [1, 1, 1, 1],
     F0: ['#3a5480', 1 / 30000], F1: ['#6c84a8', 1 / 2500], F2: [10, 1 / 30, 1 / 1500, 0.3],
     C0: [0.24, 1800, 2200, 0.016], C1: ['#ffffff', 0], C2: [0, 0, 0, 4],
@@ -304,11 +304,23 @@ export function skyTick() {
       TABLE[o + F.S3 * 4 + c] = Math.exp(ARC[b0 + 3 + c] + (ARC[b1 + 3 + c] - ARC[b0 + 3 + c]) * u);
       TABLE[o + F.S4 * 4 + c] = Math.exp(ARC[b0 + 6 + c] + (ARC[b1 + 6 + c] - ARC[b0 + 6 + c]) * u);
     }
-    // the eye adapts part of the way as the light falls or rises (a real camera would adapt fully; leaving some
-    // keeps dusk dusky and noon bright)
-    horizE(r);
-    TABLE[o + F.G0 * 4] = EXPO[r * 2] + Math.min(Math.max(0.55 * (EXPO[r * 2 + 1] - Math.log2(HE[0])), -1.5), 3.0);
+    // night floor: with the sun down the sky still lights the ground (starlight, airglow, and the aurora where the
+    // realm has one, S5.y): snow under a cloud shadow at night is dim blue-green, never black
+    const nt = Math.min(Math.max((-el - 2) / 8, 0), 1);
+    if (nt > 0) {
+      const au = TABLE[o + F.S5 * 4 + 1] * nt, st = 0.0012 * nt;
+      // mostly white-blue (snow should read as snow); the aurora adds only a little green-teal
+      TABLE[o + F.S2 * 4] += st + 0.0016 * au; TABLE[o + F.S2 * 4 + 1] += st * 1.15 + 0.0028 * au; TABLE[o + F.S2 * 4 + 2] += st * 1.8 + 0.0034 * au;
+      TABLE[o + F.S3 * 4] += st + 0.0018 * au; TABLE[o + F.S3 * 4 + 1] += st * 1.15 + 0.0030 * au; TABLE[o + F.S3 * 4 + 2] += st * 1.6 + 0.0034 * au;
+    }
+    exposeRealm(r);
   }
+}
+// the eye adapts part of the way as the light falls or rises (a real camera would adapt fully; leaving some keeps
+// dusk dusky and noon bright); skyenc.js calls it again after an encounter bends a row
+export function exposeRealm(r) {
+  horizE(r);
+  TABLE[r * ROWF + F.G0 * 4] = EXPO[r * 2] + Math.min(Math.max(0.55 * (EXPO[r * 2 + 1] - Math.log2(HE[0])), -1.5), 3.0);
 }
 
 // integer hash shared with WGSL (common.wgsl: hu)

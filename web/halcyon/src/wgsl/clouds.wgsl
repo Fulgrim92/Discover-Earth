@@ -321,6 +321,8 @@ fn skipCols(ro: vec3f, d: vec3f, t: f32, t1: f32, sea: bool) -> f32 {
 @compute @workgroup_size(8, 8) fn csColumn(@builtin(global_invocation_id) id: vec3u) {
   let N = u32(CU.win.w);
   if (id.x >= N || id.y >= N) { return; }
+  // a ring of rows per frame (CU.dbg.w = 4: rows with y % 4 == CU.dbg.z), all rows when the window moved
+  if (CU.dbg.w > 1.5 && f32(id.y % 4u) != CU.dbg.z) { return; }
   let w = textureLoad(wxT, id.xy, 0);
   var m = 0.0;
   if (w.x > 0.004) {
