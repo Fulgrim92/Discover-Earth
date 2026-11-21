@@ -10,9 +10,10 @@ for (const tod of tods) {
   const r = { tod, s: +SKY_IN[0].toFixed(3) };
   REALM_NAMES.forEach((n, i) => {
     const o = i * ROWF + F.S0 * 4;
-    r[n] = `${TABLE[o].toFixed(1)} / ${TABLE[o + 1].toFixed(1)}`;
+    const m = i * ROWF + F.S8 * 4;
+    r[n] = `${TABLE[o].toFixed(1)} / ${TABLE[o + 1].toFixed(1)}  moon ${TABLE[m].toFixed(1)} / ${TABLE[m + 1].toFixed(1)}`;
   });
   rows.push(r);
 }
-console.log('sun elevation / azimuth in degrees per realm');
+console.log('sun and moon elevation / azimuth in degrees per realm');
 console.table(rows);

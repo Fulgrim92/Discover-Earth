@@ -62,6 +62,11 @@ fn lfSkyVis(p: vec2f) -> f32 {
 }
 fn lfBakedSun(p: vec2f) -> f32 {
   let L = FR.sun.xyz;
+  // the bake marches toward the realm's sun (bake.wgsl); under a key moon (Aurora Ice) it holds 0 everywhere and is
+  // not this light's shadow: keep only the march there, or a white fox in moonlight goes black
+  let Ls = sunDirFrom(rowv(S0), FR.sun.w);
+  let same = sstep(0.95, 0.99, dot(Ls, L)) * sstep(-0.05, 0.02, Ls.y);
+  if (same <= 0.0) { return 1.0; }
   let n = nLevels() - 1u;
   let l0 = clipLevel(p, 0u, 6.0);
   let Lh = L.xz / max(length(L.xz), 1e-3);
@@ -70,7 +75,7 @@ fn lfBakedSun(p: vec2f) -> f32 {
   let q1 = p + Lh * FR.lv[l1].z; let q2 = p + Lh * FR.lv[l2].z;
   let b = clipSH(clipLevel(q1, l1, 4.0), q1).x;
   let c = clipSH(clipLevel(q2, l2, 4.0), q2).x;
-  return min(a, min(b, c));
+  return mix(1.0, min(a, min(b, c)), same);
 }
 fn lfCloudShadow(p: vec3f) -> f32 {
   return cloudShadowF(p, FR.sun.xyz, rowv(C0), rowv(C1), rowv(C2), rowv(C3));

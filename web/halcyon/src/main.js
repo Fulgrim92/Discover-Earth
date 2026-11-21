@@ -592,6 +592,18 @@ function cameraFromSim() {
   for (let i = 0; i < 8; i++) cam[i] = c[i];
   q4[0] = cam[3]; q4[1] = cam[4]; q4[2] = cam[5]; q4[3] = cam[6];
 }
+// track= camera: TRK x, y, z, lift, chosen yaw, chosen, aim height; TRK_AH the aim height above the ground per species
+const TRK = new Float64Array(7), TRK_AH = new Float64Array([0.5, 1.0, 0.6, 0.3, 0.25, 1.3, 2]);
+// the camera dist metres from the herd's aim along yw, hy above it, lifted until no ground rises above the sight line
+function trackPose(yw, d, hy) {
+  TRK[0] = HERD_AIM[0] - Math.sin(yw) * d; TRK[2] = HERD_AIM[2] + Math.cos(yw) * d;
+  TRK[1] = Math.max(heightAt(TRK[0], TRK[2]) + 0.5, HERD_AIM[1] + hy); TRK[3] = 0;
+  for (let i = 1; i < 12; i++) {
+    const f = i / 12, gx = TRK[0] + (HERD_AIM[0] - TRK[0]) * f, gz = TRK[2] + (HERD_AIM[2] - TRK[2]) * f;
+    const ly = TRK[1] + (TRK[6] - TRK[1]) * f, gh = heightAt(gx, gz) + 0.3;
+    if (gh > ly) { const u = (gh - ly) / (1 - f); TRK[1] += u; TRK[3] += u; }
+  }
+}
 function cameraFromUrl() {
   quatFromYawPitchRoll(q4, yaw, pitch, 0);
   cam[0] = camPos[0]; cam[1] = camPos[1]; cam[2] = camPos[2];
@@ -599,16 +611,30 @@ function cameraFromUrl() {
   if (P.campose) { for (let i = 0; i < 8; i++) cam[i] = P.campose[i]; q4[0] = cam[3]; q4[1] = cam[4]; q4[2] = cam[5]; q4[3] = cam[6]; }
   // track=species,dist,height: frame the nearest herd of that species from dist metres along the shot's yaw
   if (P.track && herdAim(P.track[0] | 0, CLK[C_TIME], camPos[0], camPos[2])) {
-    const d = P.track[1] || 10, hy = P.track[2] || 2, fx = Math.sin(yaw), fz = -Math.cos(yaw);
-    cam[0] = HERD_AIM[0] - fx * d; cam[2] = HERD_AIM[2] - fz * d;
-    cam[1] = Math.max(heightAt(cam[0], cam[2]) + 0.5, HERD_AIM[1] + hy);
-    // keep the herd in sight: lift the camera until no ground rises above the sight line to the herd
-    for (let i = 1; i < 12; i++) {
-      const f = i / 12, gx = cam[0] + (HERD_AIM[0] - cam[0]) * f, gz = cam[2] + (HERD_AIM[2] - cam[2]) * f;
-      const ly = cam[1] + (HERD_AIM[1] + 0.7 - cam[1]) * f, gh = heightAt(gx, gz) + 0.3;
-      if (gh > ly) cam[1] += (gh - ly) / (1 - f);
+    const sp = P.track[0] | 0, d = P.track[1] || 10, hy = P.track[2] || 2;
+    TRK[6] = HERD_AIM[1] + TRK_AH[Math.min(sp, 6)];
+    // the side to shoot from is chosen once, near the shot's yaw: the one with the least lift over the ground in
+    // between, the camera's ground nearest the herd's, and (land animals) not over water
+    if (!TRK[5]) {
+      // the key light of the shot's realm at its time of day (the sun, or the moon while the sun is down): the
+      // camera keeps it beside or behind, never shoots into it (a backlit animal is a black cut-out)
+      SKY_IN[0] = -Math.sin((SKY_TOD >= 0 ? SKY_TOD : (CLK[C_TIME] / SKY_PERIOD) % 1) * 2 * Math.PI); skyTick();
+      const ro = Math.max(P.realm, 0) * ROWF, moon = TABLE[ro + F.S0 * 4] < 0 ? 1 : 0;
+      const laz = (TABLE[ro + (moon ? F.S8 : F.S0) * 4 + 1] * Math.PI) / 180;
+      let best = 1e30;
+      for (let k = 0; k < 16; k++) {
+        const dy = ((k + 1) >> 1) * (k & 1 ? 1 : -1) * (Math.PI / 8), yw = yaw + dy;
+        trackPose(yw, d, hy);
+        const gc = heightAt(TRK[0], TRK[2]);
+        const c = TRK[3] * 2 + Math.abs(gc - HERD_AIM[1]) * 0.5 + Math.abs(dy) * 0.6 + (sp !== 4 && gc < 0.3 ? 20 : 0) +
+          Math.max(Math.sin(yw) * Math.sin(laz) + Math.cos(yw) * Math.cos(laz), 0) * 4;
+        if (c < best) { best = c; TRK[4] = yw; }
+      }
+      TRK[5] = 1;
     }
-    quatFromYawPitchRoll(q4, yaw, Math.atan2(HERD_AIM[1] + 0.7 - cam[1], d), 0);
+    trackPose(TRK[4], d, hy);
+    cam[0] = TRK[0]; cam[1] = TRK[1]; cam[2] = TRK[2];
+    quatFromYawPitchRoll(q4, TRK[4], Math.atan2(TRK[6] - cam[1], d), 0);
     cam[3] = q4[0]; cam[4] = q4[1]; cam[5] = q4[2]; cam[6] = q4[3];
   }
   // orbit=dist,azimuth,elevation (deg): look at the drone from around it (static shots with sim=1)

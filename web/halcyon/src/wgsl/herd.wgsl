@@ -143,14 +143,17 @@ fn animal(ii: u32) -> Ani {
   A.coat = lfRand(h, 5u) * 0.999;
   if (sp == 1u && k == 0u && lfRand(hu(i32(G2.w), 9, 0x6E1u), 1u) < 0.3) { A.coat = 1.5; }
   // herd centre wanders slowly; the flee offset is the CPU's integrated reaction to the drone
-  let ph = G2.w * 0.001;
+  // phases from 12-bit slices of the group hash (an exact integer in f32): a huge f32 angle would leave sin and the
+  // spiral at the GPU's range reduction, and herd.js aim() could not find the members
+  let hb = i32(G2.w);
+  let ph = f32((hb >> 8) & 4095) * (6.2832 / 4096.0); let ph2 = f32((hb >> 18) & 4095) * (6.2832 / 4096.0);
   let hc = G0.xy + vec2f(sin(t * 0.0021 + ph), cos(t * 0.0017 + ph * 1.3)) * sb.z * 0.8 + G1.xy;
   // each member keeps its own ground: home spots on a sunflower spiral (nearest neighbours 1.546 c apart) and a
   // personal walk circle of radius Rw <= 0.8 L around it, so two members are never closer than 1.3 body lengths
   // (of the largest scale), never one inside the other
   let L0 = sa.x * G2.z;
   let c = max(3.1 * L0 / 1.546, sb.z / 3.94);
-  let ka = f32(k) * 2.39996 + G2.w * 0.37;
+  let ka = f32(k) * 2.39996 + ph2;
   let ofs = vec2f(cos(ka), sin(ka)) * c * sqrt(f32(k) + 0.5);
   // own walk: arcs of radius Rw walked for Tw seconds out of every T, standing (grazing) in between
   let T = 9.0 + 9.0 * r3; let Tw = T * (0.25 + 0.2 * r4);
@@ -288,7 +291,13 @@ fn herdVert(vi: u32, ii: u32) -> HV {
     let tl = select(0.25, 0.55, A.sp == 1u || A.sp == 3u) * L;
     let td = normalize(-F + U * select(-0.9, 0.15, A.sp == 3u) + S * 0.15 * sin(t * 2.0 + f32(A.h & 31u)));
     c = C - F * L * 0.48 + td * tl * 0.5; ax = td; hl = tl * 0.5; rr = R * select(0.12, 0.28, A.sp == 3u);
-    if (A.sp == 2u || A.sp == 4u) { c = C - F * L * 0.5; hl = L * 0.15; rr = R * 0.3; ax = F; }
+    if (A.sp == 2u) { c = C - F * L * 0.5; hl = L * 0.15; rr = R * 0.3; ax = F; }
+    if (A.sp == 4u) {
+      // hind flippers: a broad flat fan off the tapered rear, lifted a little off the ground, slowly fanning
+      ax = normalize(-F + U * 0.2 + S * 0.08 * sin(t * 0.7 + f32(A.h & 63u)));
+      c = C - F * L * 0.47 - U * R * 0.25 + ax * L * 0.1; hl = L * 0.11; rr = R * 0.55;
+      bref = U; useRef = true; flat0 = 0.18;
+    }
   } else if (part == 12u) {
     // ears / snout / bill: a small piece at the head tip
     c = neckEnd + hdir * sb.x * 0.95; ax = normalize(hdir + U * select(0.0, -0.8, biped)); hl = sb.x * 0.22; rr = sb.y * 0.55;
@@ -322,8 +331,15 @@ fn herdVert(vi: u32, ii: u32) -> HV {
       hl = span * 0.5; rr = select(0.17, 0.12, seg == 1u) * A.sc * A.fly; bref = U; useRef = true; flat0 = 0.12;
       wmark = 2.0 + f32(seg);
     } else {
-    if (A.sp == 4u) { return o; }
     let front = li < 2u; let left = (li & 1u) == 0u;
+    if (A.sp == 4u) {
+      // fore flippers: short flat paddles at the chest, swept back and down against the flank
+      if (!front || seg == 1u) { return o; }
+      let sg = select(-1.0, 1.0, left);
+      ax = normalize(-F * 0.75 + S * sg * 0.45 - U * 0.5);
+      c = C + F * L * 0.2 + S * sg * R * 0.75 - U * R * 0.35 + ax * L * 0.06;
+      hl = L * 0.075; rr = R * 0.32; bref = S * sg; useRef = true; flat0 = 0.22;
+    } else {
     var hip = C + F * select(-L * 0.36, L * 0.36, front) + S * select(-R * 0.55, R * 0.55, left) - U * R * 0.3;
     if (biped) { hip = C + S * select(-R * 0.4, R * 0.4, left) - U * R * 0.5; }
     // gait: stance 60% (the foot planted while the body passes), swing 40%
@@ -348,6 +364,7 @@ fn herdVert(vi: u32, ii: u32) -> HV {
     rr = R * select(select(0.2, 0.14, seg == 1u), 0.08, biped) * select(1.0, 0.75, A.sp == 1u);
     if (A.sp == 5u || A.sp == 6u) { rr = R * select(0.22, 0.16, seg == 1u); }
     }
+    }
   }
   // ellipsoid vertex
   let q = pv / 6u; let co = HCO[pv % 6u];
@@ -365,6 +382,13 @@ fn herdVert(vi: u32, ii: u32) -> HV {
     else if (part == 3u) { tap = 0.45; }
     else if (part >= 4u && part <= 11u && wmark == 0.0) { tap = 0.12; hl += rr * 0.6; }   // segments overlap at the knee
   }
+  // seal: a spindle, full at the chest and tapering to the hips; the neck as thick as the chest it grows from
+  if (A.sp == 4u) {
+    if (part == 0u) { tap = -0.32; }
+    else if (part == 1u) { tap = 0.3; rr = R * 0.78; }
+    else if (part == 2u) { tap = 0.12; }
+    else if (part == 3u) { tap = -0.25; }
+  }
   // superellipsoid along the axis: limbs, necks and tails are cylinders with rounded ends (not strings of beads),
   // bodies full barrels (not balloons); heads, ears, fins and wings stay rounder
   var se = 1.0;
@@ -372,6 +396,7 @@ fn herdVert(vi: u32, ii: u32) -> HV {
     if (part == 0u) { se = 0.55; }
     else if (part == 1u || part == 3u || (part >= 4u && part <= 11u)) { se = 0.3; }
     else if (part == 2u) { se = 0.75; }
+    if (A.sp == 4u) { se = select(1.0, 0.8, part <= 1u); } // seals are smooth: no barrel ends, round flippers
   }
   let sth = pow(max(sin(thv), 0.0), se);
   let ring = (b1 * cos(ph) * flat1 + b2 * sin(ph) * flat0) * sth;
@@ -457,6 +482,8 @@ fn coat(sp: u32, part: u32, tint: vec4f, loc: vec2f, wp: vec3f) -> vec3f {
       // harbour seal: grey-brown with small dark spots (not bands), paler belly
       let base = mix(vec3f(0.2, 0.19, 0.17), vec3f(0.28, 0.27, 0.24), vn(wp.xz * 1.5 + wp.y, 962u));
       let spots = sstep(0.62, 0.7, vn(wp.xz * 13.0 + wp.y * 11.0, 965u));
+      if (part == 12u) { return base * mix(0.75, 0.35, sstep(0.2, 0.8, loc.x)); } // muzzle, the nose darker
+      if (part == 3u || part >= 4u) { return base * 0.7; }                     // flippers: darker, unspotted
       return base * (1.0 - 0.5 * spots) * mix(1.0, 1.4, sstep(-0.2, -0.6, loc.y));
     }
     case 7u: {

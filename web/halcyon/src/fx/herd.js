@@ -31,7 +31,8 @@ let murmOn = 0;
 // species: 0 sheep, 1 horse, 2 flamingo, 3 fox, 4 seal, 5 light-eater, 6 giant
 const SENS = new Float32Array([1.0, 1.2, 1.3, 1.0, 0.8, 0.3, 0]);   // how easily startled
 const RUN = new Float32Array([3.0, 8.0, 1.6, 5.0, 0.0, 0.8, 0]);     // flee speed, m/s
-const NMIN = new Uint8Array([6, 5, 10, 1, 3, 3]), NRNG = new Uint8Array([7, 5, 7, 3, 6, 4]); // herd size
+const BODYL = new Float32Array([1.05, 1.75, 0.5, 0.62, 1.6, 3.2, 0]); // herd.wgsl spA().x, body length of an adult
+const NMIN =new Uint8Array([6, 5, 10, 1, 3, 3]), NRNG = new Uint8Array([7, 5, 7, 3, 6, 4]); // herd size
 const TAB = new Float32Array(196 * 4);                                 // uniform image (HG)
 const key = new Int32Array(NG * 2), okey = new Int32Array(NG * 2);
 const st = new Float32Array(NG * 6), ost = new Float32Array(NG * 6);  // fleeX, fleeZ, alarm, gait, fdX, fdZ
@@ -345,11 +346,36 @@ export function aim(sp, t, x, z) {
   }
   if (best < 0) { AIM[3] = 0; return 0; }
   AIMK[0] = key[best * 2]; AIMK[1] = key[best * 2 + 1];
-  const ph = Math.fround((key[best * 2] * 73856093) ^ (key[best * 2 + 1] * 19349663)) * 0.001, sz = SPREAD[sp] * 0.8;
-  AIM[0] = home[best * 4] + Math.sin(t * 0.0021 + ph) * sz + st[best * 6];
-  AIM[2] = home[best * 4 + 1] + Math.cos(t * 0.0017 + ph * 1.3) * sz + st[best * 6 + 1];
-  // at the shore the herd stands around its home (herd.wgsl: members over water move back to it)
-  if (sp !== 2 && sp !== 4 && heightAt(AIM[0], AIM[2]) < 0.3) { AIM[0] = home[best * 4] + st[best * 6]; AIM[2] = home[best * 4 + 1] + st[best * 6 + 1]; }
+  // the herd centre and the members' spiral homes exactly as herd.wgsl animal() places them (phases from 12-bit
+  // slices of the group hash); aim at the member nearest the members' centroid, so a close shot centres an animal
+  const hb = Math.fround((key[best * 2] * 73856093) ^ (key[best * 2 + 1] * 19349663)) | 0;
+  const ph = ((hb >> 8) & 4095) * (6.2832 / 4096), ph2 = ((hb >> 18) & 4095) * (6.2832 / 4096), sz = SPREAD[sp] * 0.8;
+  const hx = home[best * 4] + Math.sin(t * 0.0021 + ph) * sz + st[best * 6];
+  const hz = home[best * 4 + 1] + Math.cos(t * 0.0017 + ph * 1.3) * sz + st[best * 6 + 1];
+  const n = home[best * 4 + 3], c = Math.max(3.1 * BODYL[sp] / 1.546, SPREAD[sp] / 3.94);
+  const land = sp !== 2 && sp !== 4;
+  // members the shader drops (herd.wgsl animal(): seals off their haul-out, land animals in the water) do not count
+  const gmin = sp === 4 ? 0.05 : sp === 2 ? -0.6 : 0.2;
+  AIM[0] = 0; AIM[2] = 0; let m = 0;
+  for (let k = 0; k < n; k++) { // centroid of the member homes (over water: back around the herd's home)
+    const ka = k * 2.39996 + ph2, r = c * Math.sqrt(k + 0.5);
+    let x = hx + Math.cos(ka) * r, z = hz + Math.sin(ka) * r;
+    if (land && heightAt(x, z) < 0.3) { x += home[best * 4] - hx; z += home[best * 4 + 1] - hz; }
+    if (heightAt(x, z) < gmin) continue;
+    AIM[0] += x; AIM[2] += z; m++;
+  }
+  if (m === 0) { AIM[3] = 0; return 0; }
+  AIM[0] /= m; AIM[2] /= m;
+  let md = 1e30, mx = AIM[0], mz = AIM[2];
+  for (let k = 0; k < n; k++) {
+    const ka = k * 2.39996 + ph2, r = c * Math.sqrt(k + 0.5);
+    let x = hx + Math.cos(ka) * r, z = hz + Math.sin(ka) * r;
+    if (land && heightAt(x, z) < 0.3) { x += home[best * 4] - hx; z += home[best * 4 + 1] - hz; }
+    if (heightAt(x, z) < gmin) continue;
+    const d = (x - AIM[0]) * (x - AIM[0]) + (z - AIM[2]) * (z - AIM[2]);
+    if (d < md) { md = d; mx = x; mz = z; }
+  }
+  AIM[0] = mx; AIM[2] = mz;
   AIM[1] = heightAt(AIM[0], AIM[2]); AIM[3] = 1;
   return 1;
 }
