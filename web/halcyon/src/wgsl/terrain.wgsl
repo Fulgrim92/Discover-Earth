@@ -546,7 +546,12 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   dg += vec3f(gd.y, 0.0, gd.z);
   var rd = vec4f(1.0, 0.0, 0.0, 0.0);
   let rockMask = clamp(sstep(0.2, 0.42, slope + 0.1 * nM) + sstep(-0.05, -0.25, conc) * sstep(0.08, 0.2, slope) * 0.8, 0.0, 1.0);
-  if ((rockMask > 0.02 || mB.z > 0.1) && !isOff(OFF_TDETAIL)) { rd = rockDetail(p, fp, 1.0, 1.0); }
+  // a pure Stone Forest pixel evaluates one rock detail, with the pillar walls' own scale (vertically stretched
+  // beds, softer cracks), shared by the generic rock blend here and the walls below
+  let stoneOnly = M4v.z > 0.99;
+  if ((rockMask > 0.02 || mB.z > 0.1 || stoneOnly) && !isOff(OFF_TDETAIL)) {
+    if (stoneOnly) { rd = rockDetail(p * vec3f(1.0, 0.6, 1.0), fp, 1.6, 0.6); } else { rd = rockDetail(p, fp, 1.0, 1.0); }
+  }
   let rH = 0.5 + 0.3 * nM + 0.4 * (rd.x - 1.0) + 0.15 * nS;
   let gH = 0.5 + 0.15 * gd.x;
   let tw = 0.06 + min(fp * 0.02, 0.2);
@@ -899,7 +904,8 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
     let fineGeo = sstep(4.0, 1.0, tx); // slope is trustworthy only on fine levels
     let onPillar = sstep(1.0, 3.0, topH) * sstep(1.5, 4.0, below) * sstep(0.02, 0.1, wf);
     let wall = max(sstep(0.4, 0.75, slope), onPillar * sstep(0.15, 0.35, slope));
-    let sd = rockDetail(p * vec3f(1.0, 0.6, 1.0), fp, 1.6, 0.6);
+    var sd = rd;
+    if (!stoneOnly) { sd = rockDetail(p * vec3f(1.0, 0.6, 1.0), fp, 1.6, 0.6); }
     // vertical fluting: grooves across the contour direction
     let wfl = bl(2.4, fp) * wall;
     var flute = 0.0;
