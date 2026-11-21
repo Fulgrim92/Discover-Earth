@@ -342,7 +342,7 @@ fn terrainEval(p: vec2f, t: TP, masks: bool) -> TerrOut {
         }
       }
       ser = sstep(0.5, 2.0, bh) * zone;
-      iceS += bh * zone * (1.0 - sstep(4.0, 12.0, footprint()));
+      iceS += bh * zone * (1.0 - sstep(2.0, 6.0, footprint())); // gone by 8 m texels: no aliased spikes along the front
       // crevasses: parallel rows ~22 m apart in a slowly turning direction, broken into en-echelon segments,
       // ~3 m wide and 12 m deep; coarse levels widen them to a texel and keep the volume
       // (rotation from a polynomial, not cos/sin: GPU trig is too coarse at |p| ~ 10 km for the heightcheck)

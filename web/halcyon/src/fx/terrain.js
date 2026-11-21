@@ -46,10 +46,25 @@ export function init(ctx) {
   const vis = GPUShaderStage.FRAGMENT;
   bglShade = d.createBindGroupLayout({ label: 'terrain shade', entries: [
     { binding: 0, visibility: vis, texture: { sampleType: 'unfilterable-float', viewDimension: '2d', multisampled: ms } },
-    { binding: 1, visibility: vis, texture: { sampleType: 'depth', viewDimension: '2d', multisampled: ms } }] });
+    { binding: 1, visibility: vis, texture: { sampleType: 'depth', viewDimension: '2d', multisampled: ms } },
+    // the baked macro material (clipmap.js, terrain.wgsl matFetch)
+    ...[2, 3, 4, 5].map((b) => ({ binding: b, visibility: vis, texture: { sampleType: 'float', viewDimension: '2d-array' } }))] });
   const add = { color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' }, alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' } };
   pShade = pipeline({ label: 'terrain shade', module: mod, vs: 'vsFull', fs: 'fsShade', layouts: [ctx.bgl0, clip.bgl, bglShade],
     targets: [{ format: 'rgba16float', blend: add }] });
+  // the material bake (terrain.wgsl fsMatBake, encoded by clipmap.js bakeLevel): the same source with matFetch
+  // stubbed out, since that pass writes the textures matFetch reads
+  const a = src.indexOf(';', src.indexOf('MAT_FETCH_BEGIN')) + 1, b = src.lastIndexOf('const', src.indexOf('MAT_FETCH_END'));
+  if (a <= 0 || b < a) throw new Error('terrain.wgsl: MAT_FETCH markers missing');
+  const bsrc = src.slice(0, a) + 'fn matFetch(l: u32, e: f32, xz: vec2f) -> MatS { var m: MatS; return m; }\n' + src.slice(b);
+  const bmod = shader(CLIP + bsrc, 'terrain material bake');
+  const empty = d.createBindGroupLayout({ label: 'empty', entries: [] });
+  const bglMat = d.createBindGroupLayout({ label: 'material bake', entries: [{ binding: 0, visibility: vis, buffer: { type: 'uniform' } }] });
+  // (only when the baked path is on: off=tlive, the default until tbake=1, skips the bake pass entirely)
+  if (!(ctx.off & 8388608)) clip.pMat = pipeline({ label: 'material bake', module: bmod, vs: 'vsMat', fs: 'fsMatBake', layouts: [ctx.bgl0, clip.bgl, empty, bglMat],
+    targets: clip.matFormats.map((format) => ({ format })) });
+  clip.matEmpty = d.createBindGroup({ layout: empty, entries: [] });
+  for (let i = 0; i < LEVELS; i++) clip.matBG[i] = bindGroup(bglMat, [clip.bakeBuf[i]]);
   const smod = shader(SKY, 'sky');
   pSky = pipeline({ label: 'sky', module: smod, vs: 'vsSky', fs: 'fsSky', layouts: [ctx.bgl0], targets, samples: ctx.msaa,
     depth: { format: 'depth32float', depthWriteEnabled: false, depthCompare: 'greater-equal' } });
@@ -86,7 +101,7 @@ export function setup(ctx, camX, camZ) {
 
 // (re)bind to the view targets: the opaque pass's dist target (MSAA when on) and depth, and the resolved scene
 export function bind(ctx, t) {
-  bgShade = bindGroup(bglShade, [t.distSV, t.depthSV]);
+  bgShade = bindGroup(bglShade, [t.distSV, t.depthSV, ...clip.matViews]);
   shadeDesc = { colorAttachments: [{ view: t.sceneV, loadOp: 'load', storeOp: 'store' }], timestampWrites: tsBoth(TS_TSHADE) };
 }
 

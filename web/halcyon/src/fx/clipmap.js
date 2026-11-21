@@ -1,6 +1,6 @@
 // fx/clipmap.js: 9 levels of 512x512 height (r32float) + gradient (rgba16float) + 2 mask arrays, baked on the GPU when a level's snapped
 // centre moves (at most one level per frame in flight, all at once on start).
-import { G, shader, bgl, bindGroup, tex, buffer, pipeline, computePipeline, FO, tsBegin, tsEnd, TS_BAKE } from '../gpu.js';
+import { G, shader, bgl, bindGroup, tex, buffer, pipeline, computePipeline, FO, tsBoth, tsEnd, TS_BAKE, TS_RMAP } from '../gpu.js';
 import CLIP from '../wgsl/clip.wgsl';
 import TERRFN from '../wgsl/terrfn.wgsl';
 import BAKE from '../wgsl/bake.wgsl';
@@ -26,11 +26,15 @@ const SUN_REBAKE = 0.3;
 let cpSrcA, cpSrcB, cpDstA = [], cpDstB = [], cpSize;
 // bake counters since load: [full bakes, shade-only re-bakes] (read by the bench report and __halcyon.bakes)
 export const stats = new Float64Array(2);
-export const clip = { bgl: null, bg: null, data: null, height: null, format: '' };
+export const clip = { bgl: null, bg: null, data: null, height: null, format: '',
+  // baked macro material per level (terrain.wgsl fsMatBake; the pipeline and its bind groups come from fx/terrain.js)
+  matN: 512, matViews: null, pMat: null, matEmpty: null, matBG: [], bakeBuf: null };
+const MAT_FORMATS = ['rgba8unorm', 'rgba16float', 'rgba16float', 'rgba8unorm']; // 32 bytes per sample: the WebGPU default limit
+const matDesc = [];
 // realm map (terrain-art; clip.wgsl realmWeightsMap): skin weights of every realm on 1024^2 texels of 64 m around a
 // centre snapped to 1 km, recomputed (one compute dispatch) when the camera is more than RM_MOVE from it
 const RM_N = 1024, RM_MOVE = 8000;
-let rmap, pRealm, rmBG, rmBuf;
+let rmap, pRealm, rmBG, rmBuf, rmDesc;
 const rmU = new Float32Array(4);
 const rmAt = new Float64Array([1e30, 1e30]);
 
@@ -48,6 +52,15 @@ export function init(ctx) {
   sunSrc = ctx.frame.subarray(FO.sky + 2, FO.sky + 3); // accumulated sun motion (deg, main.js skyTime)
   shade = tex(N, N, 'rgba8unorm', U.RENDER_ATTACHMENT | U.TEXTURE_BINDING, { layers: LEVELS, label: 'clipShade' });
   clip.data = data; clip.height = hgt; clip.format = 'r32float+rgba16float';
+  // baked material: albedo/roughness, detail gradient/f0, emission/grain, wet/flat/snow/thin ice
+  const MN = clip.matN;
+  const mat = MAT_FORMATS.map((f, k) => tex(MN, MN, f, U.RENDER_ATTACHMENT | U.TEXTURE_BINDING, { layers: LEVELS, label: 'clipMat' + k }));
+  clip.matViews = mat.map((t) => t.createView({ dimension: '2d-array' }));
+  for (let i = 0; i < LEVELS; i++) {
+    matDesc[i] = { colorAttachments: mat.map((t) => ({ view: t.createView({ dimension: '2d', baseArrayLayer: i, arrayLayerCount: 1 }),
+      loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } })), timestampWrites: undefined };
+  }
+  clip.matFormats = MAT_FORMATS;
 
   const mod = shader(CLIP + TERRFN + BAKE, 'bake');
   const bl1 = bgl('u', 'bake1'), bl2 = bgl('un', 'bake2');
@@ -60,16 +73,17 @@ export function init(ctx) {
     { view: tmpH.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } },
     { view: tmpA.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } },
     { view: tmpB.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } },
-  ], timestampWrites: tsBegin(TS_BAKE) };
+  ] };
   const tmpHView = tmpH.createView();
   for (let i = 0; i < LEVELS; i++) {
     bakeBuf[i] = buffer(16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'bakeU' + i);
+    clip.bakeBuf = bakeBuf;
     bakeBG[i] = bindGroup(bl1, [bakeBuf[i]]);
     gradBG[i] = bindGroup(bl2, [bakeBuf[i], tmpHView]);
     shadeBG[i] = bindGroup(bl2, [bakeBuf[i], hgt.createView({ dimension: '2d', baseArrayLayer: i, arrayLayerCount: 1 })]);
     gradDesc[i] = { colorAttachments: [
       { view: hgt.createView({ dimension: '2d', baseArrayLayer: i, arrayLayerCount: 1 }), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } },
-      { view: data.createView({ dimension: '2d', baseArrayLayer: i, arrayLayerCount: 1 }), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }], timestampWrites: tsEnd(TS_BAKE) };
+      { view: data.createView({ dimension: '2d', baseArrayLayer: i, arrayLayerCount: 1 }), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }] };
     shadeDesc[i] = { colorAttachments: [{ view: shade.createView({ dimension: '2d', baseArrayLayer: i, arrayLayerCount: 1 }), loadOp: 'clear', storeOp: 'store', clearValue: { r: 1, g: 1, b: 0.5, a: 0.5 } }] };
     cpDstA[i] = { texture: maskA, origin: { x: 0, y: 0, z: i } };
     cpDstB[i] = { texture: maskB, origin: { x: 0, y: 0, z: i } };
@@ -86,6 +100,7 @@ export function init(ctx) {
     { binding: 1, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: 'rgba8unorm', viewDimension: '2d-array' } }] });
   pRealm = d.createComputePipeline({ label: 'realm map', layout: d.createPipelineLayout({ bindGroupLayouts: [ctx.bgl0, rbl] }),
     compute: { module: shader(RMAP, 'realm map'), entryPoint: 'csRealm' } });
+  rmDesc = { label: 'realm map', timestampWrites: tsBoth(TS_RMAP) };
   rmBG = bindGroup(rbl, [rmBuf, rmap.createView({ dimension: '2d-array' })]);
   clip.bgl = bgl('aaasaNSa', 'clip');
   const samp = d.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' });
@@ -105,15 +120,18 @@ function bakeLevel(ctx, enc, i, shadeOnly) {
   if (!shadeOnly) {
   bakeU[0] = cx - 256 * t; bakeU[1] = cz - 256 * t; bakeU[2] = t; bakeU[3] = i;
   G.queue.writeBuffer(bakeBuf[i], 0, bakeU);
+  bakeDesc.timestampWrites = bakeTs();
   let p = enc.beginRenderPass(bakeDesc);
   p.setPipeline(pBake); p.setBindGroup(0, ctx.views[0].bg0); p.setBindGroup(1, bakeBG[i]);
   p.draw(3); p.end();
   enc.copyTextureToTexture(cpSrcA, cpDstA[i], cpSize);
   enc.copyTextureToTexture(cpSrcB, cpDstB[i], cpSize);
+  gradDesc[i].timestampWrites = bakeTs();
   p = enc.beginRenderPass(gradDesc[i]);
   p.setPipeline(pGrad); p.setBindGroup(0, ctx.views[0].bg0); p.setBindGroup(1, gradBG[i]);
   p.draw(3); p.end();
   }
+  shadeDesc[i].timestampWrites = bakeTs();
   const q = enc.beginRenderPass(shadeDesc[i]);
   q.setPipeline(pShade); q.setBindGroup(0, ctx.views[0].bg0); q.setBindGroup(1, shadeBG[i]);
   q.draw(3); q.end();
@@ -123,6 +141,15 @@ function bakeLevel(ctx, enc, i, shadeOnly) {
   have[i * 2] = cx; have[i * 2 + 1] = cz; baked[i] = 1;
   const o = FO.lv + i * 4;
   ctx.frame[o] = cx - 256 * t; ctx.frame[o + 1] = cz - 256 * t; ctx.frame[o + 2] = t; ctx.frame[o + 3] = ctx.frame[FO.time]; // .w: bake time (dbg=22)
+  // the macro material of this level (terrain.wgsl fsMatBake), read through FR.lv[i]: upload that entry first
+  if (clip.pMat) {
+    G.queue.writeBuffer(ctx.frameBuf, o * 4, ctx.frame, o, 4);
+    matDesc[i].timestampWrites = bakeTs();
+    const m = enc.beginRenderPass(matDesc[i]);
+    m.setPipeline(clip.pMat); m.setBindGroup(0, ctx.views[0].bg0); m.setBindGroup(1, clip.bg);
+    m.setBindGroup(2, clip.matEmpty); m.setBindGroup(3, clip.matBG[i]);
+    m.draw(3); m.end();
+  }
 }
 
 // realm map recentre: one compute pass (its encoder is the platform's)
@@ -130,15 +157,21 @@ function bakeRealm(ctx, enc, camX, camZ) {
   rmAt[0] = Math.round(camX / 1024) * 1024; rmAt[1] = Math.round(camZ / 1024) * 1024;
   rmU[0] = rmAt[0]; rmU[1] = rmAt[1];
   G.queue.writeBuffer(rmBuf, 0, rmU);
-  const c = enc.beginComputePass();
+  const c = enc.beginComputePass(rmDesc);
   c.setPipeline(pRealm); c.setBindGroup(0, ctx.views[0].bg0); c.setBindGroup(1, rmBG);
   c.dispatchWorkgroups(RM_N / 8, RM_N / 8); c.end();
   ctx.frame[FO.mc + 11] = rmAt[0]; ctx.frame[FO.mc + 15] = rmAt[1]; // FR.mc[2].w, mc[3].w (clip.wgsl RM_ORIGIN)
 }
 
-// Returns the number of levels baked. `all`: bake every stale level now.
+// Returns the number of levels baked. `all`: bake every stale level now. ran[0]: any clip pass was encoded (full or
+// shade-only), ran[1]: the realm map was rebaked (TS_RMAP); main.js marks them for perf.
+// Timer: all clip passes of a frame are one TS_BAKE span. The first writes the begin and end stamps, every later one
+// the end stamp again (the last write wins), so the span runs from the first bake pass to the last; no extra passes.
+export const ran = new Uint8Array(2);
+function bakeTs() { const first = !ran[0]; ran[0] = 1; return first ? tsBoth(TS_BAKE) : tsEnd(TS_BAKE); }
 export function update(ctx, enc, camX, camZ, all) {
-  if (Math.abs(camX - rmAt[0]) > RM_MOVE || Math.abs(camZ - rmAt[1]) > RM_MOVE) bakeRealm(ctx, enc, camX, camZ);
+  ran[0] = 0; ran[1] = 0;
+  if (Math.abs(camX - rmAt[0]) > RM_MOVE || Math.abs(camZ - rmAt[1]) > RM_MOVE) { bakeRealm(ctx, enc, camX, camZ); ran[1] = 1; }
   let best = -1, bestDrift = 0;
   for (let i = 0; i < LEVELS; i++) {
     const t = T0 * (1 << i), s = SNAP * t;
@@ -183,6 +216,40 @@ export async function readLevel(ctx, i) {
   buf.unmap(); buf.destroy();
   const t = T0 * (1 << i);
   return { data: a, x0: have[i * 2] - 256 * t, z0: have[i * 2 + 1] - 256 * t, t };
+}
+
+// Harness: the realm skin weights the shaders see (clip.wgsl realmWeightsMap, from the baked realm map) at points
+// pts = [x, z, 0, 0, 0, 0, 0, 0, ...] (two vec4 per point); returns per point the weights of realms 0-3 and 4-7.
+const PROBE_RM = `
+@group(2) @binding(0) var<storage, read_write> PR: array<vec4f>;
+@compute @workgroup_size(64) fn cs(@builtin(global_invocation_id) id: vec3u) {
+  if (id.x * 2u >= arrayLength(&PR)) { return; }
+  let r = realmWeightsMap(PR[id.x * 2u].xy);
+  var a = vec4f(0.0); var b = vec4f(0.0);
+  for (var s = 0; s < 4; s++) {
+    let k = r.id[s];
+    if (k >= 0 && k < 4) { a[k] += r.w[s]; }
+    if (k >= 4 && k < 8) { b[k - 4] += r.w[s]; }
+  }
+  PR[id.x * 2u] = a; PR[id.x * 2u + 1u] = b;
+}`;
+export async function probeRealm(ctx, pts) {
+  const d = G.device;
+  const bl = bgl('b', 'probe realm');
+  const pp = computePipeline(shader(CLIP + PROBE_RM, 'realm probe'), [ctx.bgl0, clip.bgl, bl], 'realm probe');
+  const sb = d.createBuffer({ size: pts.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+  const rb = d.createBuffer({ size: pts.byteLength, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+  d.queue.writeBuffer(sb, 0, pts);
+  const enc = d.createCommandEncoder();
+  const c = enc.beginComputePass();
+  c.setPipeline(pp); c.setBindGroup(0, ctx.views[0].bg0); c.setBindGroup(1, clip.bg); c.setBindGroup(2, bindGroup(bl, [sb]));
+  c.dispatchWorkgroups(Math.ceil(pts.length / 8 / 64)); c.end();
+  enc.copyBufferToBuffer(sb, 0, rb, 0, pts.byteLength);
+  d.queue.submit([enc.finish()]);
+  await rb.mapAsync(GPUMapMode.READ);
+  const out = new Float32Array(rb.getMappedRange().slice(0));
+  rb.unmap(); rb.destroy(); sb.destroy();
+  return { w: out, at: [rmAt[0], rmAt[1]] };
 }
 
 // Harness: the heights the shaders see. Runs clip.wgsl clipH (the gather + bilinear every consumer uses) at points

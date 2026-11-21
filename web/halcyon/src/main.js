@@ -35,12 +35,13 @@
 // Debug: dbg=1 no water, 2 terrain albedo, 3 sun shadow, 4 terrain normal, 5 water reflection only, 6 water
 // refraction only, 7 water normal, 8 no fog, 9 no clouds. staged=1 (+verbose=1) times each pass of a static shot separately.
 import { G, H, fail, initDevice, Unsupported, bgl, bindGroup, tex, buffer, FRAME_FLOATS, VIEW_FLOATS, FO, VO, pipelinesReady,
-  setTimerBase, tsBoth, TS_BAKE, TS_OPAQUE, TS_CLOUDS, TS_COMPOSITE, TS_FX, TS_BLOOM, TS_FINAL, TS_LIFE, TS_WEATHER,
+  setTimerBase, tsBoth, TS_TSHADE, TS_ATMO, TS_RMAP, TS_FPREP, TS_BAKE, TS_OPAQUE, TS_CLOUDS, TS_COMPOSITE, TS_FX, TS_BLOOM, TS_FINAL, TS_LIFE, TS_WEATHER,
   TS_FLORA, TS_FAUNA } from './gpu.js';
 import { TABLE, ROWF, F, realmCentre, CURATED, REALM_NAMES } from './realms.js';
 import { skyTick, SKY_IN } from './realms.js';
-import { wxTick, WX_IN, WX_CAM, WX_BOLT } from './weather.js'; // weather at the camera (sky programmer) // the sky turns (sky programmer)
+import { wxTick, WX_IN, WX_CAM, WX_BOLT, WX_PIN } from './weather.js'; // weather at the camera (sky programmer) // the sky turns (sky programmer)
 import { heightAt, heightBatch, blendAtA, W_IN, W_NEAR, setFootprint } from './world.js';
+import { realmWeightsA, W_ID, W_W } from './realms.js'; // heightcheck: CPU realm weights vs the GPU realm map
 import { CLK, C_DT, C_TIME, C_FRAME_MS, C_PREV } from './clock.js';
 import { quatFromYawPitchRoll, quatRotate, mat4ViewRot, mat4PerspRevZ, mat4Mul, mat4Invert } from './math.js';
 import * as clipmap from './fx/clipmap.js';
@@ -98,7 +99,7 @@ P.xrenter = P.xrmock > 0 && (P.shot || P.alloc || num('xrenter', 0) > 0);
 // ---------- ablation (?off=) ----------
 // bit i of Frame.flags = OFF_NAMES[i]; the same bits are named constants OFF_* in wgsl/common.wgsl
 export const OFF_NAMES = ['flora', 'fauna', 'particles', 'tshadow', 'tdetail', 'tao', 'fshadow', 'clouds', 'cloudshadow',
-  'water', 'rings', 'drone', 'msaa', 'tmat', 'trealm', 'tflat', 'tgeo', 'tvert', 'sky', 'tgrid', 'veil', 'atmo', 'rain']; // tmat..tgrid: terrain-art's bits
+  'water', 'rings', 'drone', 'msaa', 'tmat', 'trealm', 'tflat', 'tgeo', 'tvert', 'sky', 'tgrid', 'veil', 'atmo', 'rain', 'tlive']; // tmat..tgrid, tlive: terrain-art's bits
 const OFF_ALL = (1 << 13) - 1; // off=all: the original 13 costs (the terrain diagnostic bits are not costs)
 export const OFF_FLORA = 1, OFF_FAUNA = 2, OFF_PARTICLES = 4, OFF_TSHADOW = 8, OFF_TDETAIL = 16, OFF_TAO = 32,
   OFF_FSHADOW = 64, OFF_CLOUDS = 128, OFF_CLOUDSHADOW = 256, OFF_WATER = 512, OFF_RINGS = 1024, OFF_DRONE = 2048,
@@ -115,7 +116,10 @@ function parseOff(list) {
   }
   return b;
 }
-const OFF = Q.has('off') ? parseOff(Q.get('off')) : 0;
+// the baked terrain material (terrain.wgsl fsMatBake) is opt-in (tbake=1) until it matches the live path at 1:1:
+// by default every pixel takes the live material path and the material bake does not run (off=tlive)
+const OFF_TLIVE_BIT = 1 << OFF_NAMES.indexOf('tlive');
+const OFF = (Q.has('off') ? parseOff(Q.get('off')) : 0) | (Q.get('tbake') === '1' ? 0 : OFF_TLIVE_BIT);
 H.off = OFF_NAMES.filter((n, i) => OFF & (1 << i));
 const SCRIPTED = P.script !== '';
 const CAPTURE = P.shot && SCRIPTED;         // tools/play.mjs drives frames through __halcyon.capture(t)
@@ -338,6 +342,7 @@ async function init() {
     });
   }
   perf.initTimer();
+  if (P.bench) perf.guardInstall(); // every pass of a frame must be timed (perf.js pass guard)
   // on in play and in bench unless dynres=0 (or a fixed scale=); off for shots and the alloc gate, which need fixed targets
   perf.dyn.enabled = P.scale > 0 ? false : P.dynres >= 0 ? P.dynres > 0 : !P.shot && !P.alloc;
   perf.dyn.target = P.target;
@@ -511,6 +516,8 @@ const SKY_PERIOD = 900;
 let realmBufG = null;
 const CAMP = new Float64Array(3); // the camera a frame ago
 const WXO = new Float64Array(2); // rain=, wet= URL overrides (-1: none)
+// wx=dx,dz[,r]: pin a squall centred dx, dz metres from the first frame's camera (deterministic captures)
+const WXQ = Q.has('wx') ? Q.get('wx').split(',').map(parseFloat) : null;
 const SKYM = new Float64Array(4); // previous s, accumulated motion (deg), time of day: typed, never boxed
 const SKY_TOD = Math.max(P.tod, -1); // a small int or a constant: read once
 function skyTime(fr) {
@@ -526,7 +533,9 @@ function prepareFrame() {
   skyTime(fr);
   W_IN[0] = cam[0]; W_IN[1] = cam[2]; blendAtA(rowTmp);
   // weather at the camera (realm weights from blendAtA) and the camera's velocity for the rain streaks
+  if (frameNo === 0 && WXQ) { WX_PIN[0] = cam[0] + (WXQ[0] || 0); WX_PIN[1] = cam[2] + (WXQ[1] || 0); WX_PIN[2] = WXQ[2] > 0 ? WXQ[2] : 4000; }
   WX_IN[0] = cam[0]; WX_IN[1] = cam[2]; WX_IN[2] = CLK[C_TIME]; wxTick();
+  for (let i = 0; i < 4; i++) fr[FO.wxp + i] = WX_PIN[i];
   SKYM[3] = 1 / Math.max(CLK[C_DT], 1e-3);
   for (let i = 0; i < 3; i++) { fr[FO.wx + i] = frameNo === 0 ? 0 : Math.min(Math.max((cam[i] - CAMP[i]) * SKYM[3], -60), 60); CAMP[i] = cam[i]; }
   fr[FO.wx + 3] = WX_CAM[2]; fr[FO.sky + 3] = WX_CAM[1];
@@ -560,9 +569,13 @@ function renderFrame(bakeAll) {
   TSLOT[0] = slot;
   setTimerBase(slot, 0);
   const enc = G.device.createCommandEncoder();
-  if (clipmap.update(ctx, enc, cam[0], cam[2], bakeAll) > 0) perf.markRan(slot, TS_BAKE);
+  clipmap.update(ctx, enc, cam[0], cam[2], bakeAll);
+  if (clipmap.ran[0]) perf.markRan(slot, TS_BAKE);
+  if (clipmap.ran[1]) perf.markRan(slot, TS_RMAP);
   terrain.setup(ctx, cam[0], cam[2]);
   atmo.bake(enc, cam); // + the cloud-shadow map window, in ctx.frame
+  perf.markRan(slot, TS_ATMO);
+  flora.prepRan[0] = 0;
   G.queue.writeBuffer(ctx.frameBuf, 0, ctx.frame);
   G.queue.writeBuffer(realmBufG, 0, TABLE); // the suns moved (skyTime)
   // VR: each view renders into its own sub-image (a texture-array layer, or one half of a side-by-side texture)
@@ -577,11 +590,12 @@ function renderFrame(bakeAll) {
   perf.markRan(slot, TS_OPAQUE); perf.markRan(slot, TS_COMPOSITE); perf.markRan(slot, TS_FX);
   if (splitDesc) { perf.markRan(slot, TS_FLORA); perf.markRan(slot, TS_FAUNA); }
   perf.markRan(slot, TS_BLOOM); perf.markRan(slot, TS_FINAL);
-  perf.markRan(slot, TS_CLOUDS);
+  perf.markRan(slot, TS_CLOUDS); perf.markRan(slot, TS_TSHADE);
+  if (flora.prepRan[0]) perf.markRan(slot, TS_FPREP);
   perf.frameEnd(enc, slot);
   CMD[0] = enc.finish();
   G.queue.submit(CMD);
-  perf.afterSubmit();
+  perf.afterSubmit(); clouds.afterSubmit(); // clouds: march-cost readback (steps=1 only)
   if (MAX_INFLIGHT > 0) { FL.n++; G.queue.onSubmittedWorkDone().then(FL.done, FL.done); }
   frameNo++;
   H.frame = frameNo;
@@ -848,7 +862,7 @@ async function finishBench() {
     resolution: P.benchFixed ? 'fixed 1920x1080 canvas (bench default), internal = 1920x1080 x dynres scale' : 'w=' + P.w + ' h=' + P.h + ' from the URL',
     off: H.off, offBits: OFF, split: !!splitDesc, msaa: ctx.msaa, gpu: G.paths, canvasFormat: G.canvasFormat, hdr: G.hdr,
     quality: ['low', 'normal', 'high'][P.quality], stereo: nViews === 2, adapter: adapterInfo(), stride: P.stride,
-    inflight: MAX_INFLIGHT, present: !OFFSCREEN, bakes: bakeReport(),
+    inflight: MAX_INFLIGHT, present: !OFFSCREEN, bakes: bakeReport(), cloudSteps: clouds.stepReport(),
     route: 'Home Fjords rings, boost transit, Stone Forest rings, Lumen Deep rings, FPV (fixed dt 1/' + P.fps + ')',
   });
   H.bench = r;
@@ -974,10 +988,55 @@ async function heightCheck() {
     }
   }
   const sampled = { n: levels.length * per, maxErr: sMax, meanErr: sSum / (levels.length * per), worst: sWorst };
-  H.heightcheck = { n, maxErr, meanErr: sum / n, worst, sampled, f32filter: G.f32filter, clipFormat: clipmap.clip.format,
-    pass: maxErr < 0.15 && sMax < 0.15 };
+  const realm = await realmCheck();
+  H.heightcheck = { n, maxErr, meanErr: sum / n, worst, sampled, realm, f32filter: G.f32filter, clipFormat: clipmap.clip.format,
+    pass: maxErr < 0.15 && sMax < 0.15 && realm.pass };
+  if (!realm.pass) fail('heightcheck failed: GPU realm map and CPU realmWeightsA disagree: ' + JSON.stringify(realm.worst));
   if (maxErr >= 0.15) fail('heightcheck failed: max error ' + maxErr.toFixed(3) + ' m at ' + JSON.stringify(worst));
   if (sMax >= 0.15) fail('heightcheck failed: sampled height off by ' + sMax.toFixed(3) + ' m at ' + JSON.stringify(sWorst));
+}
+
+// The GPU skin weights (clip.wgsl realmWeightsMap: the 64 m realm map, rgba8, bilinear) against realms.js
+// realmWeightsA (what heights, fauna homes and spawns use): 500 points around each curated realm centre (inside 4 km).
+// diff: the largest weight difference of any realm at the point; texel: the same, but against the best CPU point within
+// one map texel (64 m), i.e. agreement to within a texel. Pass: texel <= 0.05 and the dominant realm agrees wherever
+// the CPU's dominant weight is >= 0.6.
+async function realmCheck() {
+  const ids = [], N = 500;
+  for (let k = 0; k < CURATED.length; k += 3) if (ids.indexOf(CURATED[k + 2]) < 0) ids.push(CURATED[k + 2]);
+  const pts = new Float32Array(ids.length * N * 8);
+  for (let r = 0; r < ids.length; r++) {
+    const c = realmCentre(ids[r], [0, 0]);
+    for (let k = 0; k < N; k++) {
+      const h1 = Math.imul(k + 1, 0x9e3779b1) ^ Math.imul(r + 11, 0x85ebca6b);
+      const a = ((h1 >>> 8) % 6283) / 1000, rad = 4000 * Math.sqrt(((Math.imul(h1, 0x27d4eb2f) >>> 8) % 10000) / 10000);
+      const o = (r * N + k) * 8;
+      pts[o] = c[0] + rad * Math.cos(a); pts[o + 1] = c[1] + rad * Math.sin(a);
+    }
+  }
+  const g = await clipmap.probeRealm(ctx, pts);
+  const cpu = new Float64Array(8);
+  const cpuAt = (x, z) => { W_IN[0] = x; W_IN[1] = z; realmWeightsA(); cpu.fill(0); for (let s = 0; s < 4; s++) if (W_ID[s] >= 0) cpu[W_ID[s]] += W_W[s]; };
+  const dif = (o) => { let m = 0; for (let i = 0; i < 8; i++) m = Math.max(m, Math.abs(cpu[i] - g.w[o + i])); return m; };
+  let maxD = 0, maxT = 0, worst = null, flips = 0, perRealm = {};
+  for (let r = 0; r < ids.length; r++) {
+    let rMax = 0;
+    for (let k = 0; k < N; k++) {
+      const o = (r * N + k) * 8, x = pts[o], z = pts[o + 1];
+      cpuAt(x, z);
+      const d0 = dif(o);
+      let cb = 0, cw = 0, gb = 0, gw = 0;
+      for (let i = 0; i < 8; i++) { if (cpu[i] > cw) { cw = cpu[i]; cb = i; } if (g.w[o + i] > gw) { gw = g.w[o + i]; gb = i; } }
+      if (cw >= 0.6 && cb !== gb) flips++;
+      let dt = d0;
+      for (let j = -1; j <= 1 && dt > 0; j++) for (let i = -1; i <= 1; i++) { cpuAt(x + i * 64, z + j * 64); dt = Math.min(dt, dif(o)); }
+      if (d0 > maxD) maxD = d0;
+      if (dt > maxT) { maxT = dt; worst = { realm: ids[r], x, z, diff: d0, texel: dt }; }
+      rMax = Math.max(rMax, dt);
+    }
+    perRealm[REALM_NAMES[ids[r]] || ids[r]] = Math.round(rMax * 1000) / 1000;
+  }
+  return { n: ids.length * N, maxDiff: maxD, maxTexel: maxT, dominantFlips: flips, perRealm, worst, mapAt: g.at, pass: maxT <= 0.05 && flips === 0 };
 }
 
 // verbose shot mode: run each stage of view 0 as its own submit and log its time (finds slow or crashing passes)

@@ -13,6 +13,8 @@ struct Frame {
   sky: vec4f,    // x: time of day 0..1, y: star-field turn (rad), z: accumulated sun motion (deg, for re-bakes),
                  // w: visible precipitation at the camera 0..1 (weather.js)
   wx: vec4f,     // xyz: camera velocity (m/s), w: precipitation kind at the camera (0 rain, 1 virga, 2 snow, 3 spores)
+  wxp: vec4f,    // a pinned squall (URL wx=dx,dz[,r]; captures): centre x, z, radius (m, 0 = none);
+                 // w: 1 when any squall lies within 16 km of the camera (weather.js; 0 skips all rain work)
 }
 
 // Ablation bits (URL ?off=flora,fauna,...; main.js OFF_NAMES). A set bit switches that cost off: draws are skipped
@@ -41,6 +43,7 @@ const OFF_TGRID: u32 = 524288u;   // half-density terrain grid (112 quads per le
 const OFF_VEIL: u32 = 1048576u;     // the Drift veil in the cloud pass (clouds.wgsl veilMarch)
 const OFF_RAIN: u32 = 4194304u;    // rain shafts, lightning and the rain around the camera (clouds, composite)
 const OFF_ATMO: u32 = 2097152u;    // the per-frame atmosphere LUT bake: baked once, then frozen (fx/atmo.js)
+const OFF_TLIVE: u32 = 8388608u;   // terrain material: the live path everywhere (no baked macro material; terrain-art)
 fn isOff(b: u32) -> bool { return (u32(FR.flags.x) & b) != 0u; }
 struct View {
   vp: mat4x4f,   // projection * view rotation (camera-relative world)
@@ -273,6 +276,7 @@ struct CloudU {
   camId: vec4f, // realm ids blended at the camera (-1 = none)
   camW: vec4f,  // their weights
   bolt: vec4f,  // lightning: x, z, intensity (0 none), seconds into the flash (weather.js)
+  dbg: vec4f,   // x: 1 = count march steps into the stats buffer (URL steps=1, fx/clouds.js)
 }
 
 // Sun transmittance through the clouds at world point p: one fetch of the baked cloud-shadow map (fx/atmo.js) at
@@ -354,23 +358,34 @@ fn keyLight(s0: vec4f, s1: vec4f, s8: vec4f, drift: f32) -> KL {
 // One deterministic field drifting with the wind: wxCell > 0.28 is a rain squall, < -0.22 clear sky, between them
 // building cumulus; fog banks have their own slower field. What falls depends on the realm (wxLiquid: rain on the
 // ground; wxPrecip: what you see fall; wxKind: 0 rain, 1 virga, 2 snow, 3 spores).
-// WX_OFS places the field so every realm's curated views are fair at t = 20 s (the captures), squalls nearby
-const WX_OFS: vec2f = vec2f(-12644.0, 110304.0);
+// WX_OFS places the field so no realm centre has a squall within 22 km at t = 20 s: the curated views and captures
+// are fair weather, weather is an event that drifts in (tools: scratchpad search, mirrored in weather.js)
+const WX_OFS: vec2f = vec2f(1448825.0, -259896.0);
+// Squalls are rare and large: cells of 3-8 km where the broad octave peaks; a pinned squall (FR.wxp) is a dome of
+// the field around its centre, full rain inside ~0.65 r, gone by ~0.8 r
 fn wxCell(xz: vec2f) -> f32 {
   let q = xz - CLOUD_WIND * FR.time.x + WX_OFS;
-  return vn(q * (1.0 / 6500.0), 720u) * 0.65 + vn(q * (1.0 / 2300.0), 721u) * 0.35;
+  var n = vn(q * (1.0 / 16000.0), 720u) * 0.72 + vn(q * (1.0 / 5200.0), 721u) * 0.28;
+  if (FR.wxp.z > 0.0) {
+    let e = length(xz - FR.wxp.xy) / FR.wxp.z;
+    n = max(n, 1.0 - 0.9 * e * e);
+  }
+  return n;
 }
-fn wxStorm(n: f32) -> f32 { return sstep(0.28, 0.58, n); }
+fn wxStorm(n: f32) -> f32 { return sstep(0.40, 0.62, n); }
 fn wxClear(n: f32) -> f32 { return sstep(0.22, 0.52, -n); }
 fn wxFogBank(xz: vec2f) -> f32 {
   let q = xz - CLOUD_WIND * 0.5 * FR.time.x;
-  return sstep(0.3, 0.62, vn(q * (1.0 / 5200.0) + vec2f(40.0, -7.0), 730u));
+  // rare (the top of the field) and placed so no realm centre has one within 10 km at t = 20: fair by default
+  if (isOff(OFF_RAIN)) { return 0.0; }
+  return sstep(0.72, 0.92, vn(q * (1.0 / 5200.0) + vec2f(427.0, 303.0), 730u));
 }
 fn wxLiquid(id: i32) -> f32 { return select(select(select(0.0, 0.85, id == 3), 0.55, id == 2), 1.0, id == 0); }
 fn wxPrecip(id: i32) -> f32 { return select(select(select(0.7, 0.85, id == 3 || id == 4), 0.55, id == 2), 1.0, id == 0); }
 fn wxKind(id: i32) -> i32 { return select(select(select(0, 3, id == 5), 2, id == 4), 1, id == 1); }
 // Rain intensity 0..1 falling on the ground at xz (terrain-art: wet ground; 0 where it snows or nothing falls)
 fn rainAtW(xz: vec2f, rw: RWt) -> f32 {
+  if (FR.wxp.w == 0.0 || isOff(OFF_RAIN)) { return 0.0; } // no squall within 16 km of the camera
   let s = wxStorm(wxCell(xz));
   if (s <= 0.0) { return 0.0; }
   var a = 0.0;
@@ -378,6 +393,7 @@ fn rainAtW(xz: vec2f, rw: RWt) -> f32 {
   return s * a;
 }
 fn rainAt(xz: vec2f) -> f32 {
+  if (FR.wxp.w == 0.0) { return 0.0; }
   if (wxStorm(wxCell(xz)) <= 0.0) { return 0.0; }
   return rainAtW(xz, realmWeights(xz));
 }

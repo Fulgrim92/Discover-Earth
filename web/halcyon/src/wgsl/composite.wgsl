@@ -317,7 +317,10 @@ struct VO { @builtin(position) pos: vec4f }
     }
   }
   // fog over the visible distance (sky gets it toward the horizon only)
+  // under a squall the sky light is mostly gone too (the sun is in the cloud-shadow map): flat, dim light
+  if (tEnd < 1e8 && !isOff(OFF_RAIN) && FR.wxp.w > 0.0) { let Pw = ro + d * tEnd; col *= 1.0 - 0.5 * wxStorm(wxCell(Pw.xz)); }
   if ((!isSky || tEnd < 1e8) && VW.cam.w != 8.0) { col = applyFog(col, ro, d, tEnd); }
+  else if (VW.cam.w != 8.0) { col = rainFog(col, ro, d, 1e9); }
   // under the cloud sea: the sky light is mostly gone (sun is handled by cloudShadow in the terrain)
   let c1 = rowv(C1);
   if (c1.w > 0.01 && !isSky) {

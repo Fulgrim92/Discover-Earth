@@ -15,12 +15,13 @@ fn sat(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }
   var cov = cloudCov(f, c0.x);
   // weather cells (common.wgsl wxCell): clear sky thins the realm's cover, a squall closes it and towers up
   let wn = wxCell(xz);
-  let wst = wxStorm(wn);
+  let wst = select(wxStorm(wn), 0.0, isOff(OFF_RAIN));
   cov *= 1.0 - 0.75 * wxClear(wn);
-  cov = max(cov, wst * 0.92 * sstep(0.1, 0.5, cloudField(xz * 1.7 + 300.0, 0.0)));
   // cumulus grow taller the further the field is above the threshold: separate towers instead of one slab
   let tower = sat(0.2 + 2.2 * (f - (1.0 - c0.x)));
-  let top = max(c0.y + (c0.z - c0.y) * mix(1.0, tower, c3.y), c0.y + wst * 2600.0);
+  // a squall towers (cumulonimbus) from a lower base
+  let top = max(c0.y + (c0.z - c0.y) * mix(1.0, tower, c3.y), c0.y + wst * 5200.0);
+  let base = c0.y - wst * 250.0;
   // orographic lift: cloud gathers on the high ground (the Fjords' low cloud snags on the peaks)
   let h = heightAny(xz);
   cov = max(cov, sstep(c0.y + 60.0, c0.y + 420.0, h) * sstep(0.3, 0.62, cloudField(xz * 1.9 + 900.0, 1.0)) * sstep(0.05, 0.35, c0.x));
@@ -36,10 +37,15 @@ fn sat(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }
   let c5 = FR.row[S5];
   let moonR = sstep(0.5, 0.9, c5.w) * (1.0 - sstep(0.01, 0.2, c5.z));
   cov *= mix(mix(0.3, 0.0, moonR), 1.0, own);
-  textureStore(outWx, id.xy, vec4f(cov, c0.y, max(top, c0.y + 60.0), c0.w));
+  // squalls close the sky in any realm (also on the horizon), denser so the base is dark
+  // the cell's edge is eroded by the cloud field (towers and gaps), its core is closed
+  let fe = f; // the realm field already evaluated here (a second cloudField per texel cost 0.3 ms)
+  cov = max(cov, sstep(0.05, 0.35, wst * 1.25 - 0.75 * (1.0 - fe)) * mix(0.7, 1.0, fe));
+  textureStore(outWx, id.xy, vec4f(cov, base, max(top, base + 60.0), c0.w * (1.0 + 1.6 * wst)));
   // the sea's own top and density are normalised by its weight, so the layer does not sag at realm borders
   let sw = max(c1.w, 1e-3);
   let sea = c1.w * seaCov(xz) * (c2.z / sw);
-  textureStore(outWy, id.xy, vec4f(c3.y, c3.z, sea, select(0.0, c2.y / sw, c1.w > 1e-3)));
+  // a squall is cumulonimbus in any realm: cumulus type (a stratus deck's flat lens stacked into pancakes)
+  textureStore(outWy, id.xy, vec4f(max(c3.y, wst), c3.z, sea, select(0.0, c2.y / sw, c1.w > 1e-3)));
 }
 

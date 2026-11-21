@@ -70,13 +70,18 @@ export async function initDevice(opts) {
 // at init (undefined when the feature is missing, which WebGPU treats as absent). The objects are mutated in place
 // by setTimerBase() before each view, so no descriptor is rebuilt per frame. perf.js resolves and reads them back.
 // TS_FLORA / TS_FAUNA only run with ?split=1, which splits the opaque pass into terrain (+ sky, drone) / flora / fauna.
+// Every pass encoded between perf.frameBegin and perf.frameEnd must carry a timer (its own pair, or lie between a
+// begin-only and an end-only pass of the same slot); ?bench=1 checks this and fails loudly (perf.js pass guard).
+// gpuFrameMs (dynres, the bench headline) needs no queries of its own: it is the latest end stamp minus the earliest
+// begin stamp of the frame's passes (the first pass's begin is the frame's begin, the final pass's end its end).
 export const TS_BAKE = 0, TS_OPAQUE = 1, TS_CLOUDS = 2, TS_COMPOSITE = 3, TS_FX = 4, TS_BLOOM = 5, TS_FINAL = 6, TS_LIFE = 7,
-  TS_WEATHER = 8, TS_FLORA = 9, TS_FAUNA = 10, TS_TSHADE = 11, TS_N = 12;
-export const TS_PASSES = ['bake', 'opaque', 'clouds', 'composite', 'fx', 'bloom', 'final', 'life', 'weather', 'flora', 'fauna', 'tshade'];
+  TS_WEATHER = 8, TS_FLORA = 9, TS_FAUNA = 10, TS_TSHADE = 11, TS_ATMO = 12, TS_RMAP = 13, TS_FPREP = 14, TS_N = 15;
+export const TS_PASSES = ['bake', 'opaque', 'clouds', 'composite', 'fx', 'bloom', 'final', 'life', 'weather', 'flora', 'fauna', 'tshade',
+  'atmo', 'realmmap', 'floraprep'];
 // passes encoded once per frame (in the first view's timer block), not once per view
-export const TS_ONCE = (1 << TS_BAKE) | (1 << TS_WEATHER);
+export const TS_ONCE = (1 << TS_BAKE) | (1 << TS_WEATHER) | (1 << TS_ATMO) | (1 << TS_RMAP) | (1 << TS_FPREP); // flora's prepass: first view only
 export const TS_SLOTS = 32;                 // frames in the query ring
-export const TS_PER_FRAME = 64;             // >= passes x (begin, end) x 2 views = 44, in 32-query (256-byte) steps: resolve offsets must be 256-byte aligned
+export const TS_PER_FRAME = 64;             // >= passes x (begin, end) x 2 views = 60, in 32-query (256-byte) steps: resolve offsets must be 256-byte aligned
 export const TS = { set: null, both: [], begin: [], end: [] };
 
 function initTimestamps() {
@@ -102,8 +107,8 @@ export function setTimerBase(slot, view) {
 }
 
 // Uniform block sizes (bytes). Offsets in floats, matching common.wgsl Frame/View.
-export const FRAME_FLOATS = 4 * 3 + 4 * 12 * 2 + ROW * 4 + 4 + 4 + 4;
-export const FO = { time: 0, sun: 4, misc: 8, lv: 12, mc: 12 + 48, row: 12 + 96, flags: 12 + 96 + ROW * 4, sky: 12 + 96 + ROW * 4 + 4, wx: 12 + 96 + ROW * 4 + 8 };
+export const FRAME_FLOATS = 4 * 3 + 4 * 12 * 2 + ROW * 4 + 4 + 4 + 4 + 4;
+export const FO = { time: 0, sun: 4, misc: 8, lv: 12, mc: 12 + 48, row: 12 + 96, flags: 12 + 96 + ROW * 4, sky: 12 + 96 + ROW * 4 + 4, wx: 12 + 96 + ROW * 4 + 8, wxp: 12 + 96 + ROW * 4 + 12 };
 export const VIEW_FLOATS = 16 * 2 + 4 * 8;
 export const VO = { vp: 0, ivp: 16, cam: 32, size: 36, fwd: 40, ofs: 44, right: 48, up: 52, skew: 56, anc: 60 };
 
@@ -133,6 +138,7 @@ export function bgl(spec, label) {
     if (c === 'u') e.buffer = { type: 'uniform' };
     else if (c === 'r') e.buffer = { type: 'read-only-storage' };
     else if (c === 'b') e.buffer = { type: 'storage' };
+    else if (c === 'B') e.buffer = { type: 'storage' }; // writable in fragment shaders too (instrumentation)
     else if (c === 'f') e.texture = { sampleType: 'float', viewDimension: '2d' };
     else if (c === 'a') e.texture = { sampleType: 'float', viewDimension: '2d-array' };
     else if (c === 'n') e.texture = { sampleType: 'unfilterable-float', viewDimension: '2d' };
@@ -142,6 +148,7 @@ export function bgl(spec, label) {
     else if (c === 'S') e.sampler = { type: 'non-filtering' };
     else if (c === 'w') e.storageTexture = { access: 'write-only', format: 'rgba8unorm', viewDimension: '3d' };
     if (c === 'w' || c === 'b') e.visibility = GPUShaderStage.COMPUTE;
+    if (c === 'B') e.visibility = GPUShaderStage.FRAGMENT;
     entries.push(e);
   }
   return G.device.createBindGroupLayout({ entries, label });

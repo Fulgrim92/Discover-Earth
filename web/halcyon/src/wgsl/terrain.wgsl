@@ -196,6 +196,13 @@ fn danxia(t: f32) -> vec3f {
   if (i >= 4.0) { c0 = c1; c1 = vec3f(0.55, 0.49, 0.38); }
   return mix(c0, c1, sstep(0.0, 1.0, f));
 }
+// the strata tone over a height span fwh (two taps; a cycle-averaged tone once beds are sub-pixel)
+fn strataFar(s: f32) -> vec3f { return danxia(0.4 + 0.42 * (vn(vec2f(floor(s / 6.5) * 0.23, 3.7), 312u))); }
+fn strataSpan(s: f32, fwh: f32) -> vec3f {
+  let sp = min(fwh, 2.0) * 0.35;
+  let sc = 0.5 * (strataAt(s - sp) + strataAt(s + sp));
+  return mix(sc, strataFar(s) * 1.05, sstep(1.2, 4.0, fwh));
+}
 fn strataAt(s: f32) -> vec3f {
   let x = s * (1.0 / 6.5);
   let k = floor(x); let fr = x - k;
@@ -287,8 +294,86 @@ fn unproject(fragXY: vec2f, z: f32) -> vec3f {
   if (n0 == 0.0) { return vec4f(0.0); }
   let inv = 1.0 / f32(TNS);
   var c = terrainShade(p0, fpos.xy, fwh).c.rgb * (n0 * inv);
-  if (n1 > 0.0) { c += terrainShade(unproject(fpos.xy, z1), fpos.xy, fwh).c.rgb * (n1 * inv); }
+  // a second terrain surface in the pixel (a silhouette over farther ground): baked path only, so no pixel pays
+  // for the live material twice
+  if (n1 > 0.0) { gForceBake = true; c += terrainShade(unproject(fpos.xy, z1), fpos.xy, fwh).c.rgb * (n1 * inv); }
   return vec4f(c, 0.0);
+}
+
+// ---- baked macro material (terrain-art) ----
+// Each clip level bakes its material (fsMatBake, run by clipmap.js bakeLevel after the level's shade pass): the full
+// material function below, band-limited to the baked texel, without the animated and view-dependent parts.
+// MATN: baked material texels per level side (fx/terrain.js sets it; 512 = the clip grid).
+const MATN: f32 = 512.0;
+struct MatS { a: vec4f, b: vec4f, c: vec4f, d: vec4f }
+var<private> gBakeL: i32 = -1;       // >= 0: baking this level's material (terrainShade returns after the material)
+var<private> gForceBake: bool = false; // the second surface of a silhouette pixel: baked path only (a cost cap)
+var<private> gMat: MatS;
+var<private> gPath: u32 = 0u;          // 0 baked, 1 live (dbg=23)
+// (replaced by a stub in the bake module, which writes these textures; the markers survive minification)
+const MAT_FETCH_BEGIN: i32 = 0;
+@group(2) @binding(2) var tMatA: texture_2d_array<f32>; // sqrt(albedo), roughness
+@group(2) @binding(3) var tMatB: texture_2d_array<f32>; // detail gradient, f0
+@group(2) @binding(4) var tMatC: texture_2d_array<f32>; // emission, grain (max of rock and scree cover)
+@group(2) @binding(5) var tMatD: texture_2d_array<f32>; // wetness, flat, snow on ice, thin ice
+fn matAt(l: u32, xz: vec2f) -> MatS {
+  let uv = clipUV(l, xz);
+  var m: MatS;
+  m.a = textureSampleLevel(tMatA, clipSm, uv, l, 0.0);
+  m.b = textureSampleLevel(tMatB, clipSm, uv, l, 0.0);
+  m.c = textureSampleLevel(tMatC, clipSm, uv, l, 0.0);
+  m.d = textureSampleLevel(tMatD, clipSm, uv, l, 0.0);
+  return m;
+}
+fn matFetch(l: u32, e: f32, xz: vec2f) -> MatS {
+  var m = matAt(l, xz);
+  if (e > 0.0 && l + 1u < nLevels()) {
+    let n = matAt(l + 1u, xz);
+    m.a = mix(m.a, n.a, e); m.b = mix(m.b, n.b, e); m.c = mix(m.c, n.c, e); m.d = mix(m.d, n.d, e);
+  }
+  return m;
+}
+const MAT_FETCH_END: i32 = 0;
+// One detail set under the baked texel mt (two rotated octaves at 1.5 mt and 0.6 mt, each faded out under a few
+// pixels): albedo tone (returned, multiplicative) and a detail gradient added to dg, scaled by the cover: rock and
+// scree rough and contrasty, turf soft. Costs 2 value-noise evaluations at most.
+fn matDetail(p: vec3f, fp: f32, mt: f32, grain: f32, dg: ptr<function, vec3f>) -> f32 {
+  let l1 = mt * 1.5; let l2 = mt * 0.6;
+  let w1 = bl(l1, fp);
+  if (w1 <= 0.0) { return 0.0; }
+  let ampA = mix(0.14, 0.26, grain); // albedo contrast
+  let ampN = mix(0.03, 0.12, grain); // detail slope
+  let n1 = vnoised(rotq(p.xz / l1), 611u);
+  var a = n1.x * w1;
+  var g = rotT(n1.yz) * (w1 / l1);
+  let w2 = bl(l2, fp);
+  if (w2 > 0.0) {
+    let n2 = vnoised(rotq(rotq(p.xz / l2) + 7.1), 612u);
+    a += 0.6 * n2.x * w2;
+    g += rotT(rotT(n2.yz)) * (0.6 * w2 / l2);
+  }
+  *dg += vec3f(g.x, 0.0, g.y) * ampN * l1;
+  return a * ampA;
+}
+// Lumen Deep's animated and view-dependent light: veins pulsing out of the sinkholes, the crystals' inner glow,
+// twinkling glints (live on both paths)
+fn lumenLive(p: vec3f, fp: f32, tm: f32, mA: vec4f, mB: vec4f, M5v: vec4f, M6v: vec4f, gn: vec3f, V: vec3f) -> vec3f {
+  let rho = mA.x * 6.0;
+  let vein = mA.w;
+  let pulse = 0.25 + 0.75 * pow(0.5 + 0.5 * sin(rho * 3.2 - tm * 0.9), 5.0);
+  let core = sstep(0.55, 0.95, vein);
+  let vcol = mix(M6v.rgb, vec3f(0.75, 1.0, 0.95), core * 0.6);
+  var em = vcol * (vein * vein * 0.7 + core * 0.5) * pulse * M6v.w * 0.6;
+  let cr = mB.y * M5v.y;
+  let inner = 0.2 + 0.8 * pow(1.0 - max(dot(gn, V), 0.0), 2.0);
+  em += M6v.rgb * cr * M6v.w * inner * 0.28;
+  if (fp < 0.1) {
+    let sc = floor(p.xz * 2.0);
+    let sh = hf(i32(sc.x), i32(sc.y), 301u);
+    let sp = sstep(0.25, 0.05, length(p.xz * 2.0 - sc - 0.5)) * select(0.0, 1.0, sh < 0.03) * bl(0.5, fp);
+    em += vec3f(0.6, 0.9, 1.0) * sp * (0.5 + 0.5 * sin(tm * 3.0 + sh * 600.0)) * 0.6;
+  }
+  return em;
 }
 
 fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
@@ -301,8 +386,9 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   if (isOff(OFF_TFLAT)) { var ob: FOut; ob.c = vec4f(0.12, 0.14, 0.1, 1.0); ob.d = vec4f(dist, 0.0, 0.0, 1.0); return ob; }
 
   // clipmap data at the finest covering level, cross-faded to the next at its edge
-  let l0 = clipLevel(p.xz, 0u, 6.0);
-  let e = clipEdge(l0, p.xz);
+  var l0 = clipLevel(p.xz, 0u, 6.0);
+  var e = clipEdge(l0, p.xz);
+  if (gBakeL >= 0) { l0 = u32(gBakeL); e = 0.0; } // material bake (fsMatBake): this level's own data
   var cd = clipS(l0, p.xz);
   var mA = clipMA(l0, p.xz);
   var mB = clipMB(l0, p.xz);
@@ -322,11 +408,15 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   var tx = FR.lv[l0].z;
   if (e > 0.0 && l0 + 1u < nLevels()) { tx = mix(tx, FR.lv[l0 + 1u].z, e); }
   let conc = cb; // broad concavity (+ = gully, - = ridge)
+  // height span of the pixel (fsShade: fwidth); in the material bake, of the baked texel
+  var fwhv = fwh;
+  if (gBakeL >= 0) { fwhv = min(length(cd.yz) * tx * (512.0 / MATN), 4.0); }
   let gn = normalize(vec3f(-cd.y, 1.0, -cd.z));
   let slope = 1.0 - gn.y;
   let h = p.y;
   let ndvG = max(dot(gn, V), 0.04);
-  let fp = dist * 2.0 * VW.fwd.w * VW.size.w * inverseSqrt(ndvG); // pixel footprint on the surface (m)
+  var fp = dist * 2.0 * VW.fwd.w * VW.size.w * inverseSqrt(ndvG); // pixel footprint on the surface (m)
+  if (gBakeL >= 0) { fp = 1.5 * FR.lv[l0].z * (512.0 / MATN); } // material bake: band-limit to the baked texel
 
   // realm blend
   var rw: RWt;
@@ -345,7 +435,6 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
     }
     rwm.w /= max(sw, 1e-6);
   }
-  let M0v = bfx(rwm, M0); let M1v = bfx(rwm, M1); let M2v = bfx(rwm, M2); let M3v = bfx(rwm, M3);
   let M4v = bfx(rwm, M4); let M5v = bfx(rwm, M5); let M6v = bfx(rwm, M6);
   var S0v = bfx(rw, S0); var S1v = bfx(rw, S1); var S2v = bfx(rw, S2); var S3v = bfx(rw, S3);
   var S5v = bfx(rw, S5); var S6v = bfx(rw, S6); var S7v = bfx(rw, S7);
@@ -357,7 +446,6 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
     S3v = mix(S3v, FR.row[S3], fcam); S5v = mix(S5v, FR.row[S5], fcam); S6v = mix(S6v, FR.row[S6], fcam);
     S7v = mix(S7v, FR.row[S7], fcam);
   }
-  let T3v = bfx(rwm, T3);
 
   // breakup noise at three scales
   // (nL and nM are baked into the shade layer: 0 noise evaluations here)
@@ -390,7 +478,37 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   var sheen = 0.0;
   var flatN = 0.0; // 1: shade as a level surface (pool water over terraced ground)
   var iceSnow = 0.0; var iceThin = 0.0;
+  var rockW = 0.0; var screeW = 0.0; var wet = 0.0;
   if (!isOff(OFF_TMAT)) {
+  // Two paths (a real branch). Baked: the macro material of this clip level, baked with it (fsMatBake), plus one
+  // detail set for the scales under the baked texel and the live Lumen light: a fixed cost. Live: the full material
+  // below where two realms blend (the Drift moves those weights every frame), on steep faces (a top-down texel
+  // spans metres of wall height there: baked, a wall's bands and joints smear into vertical streaks), and when baking.
+  let useBake = gBakeL < 0 && !isOff(OFF_TLIVE) && (gForceBake || (rwm.id[1] < 0 && slope < 0.42));
+  gPath = select(1u, 0u, useBake);
+  if (useBake) {
+    let bm = matFetch(l0, e, p.xz);
+    alb = bm.a.rgb * bm.a.rgb; rough = bm.a.w;
+    dg = bm.b.xyz; f0 = bm.b.w;
+    emis = bm.c.rgb; rockW = bm.c.w; // (grain: rock or scree)
+    wet = bm.d.x; flatN = bm.d.y; iceSnow = bm.d.z; iceThin = bm.d.w;
+    let mt = tx * (512.0 / MATN); // baked texel (m)
+    // one detail set (a real branch): the Painted beds re-drawn at the pixel's own height span (the bake holds them
+    // averaged over its texel: scale by sharp / averaged), else the generic set
+    let fwT = min(gl2 * mt, 4.0);
+    if (wPaint > 0.3 && fwhv < 0.7 * fwT && slope > 0.04) {
+      let sP = h - strataTilt(p.xz);
+      let rr = clamp(strataSpan(sP, fwhv) / max(strataSpan(sP, fwT), vec3f(0.02)), vec3f(0.4), vec3f(2.5));
+      alb *= mix(vec3f(1.0), rr, wPaint * (1.0 - 0.65 * sstep(0.13, 0.04, slope)));
+    } else {
+      alb *= 1.0 + matDetail(p, fp, mt, rockW, &dg);
+    }
+    if (wLum > 0.01) {
+      emis += lumenLive(p, fp, tm, mA, mB, M5v, M6v, gn, V) * wLum;
+      sheen = wLum * (1.0 - mB.y * M5v.y);
+    }
+  } else {
+  let M0v = bfx(rwm, M0); let M1v = bfx(rwm, M1); let M2v = bfx(rwm, M2); let M3v = bfx(rwm, M3); let T3v = bfx(rwm, T3);
   // ---- base: grass / soil / scree / rock, height-blended ----
   var gd = vec4f(0.0);
   if (!isOff(OFF_TDETAIL)) { gd = groundDetail(p.xz, fp); }
@@ -401,10 +519,10 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   let rH = 0.5 + 0.3 * nM + 0.4 * (rd.x - 1.0) + 0.15 * nS;
   let gH = 0.5 + 0.15 * gd.x;
   let tw = 0.06 + min(fp * 0.02, 0.2);
-  let rockW = sstep(-tw, tw, (rockMask - 0.5) * 1.7 + (rH - gH) * 0.8) * step(0.02, rockMask);
+  rockW = sstep(-tw, tw, (rockMask - 0.5) * 1.7 + (rH - gH) * 0.8) * step(0.02, rockMask);
   // scree collects in hollows under rock; soil shows at the edges of the turf
   let rockNear = sstep(0.12, 0.3, slope + 0.1 * nM);
-  let screeW = (1.0 - rockW) * rockNear * sstep(-0.1, 0.35, nS + 0.6 * conc + 0.3 * nM);
+  screeW = (1.0 - rockW) * rockNear * sstep(-0.1, 0.35, nS + 0.6 * conc + 0.3 * nM);
   let soilW = (1.0 - rockW) * (1.0 - screeW) * sstep(0.3, 0.6, rockMask + 0.25 * nS) * 0.55;
 
   // grass: wind-swept lighter ridges, darker damp hollows, heather and ochre patches on the slopes
@@ -473,31 +591,99 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   alb = mix(alb, upland, hi);
   let shore = sstep(M3v.w + 1.2, M3v.w - 0.6, h + nS * 0.6 + nM * 0.5);
   alb = mix(alb, M3v.rgb * (0.85 + 0.3 * nM), shore);
-  var wet = shore * 0.6 + hollow * 0.25 * M0v.w;
+  wet = shore * 0.6 + hollow * 0.25 * M0v.w;
 
   // ---- Home Fjords: dark basalt with green ledges, waterfalls with spray, a pale tide line ----
   if (wHome > 0.01) {
     // basalt flows (only evaluated where there is rock: grass pixels skip all of this)
     if (rockW > 0.01) {
-    // flows wander in height along the face and each has its own tone; the contacts between flows show only on some
-    // flows and break along the contour; columnar joints cross them, so no flow line reads as a contour
+    // Faroese lava pile: flows 5-22 m thick (hashed per flow, three to a 38 m cycle), each a dark massive basalt
+    // with a browner rubbly top, separated by a thin red-brown tuff/scoria bed that weathers back into a shadowed
+    // recess; grass holds on the ledge the recess leaves. Columnar joints only in the thick flows. The contacts wander
+    // in height along the face so no flow line reads as a contour.
     let lay = h + 3.0 * vn(p.xz * (1.0 / 140.0), 32u) + 1.6 * vn(vec2f(u * (1.0 / 40.0), h * (1.0 / 17.0)), 246u);
-    let lk = floor(lay / 4.3);
-    let flowT = 0.72 + 0.42 * hf(i32(lk), 5, 244u);
-    let lp = (h + 4.0 * vn(p.xz * (1.0 / 90.0), 32u) + 2.5 * vn(vec2f(u * (1.0 / 55.0), 7.0), 247u)) / max(T3v.w, 1.0);
-    let led = fract(lp) * select(0.0, 1.0, hf(i32(floor(lp)), 9, 248u) < 0.6);
-    let tread = sstep(0.5, 0.3, slope) * rockMask * sstep(4.0, 1.0, tx);
-    let ledge = clamp(sstep(0.62, 0.8, led) * T3v.z * 6.0 + tread * 0.6, 0.0, 1.0);
-    let broken = sstep(-0.25, 0.35, vn(vec2f(u * (1.0 / 9.0), h * 0.1), 245u) + 0.3 * nS);
-    let ledgeG = sstep(0.45, 0.6, ledge + 0.3 * (gH - 0.5) + 0.2 * nS) * broken;
+    let cy = lay * (1.0 / 38.0);
+    let ck = floor(cy); let cf = cy - ck; let cki = i32(ck);
+    let f1 = 0.15 + 0.3 * hf(cki, 1, 244u);
+    let f2 = min(f1 + 0.15 + 0.35 * hf(cki, 2, 244u), 0.9);
+    var lo = 0.0; var hi = f1; var fid = 0;
+    if (cf > f1) { lo = f1; hi = f2; fid = 1; }
+    if (cf > f2) { lo = f2; hi = 1.0; fid = 2; }
+    let thick = (hi - lo) * 38.0;               // this flow's thickness (m)
+    let z = (cf - lo) * 38.0;                   // height above its base (m)
+    let flowT = 0.75 + 0.4 * hf(cki * 3 + fid, 5, 248u);
+    let tb = 0.8 + 1.2 * hf(cki * 3 + fid, 6, 249u); // tuff bed at the base
+    let aaH = max(fwhv, 0.15);
+    let tuff = sstep(tb + aaH, tb - aaH * 0.5, z);
+    let topR = sstep(thick - 2.5, thick - 0.6, z);  // rubbly, browner flow top
     var bas = M1v.rgb * flowT * rd.x * vec3f(0.92, 0.95, 1.02);
-    let joint = (1.0 - sstep(0.0, 0.06, abs(lay / 4.3 - lk - 0.5) - 0.41)) * select(0.0, 1.0, hf(i32(lk), 8, 249u) < 0.45)
-              * sstep(-0.2, 0.25, vn(vec2f(u * (1.0 / 16.0), lk * 1.7), 253u));
-    bas = mix(bas, bas * 0.62, joint * bl(1.0, fp) * 0.5);
-    let wcol = bl(2.0, fp);
-    if (wcol > 0.0) { bas *= 1.0 + 0.16 * vn(vec2f(u * (1.0 / 1.9), lay * (1.0 / 7.0)), 254u) * wcol; } // columns
+    bas = mix(bas, bas * vec3f(1.25, 1.08, 0.9), topR * 0.6);
+    bas = mix(bas, vec3f(0.085, 0.055, 0.045) * (0.8 + 0.4 * rd.x), tuff * 0.8);
+    // the recess: the face of the tuff bed is set back and shadowed; its top edge throws a dark line
+    bas *= 1.0 - 0.35 * tuff * sstep(0.3, 0.6, slope);
+    dg += vec3f(down.x, 0.0, down.y) * (tuff * 0.6 - topR * 0.25) * sstep(0.3, 0.6, slope) * bl(1.5, fp);
+    // columns: vertical joints in flows thicker than 9 m
+    let wcol = bl(2.0, fp) * sstep(8.0, 12.0, thick) * (1.0 - tuff) * (1.0 - topR);
+    if (wcol > 0.0) {
+      let cj = vn(vec2f(u * (1.0 / 1.9), (ck * 3.0 + f32(fid)) * 1.7), 254u);
+      bas *= 1.0 + 0.18 * cj * wcol;
+      bas = mix(bas, bas * 0.6, (1.0 - sstep(0.0, 0.12, abs(cj) - 0.02)) * wcol * 0.6);
+    }
+    // ledges: grass on the flow tops above each tuff recess and on gentle treads
+    let tread = sstep(0.5, 0.3, slope) * rockMask * sstep(4.0, 1.0, tx);
+    let onTop = sstep(1.6, 0.4, z) * sstep(0.75, 0.45, slope);
+    let broken = sstep(-0.25, 0.35, vn(vec2f(u * (1.0 / 9.0), h * 0.1), 245u) + 0.3 * nS);
+    let ledgeG = clamp(sstep(0.35, 0.6, onTop * T3v.z * 6.0 + tread * 0.6 + 0.3 * (gH - 0.5) + 0.2 * nS) * broken, 0.0, 1.0);
     let homeRock = mix(bas, M0v.rgb * (0.65 + 0.4 * nS + 0.2 * gd.x), ledgeG * 0.9);
     alb = mix(alb, homeRock, rockW * wHome);
+    }
+    // talus: grey basalt scree in cones and aprons at the cliff foot (moderate slope, concave ground below the faces),
+    // patchy, grassing over at its edges; pebble grain close up
+    let apron = sstep(0.15, 0.24, slope) * sstep(0.5, 0.36, slope) * sstep(-0.02, 0.1, conc + 0.04 * nM) * sstep(3.0, 10.0, h);
+    let tal = apron * sstep(-0.15, 0.25, 0.6 * nM + 0.4 * nS + 0.25) * wHome;
+    if (tal > 0.01) {
+      var talus = M1v.rgb * 1.55 * (0.85 + 0.3 * gd.x + 0.15 * nS);
+      if (fp < 0.15) {
+        let pb = pebbles(p.xz, 0.4);
+        let pw = bl(0.4, fp);
+        talus *= 1.0 + (0.5 * pb.w - 0.15) * pw;
+        dg += vec3f(pb.y, 0.0, pb.z) * 0.5 * pw * tal;
+      }
+      alb = mix(alb, talus, tal * 0.85);
+      screeW = max(screeW, tal);
+    }
+    // the plateau at 5-80 m (not a smooth lawn): lush and dry swards, heather on the exposed rises, moss and peat in
+    // the shallow hollows with a stream thread winding through some, low lichen-grey outcrops on the knolls. All on
+    // rotated domains with soft edges (no axis-aligned value noise, no hard thresholds).
+    let flatH = sstep(0.24, 0.1, slope) * (1.0 - rockW) * wHome;
+    if (flatH > 0.01) {
+      let q1 = rotq(p.xz * (1.0 / 55.0));
+      let m1 = vn(q1, 261u) + 0.5 * vn(rotq(q1 * 2.6 + vec2f(3.1, 7.7)), 262u);
+      let w9 = bl(9.0, fp);
+      let m2 = vn(rotq(rotq(p.xz * (1.0 / 9.0))), 263u) * w9;
+      // swards: lush deep green vs dry yellow-green
+      let dry = sstep(-0.3, 0.5, m1 + 0.35 * m2 - 0.6 * conc);
+      var g2 = mix(alb * vec3f(0.9, 0.97, 0.88), alb * vec3f(1.12, 1.1, 0.84), dry);
+      // heather and crowberry on the exposed rises
+      let hth = sstep(0.55, 0.9, m1 - 1.2 * conc + 0.3 * m2) * 0.3;
+      g2 = mix(g2, mix(g2 * 0.5, vec3f(0.075, 0.055, 0.05), 0.5), hth);
+      // moss and peat in the hollows, wetter
+      let bog = sstep(0.08, 0.25, conc + 0.05 * m2);
+      g2 = mix(g2, g2 * vec3f(0.62, 0.72, 0.5), bog * 0.45);
+      wet = max(wet, bog * 0.3 * flatH);
+      // stream threads: a winding line along the hollows (1-2 m wide), dark wet sedge with a glint of water
+      let ws = bl(2.5, fp);
+      if (ws > 0.0) {
+        let sl = abs(vn(rotq(p.xz * (1.0 / 70.0) + vec2f(1.3, 0.4)), 264u) + 0.25 * vn(rotq(p.xz * (1.0 / 13.0)), 265u));
+        let thread = sstep(0.035, 0.012, sl) * sstep(0.0, 0.08, conc + 0.03) * ws;
+        g2 = mix(g2, vec3f(0.03, 0.045, 0.035), thread * 0.8);
+        wet = max(wet, thread * flatH);
+      }
+      // low outcrops on the knolls: lichen-grey basalt breaking the turf
+      let oc = sstep(0.55, 0.8, vn(rotq(p.xz * (1.0 / 16.0) + vec2f(5.5, 2.2)), 266u) * bl(16.0, fp) + 0.25 * m2 - 0.6 * conc) * sstep(0.0, 0.5, m1);
+      g2 = mix(g2, vec3f(0.11, 0.11, 0.1) * (0.85 + 0.3 * gd.x), oc * 0.75); // lichen-grey
+      rockW = max(rockW, oc * 0.7 * flatH);
+      alb = mix(alb, g2, flatH);
     }
     // thread-thin waterfalls on steep concave faces (coverage-preserving: thin threads stay visible far away)
     let steep = sstep(0.35, 0.6, slope);
@@ -509,7 +695,8 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
     let wid = 0.25 + 0.4 * hf(i32(cell), 4, 242u);
     let wv = max(wid, fp * 0.7);
     let strk = sstep(wv, wv * 0.3, abs(cu)) * present * (wid / wv);
-    let flow = 0.55 + 0.45 * vn(vec2f(u * 0.5, (h + tm * 7.0) * 0.25), 243u);
+    var flow = 0.55;
+    if (gBakeL < 0) { flow += 0.45 * vn(vec2f(u * 0.5, (h + tm * 7.0) * 0.25), 243u); }
     let fall = strk * steep * max(gully, 0.25) * wHome * flow * sstep(1.0, 8.0, h);
     // spray: a wider wet halo around each thread and a white mist at the foot of the drop
     let halo = sstep(6.0, 0.5, abs(cu)) * present * max(gully, 0.25) * wHome;
@@ -555,14 +742,11 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
       dg += vec3f(tng.x, 0.0, tng.y) * gu;
     }
     // two taps across the pixel's height span, a cycle-averaged tone when beds get sub-pixel
-    let sp = min(fwh, 2.0) * 0.35;
-    var sc = 0.5 * (strataAt(s - sp) + strataAt(s + sp));
-    let farT = danxia(0.4 + 0.42 * (vn(vec2f(floor(s / 6.5) * 0.23, 3.7), 312u)));
-    sc = mix(sc, farT * 1.05, sstep(1.2, 4.0, fwh));
+    var sc = strataSpan(s, fwhv);
     // gentle ground is mantled by sand washed off the beds: bands show on the faces, not as marbling on the flats
-    sc = mix(sc, mix(farT, vec3f(0.42, 0.2, 0.08), 0.4) * (0.95 + 0.1 * nM), sstep(0.13, 0.04, slope) * 0.65);
+    sc = mix(sc, mix(strataFar(s), vec3f(0.42, 0.2, 0.08), 0.4) * (0.95 + 0.1 * nM), sstep(0.13, 0.04, slope) * 0.65);
     // fine sub-banding and sandy grain
-    let sb = bl(0.6, fwh * 3.0 + fp);
+    let sb = bl(0.6, fwhv * 3.0 + fp);
     sc *= 1.0 + 0.09 * sb * vn(vec2f(s * (1.0 / 0.33), u * 0.02), 318u);
     sc *= 0.92 + 0.12 * nS + 0.08 * gd.x;
     sc *= 1.0 - 0.28 * rill;
@@ -808,16 +992,10 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
     // veins: bold, branching, pulsing outward from the nearest sinkhole
     let rho = mA.x * 6.0;
     let vein = mA.w;
-    let pulse = 0.25 + 0.75 * pow(0.5 + 0.5 * sin(rho * 3.2 - tm * 0.9), 5.0);
-    let core = sstep(0.55, 0.95, vein);
-    let vcol = mix(M6v.rgb, vec3f(0.75, 1.0, 0.95), core * 0.6);
-    emis += vcol * (vein * vein * 0.7 + core * 0.5) * pulse * M6v.w * wLum * 0.6;
     lg = mix(lg, vec3f(0.02, 0.1, 0.1), vein);
     // crystals
     let cr = mB.y * M5v.y;
     let ccol = vec3f(0.3, 0.68, 0.64);
-    let inner = 0.2 + 0.8 * pow(1.0 - max(dot(gn, V), 0.0), 2.0);
-    emis += M6v.rgb * cr * M6v.w * inner * 0.28 * wLum;
     lg = mix(lg, ccol, cr);
     // the pools at the delta sources: bright cyan water and a glowing rim
     let underL = sstep(0.0, -4.0, h);
@@ -825,18 +1003,22 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
     let rim = sstep(0.9, 0.98, rho) * sstep(1.08, 1.0, rho) * sstep(-0.5, 0.6, h);
     emis += M6v.rgb * rim * 0.35 * M6v.w * wLum;
     lg = mix(lg, vec3f(0.05, 0.25, 0.24), rim * 0.5);
-    // sparse glints in the velvet
-    if (fp < 0.1) {
-      let sc = floor(p.xz * 2.0);
-      let sh = hf(i32(sc.x), i32(sc.y), 301u);
-      let sp = sstep(0.25, 0.05, length(p.xz * 2.0 - sc - 0.5)) * select(0.0, 1.0, sh < 0.03) * bl(0.5, fp);
-      emis += vec3f(0.6, 0.9, 1.0) * sp * wLum * (0.5 + 0.5 * sin(tm * 3.0 + sh * 600.0)) * 0.6;
-    }
+    // the pulsing veins, the crystals' inner glow and the glints: animated or view-dependent, never baked
+    if (gBakeL < 0) { emis += lumenLive(p, fp, tm, mA, mB, M5v, M6v, gn, V) * wLum; }
     alb = mix(alb, lg, wLum);
     rough = mix(rough, mix(0.9, 0.18, cr), wLum);
     f0 = mix(f0, mix(0.03, 0.08, cr), wLum);
     sheen = wLum * (1.0 - cr);
     if (fp < 0.1) { let fz = vnoised(p.xz * (1.0 / 0.07), 303u); dg += vec3f(fz.y, 0.0, fz.z) * 0.04 * bl(0.07, fp) * wLum; }
+  }
+
+  } // live material path
+  if (gBakeL >= 0) { // material bake: store the macro material (before coast, weather and wetness darkening)
+    gMat.a = vec4f(sqrt(max(alb, vec3f(0.0))), rough);
+    gMat.b = vec4f(dg, f0);
+    gMat.c = vec4f(emis, max(rockW, screeW));
+    gMat.d = vec4f(wet, flatN, iceSnow, iceThin);
+    var ob: FOut; return ob;
   }
 
   // ---- coast and weather (DESIGN 12) ----
@@ -962,7 +1144,27 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   // sampled level's bake (green just baked -> red 10 s+; a level re-baked every frame stays bright green)
   if (VW.cam.w == 20.0) { o.c = vec4f(lvlColor(l0) * (1.0 - 0.5 * e), 1.0); }
   if (VW.cam.w == 21.0) { o.c = vec4f(lvlColor(l0), 1.0); } // (deferred: the drawn level is not known here)
+  // dbg=23: material path (green baked, red live, blue: the baked second surface of a silhouette pixel)
+  if (VW.cam.w == 23.0) { o.c = vec4f(select(select(vec3f(0.1, 0.8, 0.2), vec3f(0.9, 0.15, 0.1), gPath == 1u), vec3f(0.15, 0.3, 1.0), gForceBake), 1.0); }
   if (VW.cam.w == 22.0) { let ag = clamp((FR.time.x - FR.lv[l0].w) / 10.0, 0.0, 1.0); o.c = vec4f(ag, 1.0 - ag, 0.0, 1.0); }
   o.d = vec4f(dist, 0.0, 0.0, 1.0);
   return o;
 }
+
+// MAT_BAKE_BEGIN: the material bake (clipmap.js bakeLevel); its module has matFetch stubbed (it writes those textures)
+@group(3) @binding(0) var<uniform> MBK: vec4f; // the level's texel-0 centre x, z, its texel (m), the level
+struct MatOut { @location(0) a: vec4f, @location(1) b: vec4f, @location(2) c: vec4f, @location(3) d: vec4f }
+@vertex fn vsMat(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  let uv = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+  return vec4f(uv * 2.0 - 1.0, 0.0, 1.0);
+}
+@fragment fn fsMatBake(@builtin(position) fpos: vec4f) -> MatOut {
+  let l = u32(MBK.w); let t = MBK.z;
+  let xz = MBK.xy - 0.5 * t + (floor(fpos.xy) + 0.5) * (t * 512.0 / MATN);
+  gBakeL = i32(l);
+  _ = terrainShade(vec3f(xz.x, clipH(l, xz), xz.y), fpos.xy, 0.0);
+  var o: MatOut;
+  o.a = gMat.a; o.b = gMat.b; o.c = gMat.c; o.d = gMat.d;
+  return o;
+}
+// MAT_BAKE_END
