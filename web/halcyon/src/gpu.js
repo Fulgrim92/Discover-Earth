@@ -107,8 +107,8 @@ export function setTimerBase(slot, view) {
 }
 
 // Uniform block sizes (bytes). Offsets in floats, matching common.wgsl Frame/View.
-export const FRAME_FLOATS = 4 * 3 + 4 * 12 * 2 + ROW * 4 + 4 + 4 + 4;
-export const FO = { time: 0, sun: 4, misc: 8, lv: 12, mc: 12 + 48, row: 12 + 96, flags: 12 + 96 + ROW * 4, sky: 12 + 96 + ROW * 4 + 4, wx: 12 + 96 + ROW * 4 + 8 };
+export const FRAME_FLOATS = 4 * 3 + 4 * 12 * 2 + ROW * 4 + 4 + 4 + 4 + 4;
+export const FO = { time: 0, sun: 4, misc: 8, lv: 12, mc: 12 + 48, row: 12 + 96, flags: 12 + 96 + ROW * 4, sky: 12 + 96 + ROW * 4 + 4, wx: 12 + 96 + ROW * 4 + 8, wxp: 12 + 96 + ROW * 4 + 12 };
 export const VIEW_FLOATS = 16 * 2 + 4 * 8;
 export const VO = { vp: 0, ivp: 16, cam: 32, size: 36, fwd: 40, ofs: 44, right: 48, up: 52, skew: 56, anc: 60 };
 
@@ -138,6 +138,7 @@ export function bgl(spec, label) {
     if (c === 'u') e.buffer = { type: 'uniform' };
     else if (c === 'r') e.buffer = { type: 'read-only-storage' };
     else if (c === 'b') e.buffer = { type: 'storage' };
+    else if (c === 'B') e.buffer = { type: 'storage' }; // writable in fragment shaders too (instrumentation)
     else if (c === 'f') e.texture = { sampleType: 'float', viewDimension: '2d' };
     else if (c === 'a') e.texture = { sampleType: 'float', viewDimension: '2d-array' };
     else if (c === 'n') e.texture = { sampleType: 'unfilterable-float', viewDimension: '2d' };
@@ -147,6 +148,7 @@ export function bgl(spec, label) {
     else if (c === 'S') e.sampler = { type: 'non-filtering' };
     else if (c === 'w') e.storageTexture = { access: 'write-only', format: 'rgba8unorm', viewDimension: '3d' };
     if (c === 'w' || c === 'b') e.visibility = GPUShaderStage.COMPUTE;
+    if (c === 'B') e.visibility = GPUShaderStage.FRAGMENT;
     entries.push(e);
   }
   return G.device.createBindGroupLayout({ entries, label });

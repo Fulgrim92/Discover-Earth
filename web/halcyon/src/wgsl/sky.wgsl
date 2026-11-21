@@ -374,9 +374,28 @@ fn applyFog(col: vec3f, ro: vec3f, d: vec3f, t: f32) -> vec3f {
   let mu = dot(d, FR.sun.xyz);
   let sc = sunCol();
   let cm = f1.rgb * (mix(rowv(S3).rgb, rowv(S2).rgb, 0.4) * 1.2 + sc * (0.12 + hg(mu, 0.6) * f2.w * 0.5)) + rowv(S7).rgb * rowv(S7).w;
+  // where the mist saturates along a near-horizontal line of sight it must meet the sky at the horizon without a
+  // step: its in-scatter goes to the sky's own radiance there (else far land and sea under the horizon read as a
+  // dark band, and mountains as floating streaks)
+  let hz = skyBase(vec3f(d.x, max(d.y, 0.0) + 0.002, d.z));
+  let cmh = mix(cm, hz, sstep(1.0, 4.0, om) * (1.0 - sstep(0.0, 0.12, abs(d.y))));
   let tm = exp(-om);
-  c = c * tm + cm * (1.0 - tm);
-  return c;
+  c = c * tm + cmh * (1.0 - tm);
+  return rainFog(c, ro, d, t);
+}
+// rain in the air (weather cells): visibility 1-3 km inside a squall, flat grey light, up to the cloud base
+fn rainFog(col: vec3f, ro: vec3f, d: vec3f, t: f32) -> vec3f {
+  if (isOff(OFF_RAIN)) { return col; }
+  let base = rowv(C0).y;
+  var tb = min(t, 12000.0);
+  if (d.y > 0.001) { tb = min(tb, max(base - ro.y, 0.0) / d.y); }
+  if (tb < 1.0) { return col; }
+  let s = (wxStorm(wxCell(ro.xz)) * 2.0 + wxStorm(wxCell(ro.xz + d.xz * tb * 0.5)) + wxStorm(wxCell(ro.xz + d.xz * tb))) * 0.25;
+  if (s < 0.005) { return col; }
+  let tr = exp(-0.0011 * s * tb);
+  let amb = mix(rowv(S3).rgb, rowv(S2).rgb, 0.5) * rowv(S3).w;
+  let g = vec3f(luma(amb) * 0.55 + luma(sunCol()) * 0.025);
+  return col * tr + g * (1.0 - tr);
 }
 
 struct SkyOut { @builtin(position) pos: vec4f }

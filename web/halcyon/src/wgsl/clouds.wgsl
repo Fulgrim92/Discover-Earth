@@ -11,6 +11,11 @@
 @group(2) @binding(5) var cDistT: texture_2d<f32>;
 @group(2) @binding(6) var repS: sampler;
 @group(2) @binding(7) var clS: sampler;
+// march cost instrumentation (URL steps=1; dbg=17 shows it as a heat map): per-ray counters, summed with atomics
+// [0] rays [1] main iterations [2] dense (lit) samples [3] light steps [4] veil samples [5] precip samples
+// [6] mirror-march iterations [7] total, [8..71] histogram of the total per ray in bins of 16
+@group(2) @binding(8) var<storage, read_write> CST: array<atomic<u32>, 72>;
+var<private> cIt: u32; var<private> cD: u32; var<private> cL: u32; var<private> cV: u32; var<private> cP: u32; var<private> cR: u32;
 
 const BASE_TILE: f32 = 3600.0;  // m per base-noise tile (128 texels, 4 mips)
 const DET_TILE: f32 = 640.0;    // m per detail tile (64 texels)
@@ -130,7 +135,7 @@ fn lightOD(p: vec3f, L: vec3f, sea: bool, n: i32, jit: f32) -> f32 {
   var stp = select(32.0, 3.5, sea);
   for (var i = 0; i < n; i++) {
     let s = stp * (0.92 + 0.16 * jit);
-    t += s;
+    t += s; cL++;
     let q = p + L * (t - s * 0.5);
     var d = 0.0;
     if (sea) { d = densSea(q, wyAt(q.xz), 1.0, select(0.0, 1.0, i < 2)) * SEA_EXT; }
@@ -218,6 +223,13 @@ fn shade(p: vec3f, d: vec3f, hf: f32, od: f32, dens: f32, sea: bool) -> vec3f {
     amb = mix(amb * vec3f(0.62, 0.9, 0.7), amb, sat(hf));
     sunK = mix(0.25, 5.0, h2);
   }
+  // squalls (held in the cloud-shadow map as occlusion above 0.9; ordinary cloud stops at 0.88): the tower above
+  // takes the sky light from its own base, which goes dark grey while the sunlit top stays white
+  let cq = csmUV(p.xz);
+  if (!sea && csmIn(cq)) {
+    let sq = sstep(0.885, 0.95, textureSampleLevel(csmT, atmoS, cq, 0.0).x);
+    amb *= mix(1.0, mix(0.18, 0.85, sat(hf * 1.4)), sq);
+  }
   // aurora light on night clouds
   amb += vec3f(0.05, 0.4, 0.2) * gCL.aur * 0.08;
   // lightning (weather.js schedule): the cloud lit from inside around the strike, bluish white
@@ -241,8 +253,9 @@ fn marchSeg(ro: vec3f, d: vec3f, t0: f32, t1: f32, n: i32, jit: f32, sea: bool, 
   var lastDt = 0.0;
   loop {
     // a shared budget of dense (lit) samples, twice that in iterations; it shrinks when the ray starts inside cloud
-    if (t >= t1 || (*ms).nd >= (*ms).cap || (*ms).it >= n * 2 || (*ms).T < T_MIN) { break; }
-    (*ms).it++;
+    // hard ceiling: n + 16 iterations per ray over both layers (was 2n: grazing rays through empty sky hit it)
+    if (t >= t1 || (*ms).nd >= (*ms).cap || (*ms).it >= n + 16 || (*ms).T < T_MIN) { break; }
+    (*ms).it++; cIt++;
     let p = ro + d * t;
     let dtf = clamp(t * kf, fmin, fmax);
     let y = wyAt(p.xz);
@@ -270,7 +283,7 @@ fn marchSeg(ro: vec3f, d: vec3f, t0: f32, t1: f32, n: i32, jit: f32, sea: bool, 
         t -= lastDt - dtf; lastDt = dtf; empty = 0;
         continue;
       }
-      empty = 0; (*ms).nd++;
+      empty = 0; (*ms).nd++; cD++;
       if (!gCLok) {
         gCL = cloudLight(p.xz); gCLok = true;
         // starting inside cloud: visibility is short, so a smaller budget is enough (the inside-the-sea spikes)
@@ -286,8 +299,13 @@ fn marchSeg(ro: vec3f, d: vec3f, t0: f32, t1: f32, n: i32, jit: f32, sea: bool, 
       (*ms).T *= 1.0 - a;
     } else {
       empty++;
-      if (!possible) { dt = max(dtf * 5.0, min(t * 0.035, select(1500.0, 120.0, sea))); }
-      else if (empty > 3) { dt = dtf * 2.5; }
+      // no cloud possible here (window coverage 0 or outside the layer): stride over it; 7% of the distance per
+      // step keeps a grazing ray through 30 km of clear sky to ~40 iterations instead of ~100; where there is no cloud
+      // sea at all (most of the planet) its slab, which hugs the height the drone flies at, is crossed in 900 m strides
+      if (!possible) { dt = max(dtf * 5.0, min(t * 0.07, select(3000.0, 900.0, sea))); }
+      // gaps between clouds: widen the stride the longer the gap (the back-up above re-enters a cloud finely)
+      else if (empty > 4) { dt = max(dtf * 4.0, t * select(0.06, 0.012, sea)); }
+      else if (empty > 1) { dt = max(dtf * 2.0, t * select(0.025, 0.008, sea)); }
     }
     lastDt = dt;
     t += dt;
@@ -312,7 +330,8 @@ fn marchAll(ro: vec3f, d: vec3f, tmax: f32, n: i32, nl: i32, jit: f32) -> vec4f 
   // a nearly transparent deck (Aurora Ice's veil of cloud) never turns a ray opaque: it would spend the whole budget
   // on clouds that barely show, so the budget follows the camera realm's cloud opacity
   ms.cap = max(i32(f32(n) * mix(0.45, 1.0, sstep(0.03, 0.4, rowv(C0).w))), 8);
-  let maxD = min(tmax, CU.q.z);
+  // 24 km: beyond it clouds are melted into the sky colour anyway (below), and grazing rays stop paying for them
+  let maxD = min(min(tmax, CU.q.z), 24000.0);
   let sS = slab(ro, d, CU.slab.z, CU.slab.w, min(maxD, 9000.0));
   let sM = slab(ro, d, CU.slab.x, CU.slab.y, maxD);
   let hasS = sS.y > sS.x; let hasM = sM.y > sM.x;
@@ -331,7 +350,7 @@ fn marchAll(ro: vec3f, d: vec3f, tmax: f32, n: i32, nl: i32, jit: f32) -> vec4f 
   var c = applyFog(ms.scat / op, ro, d, tm);
   // far clouds (often a neighbour realm's weather) melt into the sky colour behind them: no hard cut-outs or
   // foreign colours on the horizon; they still hide the stars and aurora behind them
-  c = mix(c, skyBase(d), 0.75 * sstep(6000.0, 28000.0, tm));
+  c = mix(c, skyBase(d), 0.75 * sstep(6000.0, 22000.0, tm));
   return vec4f(c * op, op);
 }
 
@@ -382,6 +401,7 @@ struct CF { @location(0) front: vec4f, @location(1) refl: vec4f, @location(2) di
       // as composite.wgsl weighs it): most water seen from above in all realms but Mirror Salt and Aurora Ice
       let wr = max(0.02 + 0.98 * pow(1.0 - min(-d.y, 1.0), 5.0), rowv(W2).w);
       if (wr > 0.12) { o.refl = marchAll(P, R, 1e9, i32(CU.q.w), max(nl - 2, 2), jit); }
+      cR = cIt; cIt = 0u;
     }
   }
   o.front = marchAll(ro, d, tmax, n, nl, jit);
@@ -400,6 +420,17 @@ struct CF { @location(0) front: vec4f, @location(1) refl: vec4f, @location(2) di
   if (VW.cam.w == 10.0) { // dbg=10: weather coverage (red) and orographic base (green) painted on the ground
     let P = ro + d * min(dist, 30000.0);
     o.front = vec4f(wxAt(P.xz).x, sstep(0.0, 1.0, wyAt(P.xz).z), 0.0, 0.85);
+  }
+  // cost of this ray in density evaluations (main iterations, light steps, veil, precip, mirror)
+  let tot = cIt + cL + cV + cP + cR;
+  if (VW.cam.w == 17.0) { // dbg=17: march cost heat map, blue 0 .. green 150 .. red 300 .. white 450+ evaluations
+    let h = f32(tot) / 150.0;
+    o.front = vec4f(sat(h - 1.0) + sat(h - 2.0), sat(h) * (1.0 - sat(h - 1.0)) + sat(h - 2.0), sat(1.0 - h) + sat(h - 2.0), 1.0);
+  }
+  if (CU.dbg.x > 0.0) {
+    atomicAdd(&CST[0], 1u); atomicAdd(&CST[1], cIt); atomicAdd(&CST[2], cD); atomicAdd(&CST[3], cL);
+    atomicAdd(&CST[4], cV); atomicAdd(&CST[5], cP); atomicAdd(&CST[6], cR); atomicAdd(&CST[7], tot);
+    atomicAdd(&CST[8u + min(tot / 16u, 63u)], 1u);
   }
   return o;
 }
@@ -463,6 +494,7 @@ fn veilMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
     let u = f32(i + 1) / f32(N);
     let t1 = tEnd * u * u;
     let tm1 = mix(t0, t1, jit);
+    cV++;
     let dn = veilDens(ro + d * tm1, tm);
     if (dn > 0.0) {
       let a = 1.0 - exp(-dn * (t1 - t0));
@@ -496,13 +528,17 @@ fn precipMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
   if (isOff(OFF_RAIN)) { return vec4f(0.0); }
   let tEnd = min(tmax, 16000.0);
   // only rays that pass a squall: five probes of the weather field along the ray
-  var smax = 0.0; var tb = 0.0;
+  // the march window is centred on the storm-weighted mean of the probes: continuous from pixel to pixel (an argmax
+  // jumps between probes and cut the curtains along straight lines)
+  var smax = 0.0; var sw = 0.0; var stw = 0.0;
   for (var k = 0; k < 5; k++) {
     let tk = tEnd * (0.04 + 0.24 * f32(k));
     let sk = wxStorm(wxCell(ro.xz + d.xz * tk));
-    if (sk > smax) { smax = sk; tb = tk; }
+    cP++;
+    smax = max(smax, sk); sw += sk; stw += sk * tk;
   }
   if (smax < 0.02) { return vec4f(0.0); }
+  let tb = stw / sw;
   // what falls here: the realm at the squall the ray meets (one blend per ray)
   let rw = realmWeights(ro.xz + d.xz * tb);
   var amt = 0.0; var kind = 0; var kw = 0.0;
@@ -515,7 +551,8 @@ fn precipMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
   let L = FR.sun.xyz;
   let sc = sunCol();
   let amb = mix(rowv(S3).rgb, rowv(S2).rgb, 0.5) * rowv(S3).w;
-  var bow = select(vec3f(0.0), rainbow(d, L), (kind == 0) && L.y > 0.0);
+  // bows belong to rain: the squall's realm and the camera's (no bow hanging over Painted virga or Lumen spores)
+  var bow = select(vec3f(0.0), rainbow(d, L), (kind == 0) && FR.wx.w < 0.5 && L.y > 0.0);
   // by moonlight the bow is real but the eye sees it colourless and faint (a moonbow)
   let sunShare = sstep(-0.035, 0.06, sunDirFrom(rowv(S0), FR.sun.w).y);
   bow = mix(vec3f(luma(bow)) * 0.35, bow, sunShare);
@@ -523,13 +560,14 @@ fn precipMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
   // march a window around the squall the probes found, in even steps: on u^2 steps the far segments were kilometres
   // long, a curtain was hit or missed per pixel and the low-res dither showed as a mesh
   let N = 12;
-  let wa = max(tb - 4000.0, 0.0); let wb = min(tb + 4000.0, tEnd);
+  let wa = max(tb - 4500.0, 0.0); let wb = min(tb + 4500.0, tEnd);
   var T = 1.0; var acc = vec3f(0.0);
   var t0 = wa;
   for (var i = 0; i < N; i++) {
     let t1 = mix(wa, wb, f32(i + 1) / f32(N));
     let p = ro + d * mix(t0, t1, jit);
     let st = wxStorm(wxCell(p.xz));
+    cP++;
     if (st > 0.01) {
       let w = wxAt(p.xz);
       let base = w.y;
@@ -542,11 +580,12 @@ fn precipMarch(ro: vec3f, d: vec3f, tmax: f32, jit: f32) -> vec4f {
         // virga evaporates on the way down; snow and spores thin out towards the ground less
         var fade = sstep(base - 2600.0, base - 300.0, p.y) * 0.6 + 0.4;
         if (kind == 1) { fade = sstep(base - 900.0, base - 150.0, p.y); }
-        let dn = 0.00045 * st * amt * cur * stk * fade * select(1.0, 1.3, kind == 2);
+        let dn = 0.0009 * st * amt * cur * stk * fade * select(1.0, 1.3, kind == 2);
         let a = 1.0 - exp(-dn * (t1 - t0));
         // lit by the sky, and by the sun where it gets under the cloud (forward scattering)
         let sv = cloudShadowF(p, L, rowv(C0), rowv(C1), rowv(C2), rowv(C3)) * sstep(0.0, 0.04, L.y);
-        var lit = amb * select(0.75, 1.0, kind == 2) + sc * sv * (0.08 + 0.5 * hg(dot(d, L), 0.7)) + sc * sv * bow * 0.5;
+        // under the tower little sky light reaches the rain: the curtain reads darker than the open sky
+        var lit = amb * select(0.75, 1.0, kind == 2) * (1.0 - select(0.75, 0.35, kind >= 2) * st) + sc * sv * (0.08 + 0.5 * hg(dot(d, L), 0.7)) + sc * sv * bow * 1.1;
         if (kind == 3) { lit += rowv(S7).rgb * (0.4 + rowv(S7).w * 4.0); } // spores glow
         if (kind == 1) { lit *= vec3f(1.05, 0.92, 0.95); }                // virga takes the dust's tint
         acc += T * lit * a; T *= 1.0 - a;

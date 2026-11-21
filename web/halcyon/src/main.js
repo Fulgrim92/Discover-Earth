@@ -39,7 +39,7 @@ import { G, H, fail, initDevice, Unsupported, bgl, bindGroup, tex, buffer, FRAME
   TS_FLORA, TS_FAUNA } from './gpu.js';
 import { TABLE, ROWF, F, realmCentre, CURATED, REALM_NAMES } from './realms.js';
 import { skyTick, SKY_IN } from './realms.js';
-import { wxTick, WX_IN, WX_CAM, WX_BOLT } from './weather.js'; // weather at the camera (sky programmer) // the sky turns (sky programmer)
+import { wxTick, WX_IN, WX_CAM, WX_BOLT, WX_PIN } from './weather.js'; // weather at the camera (sky programmer) // the sky turns (sky programmer)
 import { heightAt, heightBatch, blendAtA, W_IN, W_NEAR, setFootprint } from './world.js';
 import { realmWeightsA, W_ID, W_W } from './realms.js'; // heightcheck: CPU realm weights vs the GPU realm map
 import { CLK, C_DT, C_TIME, C_FRAME_MS, C_PREV } from './clock.js';
@@ -513,6 +513,8 @@ const SKY_PERIOD = 900;
 let realmBufG = null;
 const CAMP = new Float64Array(3); // the camera a frame ago
 const WXO = new Float64Array(2); // rain=, wet= URL overrides (-1: none)
+// wx=dx,dz[,r]: pin a squall centred dx, dz metres from the first frame's camera (deterministic captures)
+const WXQ = Q.has('wx') ? Q.get('wx').split(',').map(parseFloat) : null;
 const SKYM = new Float64Array(4); // previous s, accumulated motion (deg), time of day: typed, never boxed
 const SKY_TOD = Math.max(P.tod, -1); // a small int or a constant: read once
 function skyTime(fr) {
@@ -528,6 +530,8 @@ function prepareFrame() {
   skyTime(fr);
   W_IN[0] = cam[0]; W_IN[1] = cam[2]; blendAtA(rowTmp);
   // weather at the camera (realm weights from blendAtA) and the camera's velocity for the rain streaks
+  if (frameNo === 0 && WXQ) { WX_PIN[0] = cam[0] + (WXQ[0] || 0); WX_PIN[1] = cam[2] + (WXQ[1] || 0); WX_PIN[2] = WXQ[2] > 0 ? WXQ[2] : 4000; WX_PIN[3] = 1; }
+  for (let i = 0; i < 4; i++) fr[FO.wxp + i] = WX_PIN[i];
   WX_IN[0] = cam[0]; WX_IN[1] = cam[2]; WX_IN[2] = CLK[C_TIME]; wxTick();
   SKYM[3] = 1 / Math.max(CLK[C_DT], 1e-3);
   for (let i = 0; i < 3; i++) { fr[FO.wx + i] = frameNo === 0 ? 0 : Math.min(Math.max((cam[i] - CAMP[i]) * SKYM[3], -60), 60); CAMP[i] = cam[i]; }
@@ -588,7 +592,7 @@ function renderFrame(bakeAll) {
   perf.frameEnd(enc, slot);
   CMD[0] = enc.finish();
   G.queue.submit(CMD);
-  perf.afterSubmit();
+  perf.afterSubmit(); clouds.afterSubmit(); // clouds: march-cost readback (steps=1 only)
   if (MAX_INFLIGHT > 0) { FL.n++; G.queue.onSubmittedWorkDone().then(FL.done, FL.done); }
   frameNo++;
   H.frame = frameNo;
@@ -823,7 +827,7 @@ async function finishBench() {
     resolution: P.benchFixed ? 'fixed 1920x1080 canvas (bench default), internal = 1920x1080 x dynres scale' : 'w=' + P.w + ' h=' + P.h + ' from the URL',
     off: H.off, offBits: OFF, split: !!splitDesc, msaa: ctx.msaa, gpu: G.paths, canvasFormat: G.canvasFormat, hdr: G.hdr,
     quality: ['low', 'normal', 'high'][P.quality], stereo: nViews === 2, adapter: adapterInfo(), stride: P.stride,
-    inflight: MAX_INFLIGHT, present: !OFFSCREEN, bakes: bakeReport(),
+    inflight: MAX_INFLIGHT, present: !OFFSCREEN, bakes: bakeReport(), cloudSteps: clouds.stepReport(),
     route: 'Home Fjords rings, boost transit, Stone Forest rings, Lumen Deep rings, FPV (fixed dt 1/' + P.fps + ')',
   });
   H.bench = r;

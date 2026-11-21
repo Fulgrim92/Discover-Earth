@@ -20,6 +20,8 @@ export const WX_KIND = new Int32Array([0, 1, 0, 0, 2, 3]);
 export const WX_IN = new Float64Array(3);
 export const WX_CAM = new Float64Array(4);
 export const WX_BOLT = new Float32Array(4);
+// a pinned squall (main.js, URL wx=): centre x, z, radius, on
+export const WX_PIN = new Float64Array(4);
 const S = new Float64Array(8);
 
 function sstep(a, b, x) { const t = Math.min(Math.max((x - a) / (b - a), 0), 1); return t * t * (3 - 2 * t); }
@@ -35,16 +37,20 @@ function vn(s) { // reads S[5], S[6] as x, y
 // wxCell at (S[0], S[1]) and time S[2] into S[3]
 function cell() {
   const qx = S[0] - WIND_X * S[2] + OFS_X, qz = S[1] - WIND_Z * S[2] + OFS_Z;
-  S[5] = qx / 6500; S[6] = qz / 6500; vn(720); const a = S[7];
-  S[5] = qx / 2300; S[6] = qz / 2300; vn(721);
-  S[3] = a * 0.65 + S[7] * 0.35;
+  S[5] = qx / 16000; S[6] = qz / 16000; vn(720); const a = S[7];
+  S[5] = qx / 5200; S[6] = qz / 5200; vn(721);
+  S[3] = a * 0.72 + S[7] * 0.28;
+  if (WX_PIN[3] > 0) {
+    const ex = (S[0] - WX_PIN[0]) / WX_PIN[2], ez = (S[1] - WX_PIN[1]) / WX_PIN[2];
+    S[3] = Math.max(S[3], 1 - 0.9 * (ex * ex + ez * ez));
+  }
 }
 
 // after realms.js realmWeightsA() ran at the camera (main.js prepareFrame: blendAtA)
 export function wxTick() {
   S[0] = WX_IN[0]; S[1] = WX_IN[1]; S[2] = WX_IN[2];
   cell();
-  const st = sstep(0.28, 0.58, S[3]);
+  const st = sstep(0.40, 0.62, S[3]);
   let liq = 0, pre = 0, kind = 0, kw = 0;
   for (let i = 0; i < 4; i++) {
     const id = W_ID[i];
