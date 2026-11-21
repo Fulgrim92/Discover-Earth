@@ -8,6 +8,12 @@ export const CELL = 5500; // m, Voronoi cell pitch
 export const BAND = 2400; // m, blend band (in nearest-distance difference): the Drift, a ~2.4 km zone (DESIGN 11.1)
 export const JIT = 0.3; // site jitter as a fraction of the cell
 export const NREALM = 6;
+// the realm map (clip.wgsl realmWeightsMap) holds a fixed 12 weight slots (3 rgba8 layers): the per-pixel cost does not
+// grow with the realm count up to the atlas of twelve (DESIGN 13)
+export const MAX_REALM = 12;
+if (NREALM > MAX_REALM) throw new Error('NREALM > MAX_REALM');
+// curated cells: a (2 CUR_R + 1)^2 block around the origin; beyond it the realms are hashed
+export const CUR_R = 2, CUR_N = 2 * CUR_R + 1;
 
 // Field order = row layout. Each field is one vec4. Keep in sync with nothing: WGSL constants are generated from this.
 export const FIELDS = [
@@ -184,16 +190,20 @@ for (let r = 0; r < R.length; r++) Object.assign(R[r], LIFE[r]);
 
 export const REALM_NAMES = ['Home Fjords', 'Painted Range', 'Mirror Salt', 'Stone Forest', 'Aurora Ice', 'Lumen Deep'];
 
-// 3x3 curated cells around the origin, index (i+1) + (j+1)*3; -z is north, +x is east.
-// [jitterX, jitterZ, realm]; null realm = hashed like every other cell.
+// curated cells around the origin, CUR_N x CUR_N, index (i+CUR_R) + (j+CUR_R)*CUR_N; -z is north, +x is east.
+// [jitterX, jitterZ, realm]; realm -1 = hashed like every other cell.
+const H_ = [0.0, 0.0, -1];
 const CUR = [
-  [-0.05, 0.1, 2], [0.0, -0.12, 4], [0.22, -0.22, 5], //  j=-1 (north): NW Mirror repeat, N Ice, NE Lumen
-  [0.08, -0.05, 2], [0, 0, 0], [-0.06, 0.08, 1], //        j= 0: W Mirror, Home, E Painted
-  [0.0, 0.0, -1], [0.05, 0.1, 3], [0.0, 0.0, -1], //       j=+1 (south): SW hashed, S Stone, SE hashed
+  H_, H_, H_, H_, H_, //                                                       j=-2
+  H_, [-0.05, 0.1, 2], [0.0, -0.12, 4], [0.22, -0.22, 5], H_, //              j=-1 (north): NW Mirror repeat, N Ice, NE Lumen
+  H_, [0.08, -0.05, 2], [0, 0, 0], [-0.06, 0.08, 1], H_, //                    j= 0: W Mirror, Home, E Painted
+  H_, [0.0, 0.0, -1], [0.05, 0.1, 3], [0.0, 0.0, -1], H_, //                   j=+1 (south): SW hashed, S Stone, SE hashed
+  H_, H_, H_, H_, H_, //                                                       j=+2
 ];
+if (CUR.length !== CUR_N * CUR_N) throw new Error('curated table size');
 
-// GPU buffer: NREALM rows then 9 curated vec4 (x, z, realm, curated flag).
-export const TABLE = new Float32Array(NREALM * ROWF + 9 * 4);
+// GPU buffer: NREALM rows then CUR_N^2 curated vec4 (x, z, realm, curated flag).
+export const TABLE = new Float32Array(NREALM * ROWF + CUR_N * CUR_N * 4);
 for (let r = 0; r < NREALM; r++) {
   for (const k of FIELDS) {
     let v = R[r][k];
@@ -321,8 +331,8 @@ export function hu8(x, y, s) {
 }
 
 const CUR_OFF = NREALM * ROWF;
-for (let k = 0; k < 9; k++) {
-  const i = (k % 3) - 1, j = ((k / 3) | 0) - 1;
+for (let k = 0; k < CUR_N * CUR_N; k++) {
+  const i = (k % CUR_N) - CUR_R, j = ((k / CUR_N) | 0) - CUR_R;
   const c = CUR[k];
   let jx = c[0], jz = c[1], id = c[2], cur = 1;
   if (id < 0) { jx = (hf(i, j, 101) - 0.5) * 2 * JIT; jz = (hf(i, j, 102) - 0.5) * 2 * JIT; id = hu(i, j, 103) % NREALM; cur = 0; }
@@ -334,9 +344,9 @@ for (let k = 0; k < 9; k++) {
 
 // CURATED: [x, z, realmId] per curated cell (7 cells).
 let nc = 0;
-for (let k = 0; k < 9; k++) if (TABLE[CUR_OFF + k * 4 + 3] > 0) nc++;
+for (let k = 0; k < CUR_N * CUR_N; k++) if (TABLE[CUR_OFF + k * 4 + 3] > 0) nc++;
 export const CURATED = new Float32Array(nc * 3);
-for (let k = 0, o = 0; k < 9; k++) {
+for (let k = 0, o = 0; k < CUR_N * CUR_N; k++) {
   if (TABLE[CUR_OFF + k * 4 + 3] > 0) {
     CURATED[o++] = TABLE[CUR_OFF + k * 4]; CURATED[o++] = TABLE[CUR_OFF + k * 4 + 1]; CURATED[o++] = TABLE[CUR_OFF + k * 4 + 2];
   }
@@ -355,8 +365,8 @@ export const W_NEAR = new Float64Array(4); // x, z, realm, dmin
 const SD = new Float64Array(9), SX = new Float64Array(9), SZ = new Float64Array(9), SI = new Int32Array(9);
 
 function site(i, j, k) {
-  if (i >= -1 && i <= 1 && j >= -1 && j <= 1) {
-    const o = CUR_OFF + ((i + 1) + (j + 1) * 3) * 4;
+  if (i >= -CUR_R && i <= CUR_R && j >= -CUR_R && j <= CUR_R) {
+    const o = CUR_OFF + ((i + CUR_R) + (j + CUR_R) * CUR_N) * 4;
     SX[k] = TABLE[o]; SZ[k] = TABLE[o + 1]; SI[k] = TABLE[o + 2];
     return;
   }
@@ -451,7 +461,7 @@ export function blendAtA(outRow) {
 
 // WGSL constants generated from this table.
 export function wgslPreamble() {
-  let s = 'const ROW:u32=' + ROW + 'u;const NREALM:u32=' + NREALM + 'u;const CUR_OFF:u32=' + (NREALM * ROW) + 'u;';
+  let s = 'const ROW:u32=' + ROW + 'u;const NREALM:u32=' + NREALM + 'u;const CUR_OFF:u32=' + (NREALM * ROW) + 'u;const CUR_R:i32=' + CUR_R + ';const CUR_N:i32=' + CUR_N + ';';
   s += 'const CELL:f32=' + CELL.toFixed(1) + ';const BAND:f32=' + BAND.toFixed(1) + ';const JIT:f32=' + JIT + ';';
   FIELDS.forEach((n, i) => { s += 'const ' + n + ':u32=' + i + 'u;'; });
   return s + '\n';

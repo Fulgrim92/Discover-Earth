@@ -128,8 +128,8 @@ fn vn3(p: vec3f) -> f32 {
 struct RWt { id: vec4i, w: vec4f, near: vec4f } // near: site x, z, realm, dmin
 
 fn cellSite(i: i32, j: i32) -> vec3f {
-  if (i >= -1 && i <= 1 && j >= -1 && j <= 1) {
-    return RT[CUR_OFF + u32((i + 1) + (j + 1) * 3)].xyz;
+  if (i >= -CUR_R && i <= CUR_R && j >= -CUR_R && j <= CUR_R) {
+    return RT[CUR_OFF + u32((i + CUR_R) + (j + CUR_R) * CUR_N)].xyz;
   }
   let x = (f32(i) + (hf(i, j, 101u) - 0.5) * 2.0 * JIT) * CELL;
   let z = (f32(j) + (hf(i, j, 102u) - 0.5) * 2.0 * JIT) * CELL;

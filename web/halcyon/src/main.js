@@ -1011,29 +1011,29 @@ async function heightCheck() {
 async function realmCheck() {
   const ids = [], N = 500;
   for (let k = 0; k < CURATED.length; k += 3) if (ids.indexOf(CURATED[k + 2]) < 0) ids.push(CURATED[k + 2]);
-  const pts = new Float32Array(ids.length * N * 8);
+  const pts = new Float32Array(ids.length * N * 12);
   for (let r = 0; r < ids.length; r++) {
     const c = realmCentre(ids[r], [0, 0]);
     for (let k = 0; k < N; k++) {
       const h1 = Math.imul(k + 1, 0x9e3779b1) ^ Math.imul(r + 11, 0x85ebca6b);
       const a = ((h1 >>> 8) % 6283) / 1000, rad = 4000 * Math.sqrt(((Math.imul(h1, 0x27d4eb2f) >>> 8) % 10000) / 10000);
-      const o = (r * N + k) * 8;
+      const o = (r * N + k) * 12;
       pts[o] = c[0] + rad * Math.cos(a); pts[o + 1] = c[1] + rad * Math.sin(a);
     }
   }
   const g = await clipmap.probeRealm(ctx, pts);
-  const cpu = new Float64Array(8);
+  const cpu = new Float64Array(12);
   const cpuAt = (x, z) => { W_IN[0] = x; W_IN[1] = z; realmWeightsA(); cpu.fill(0); for (let s = 0; s < 4; s++) if (W_ID[s] >= 0) cpu[W_ID[s]] += W_W[s]; };
-  const dif = (o) => { let m = 0; for (let i = 0; i < 8; i++) m = Math.max(m, Math.abs(cpu[i] - g.w[o + i])); return m; };
+  const dif = (o) => { let m = 0; for (let i = 0; i < 12; i++) m = Math.max(m, Math.abs(cpu[i] - g.w[o + i])); return m; };
   let maxD = 0, maxT = 0, worst = null, flips = 0, perRealm = {};
   for (let r = 0; r < ids.length; r++) {
     let rMax = 0;
     for (let k = 0; k < N; k++) {
-      const o = (r * N + k) * 8, x = pts[o], z = pts[o + 1];
+      const o = (r * N + k) * 12, x = pts[o], z = pts[o + 1];
       cpuAt(x, z);
       const d0 = dif(o);
       let cb = 0, cw = 0, gb = 0, gw = 0;
-      for (let i = 0; i < 8; i++) { if (cpu[i] > cw) { cw = cpu[i]; cb = i; } if (g.w[o + i] > gw) { gw = g.w[o + i]; gb = i; } }
+      for (let i = 0; i < 12; i++) { if (cpu[i] > cw) { cw = cpu[i]; cb = i; } if (g.w[o + i] > gw) { gw = g.w[o + i]; gb = i; } }
       if (cw >= 0.6 && cb !== gb) flips++;
       let dt = d0;
       for (let j = -1; j <= 1 && dt > 0; j++) for (let i = -1; i <= 1; i++) { cpuAt(x + i * 64, z + j * 64); dt = Math.min(dt, dif(o)); }
