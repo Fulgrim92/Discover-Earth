@@ -116,7 +116,10 @@ function parseOff(list) {
   }
   return b;
 }
-const OFF = Q.has('off') ? parseOff(Q.get('off')) : 0;
+// the baked terrain material (terrain.wgsl fsMatBake) is opt-in (tbake=1) until it matches the live path at 1:1:
+// by default every pixel takes the live material path and the material bake does not run (off=tlive)
+const OFF_TLIVE_BIT = 1 << OFF_NAMES.indexOf('tlive');
+const OFF = (Q.has('off') ? parseOff(Q.get('off')) : 0) | (Q.get('tbake') === '1' ? 0 : OFF_TLIVE_BIT);
 H.off = OFF_NAMES.filter((n, i) => OFF & (1 << i));
 const SCRIPTED = P.script !== '';
 const CAPTURE = P.shot && SCRIPTED;         // tools/play.mjs drives frames through __halcyon.capture(t)

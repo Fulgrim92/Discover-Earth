@@ -484,7 +484,7 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   // detail set for the scales under the baked texel and the live Lumen light: a fixed cost. Live: the full material
   // below where two realms blend (the Drift moves those weights every frame), on steep faces (a top-down texel
   // spans metres of wall height there: baked, a wall's bands and joints smear into vertical streaks), and when baking.
-  let useBake = gBakeL < 0 && (gForceBake || (rwm.id[1] < 0 && slope < 0.42 && !isOff(OFF_TLIVE)));
+  let useBake = gBakeL < 0 && !isOff(OFF_TLIVE) && (gForceBake || (rwm.id[1] < 0 && slope < 0.42));
   gPath = select(1u, 0u, useBake);
   if (useBake) {
     let bm = matFetch(l0, e, p.xz);

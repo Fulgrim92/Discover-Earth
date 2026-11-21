@@ -60,7 +60,8 @@ export function init(ctx) {
   const bmod = shader(CLIP + bsrc, 'terrain material bake');
   const empty = d.createBindGroupLayout({ label: 'empty', entries: [] });
   const bglMat = d.createBindGroupLayout({ label: 'material bake', entries: [{ binding: 0, visibility: vis, buffer: { type: 'uniform' } }] });
-  clip.pMat = pipeline({ label: 'material bake', module: bmod, vs: 'vsMat', fs: 'fsMatBake', layouts: [ctx.bgl0, clip.bgl, empty, bglMat],
+  // (only when the baked path is on: off=tlive, the default until tbake=1, skips the bake pass entirely)
+  if (!(ctx.off & 8388608)) clip.pMat = pipeline({ label: 'material bake', module: bmod, vs: 'vsMat', fs: 'fsMatBake', layouts: [ctx.bgl0, clip.bgl, empty, bglMat],
     targets: clip.matFormats.map((format) => ({ format })) });
   clip.matEmpty = d.createBindGroup({ layout: empty, entries: [] });
   for (let i = 0; i < LEVELS; i++) clip.matBG[i] = bindGroup(bglMat, [clip.bakeBuf[i]]);
