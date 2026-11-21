@@ -32,7 +32,7 @@ fn spB(s: u32) -> vec4f {
     case 0u: { return vec4f(0.3, 0.11, 14.0, 0.5); }
     case 1u: { return vec4f(0.58, 0.12, 10.0, 1.1); }
     case 2u: { return vec4f(0.16, 0.035, 9.0, 0.35); }
-    case 3u: { return vec4f(0.17, 0.06, 26.0, 0.9); }
+    case 3u: { return vec4f(0.17, 0.06, 8.0, 0.9); }
     case 4u: { return vec4f(0.28, 0.13, 7.0, 0.0); }
     case 5u: { return vec4f(0.7, 0.28, 22.0, 0.35); }
     case 7u: { return vec4f(1.6, 0.65, 0.0, 0.0); }
@@ -161,6 +161,9 @@ fn animal(ii: u32) -> Ani {
   let th = om * (kk * Tw + fw) + r4 * 6.2832;
   let walking = fract(tt) * T < Tw;
   var pos = hc + ofs + vec2f(cos(th), sin(th)) * Rw;
+  // land animals whose wandering spot falls in the water keep their place around the herd's home instead (the
+  // home is always on land), so a herd at the shore does not lose members
+  if (sp != 2u && sp != 4u && hgnd(pos) < 0.3) { pos += G0.xy - hc; }
   var dir = normalize(vec2f(-sin(th), cos(th)) * sign(om));
   A.walk = select(0.0, 1.0, walking && sb.w > 0.0);
   A.gait = abs(om) * Rw * (kk * Tw + fw) + G1.w;
@@ -442,7 +445,14 @@ fn coat(sp: u32, part: u32, tint: vec4f, loc: vec2f, wp: vec3f) -> vec3f {
       if (part == 12u) { return mix(vec3f(0.82, 0.62, 0.55), vec3f(0.02), sstep(0.0, 0.6, loc.x)); }
       return mix(vec3f(0.85, 0.42, 0.42), vec3f(0.9, 0.55, 0.5), v);
     }
-    case 3u: { return mix(vec3f(0.78, 0.8, 0.82), vec3f(0.62, 0.6, 0.56), v * 0.5); }
+    case 3u: {
+      // arctic fox: white winter coat (at most 0.6), or the blue morph, slate brown; darker nose, ear tips, feet
+      var w = mix(vec3f(0.58, 0.59, 0.6), vec3f(0.5, 0.48, 0.45), v * 0.5);
+      if (v > 0.6) { w = mix(vec3f(0.1, 0.09, 0.085), vec3f(0.16, 0.14, 0.12), v2); }
+      if (part == 12u || ((part == 13u || part == 14u) && loc.x > 0.4)) { w *= 0.35; }
+      if (part >= 4u && part <= 11u && loc.x > 0.6) { w *= 0.7; }
+      return w;
+    }
     case 4u: {
       // harbour seal: grey-brown with small dark spots (not bands), paler belly
       let base = mix(vec3f(0.2, 0.19, 0.17), vec3f(0.28, 0.27, 0.24), vn(wp.xz * 1.5 + wp.y, 962u));

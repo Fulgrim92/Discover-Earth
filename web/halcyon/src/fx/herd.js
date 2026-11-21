@@ -331,7 +331,7 @@ export function update(ctx, view) {
 // shot cameras (main.js track=<species>,<distance>,<height>): the centre of the nearest herd of a species, the same
 // closed form as herd.wgsl animal() (home + slow wander + flee offset); the first herd found stays chosen
 export const AIM = new Float64Array(4); // x, ground y, z, found
-const SPREAD = new Float32Array([14, 10, 9, 26, 7, 22, 0]);
+const SPREAD = new Float32Array([14, 10, 9, 8, 7, 22, 0]);
 const AIMK = new Int32Array([0x7fffffff, 0]);
 export function aim(sp, t, x, z) {
   const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL);
@@ -348,6 +348,8 @@ export function aim(sp, t, x, z) {
   const ph = Math.fround((key[best * 2] * 73856093) ^ (key[best * 2 + 1] * 19349663)) * 0.001, sz = SPREAD[sp] * 0.8;
   AIM[0] = home[best * 4] + Math.sin(t * 0.0021 + ph) * sz + st[best * 6];
   AIM[2] = home[best * 4 + 1] + Math.cos(t * 0.0017 + ph * 1.3) * sz + st[best * 6 + 1];
+  // at the shore the herd stands around its home (herd.wgsl: members over water move back to it)
+  if (sp !== 2 && sp !== 4 && heightAt(AIM[0], AIM[2]) < 0.3) { AIM[0] = home[best * 4] + st[best * 6]; AIM[2] = home[best * 4 + 1] + st[best * 6 + 1]; }
   AIM[1] = heightAt(AIM[0], AIM[2]); AIM[3] = 1;
   return 1;
 }
