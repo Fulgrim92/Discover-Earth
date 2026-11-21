@@ -22,7 +22,11 @@ export const clouds = { view: null, reflView: null, distView: null, w: 1, h: 1 }
 const U = GPUTextureUsage;
 let pMarch, blMarch, bgMarch = null, pWeather, bgWeather, cuBuf, wxV, wyV, baseV, detV, marchDesc, wxDesc;
 let WN = 512, WTEX = 128;
-const CU = new Float32Array(28);
+const CU = new Float32Array(32);
+// march cost instrumentation (URL steps=1): stats buffer (clouds.wgsl CST), read back every 16 frames into STEPS
+const NST = 72;
+let stBuf = null, stRead = null, stBusy = false, stFrame = 0;
+const STEPS = new Float64Array(NST); // summed over all read-back frames
 
 function layout(entries, label) { return G.device.createBindGroupLayout({ entries, label }); }
 const CS = () => GPUShaderStage.COMPUTE;
@@ -45,7 +49,10 @@ export function init(ctx) {
   if (hi <= lo) { lo = 0; hi = 0; }
   if (shi <= slo) { slo = 0; shi = 0; }
   CU[4] = lo; CU[5] = hi; CU[6] = slo; CU[7] = shi;
-  cuBuf = buffer(112, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'cloudU');
+  cuBuf = buffer(128, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'cloudU');
+  CU[28] = new URLSearchParams(location.search).get('steps') === '1' ? 1 : 0;
+  stBuf = buffer(NST * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST, 'cloudSteps');
+  if (CU[28] > 0) stRead = buffer(NST * 4, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST, 'cloudStepsRead');
 
   // ---- noise textures, baked once ----
   const base = tex(BASE_N, BASE_N, 'rgba8unorm', U.STORAGE_BINDING | U.TEXTURE_BINDING, { layers: BASE_N, dim: '3d', mips: BASE_MIPS, label: 'cloudBase' });
@@ -94,7 +101,7 @@ export function init(ctx) {
   wxDesc = { label: 'cloud weather', timestampWrites: tsBoth(TS_WEATHER) };
 
   // ---- march ----
-  blMarch = bgl('uFFffnss', 'clouds');
+  blMarch = bgl('uFFffnssB', 'clouds');
   const mmod = shader(CLIP + SKY + CLOUDS, 'clouds');
   pMarch = pipeline({ label: 'clouds', module: mmod, vs: 'vsC', fs: 'fsC', layouts: [ctx.bgl0, clip.bgl, blMarch],
     targets: [{ format: 'rgba16float' }, { format: 'rgba16float' }, { format: 'r16float' }] });
@@ -112,7 +119,7 @@ export function bind(ctx, tg) {
   clouds.w = w; clouds.h = h;
   CU[12] = w; CU[13] = h; CU[14] = 1 / w; CU[15] = 1 / h;
   const rep = G.device.createSampler({ magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear', addressModeU: 'repeat', addressModeV: 'repeat', addressModeW: 'repeat' });
-  bgMarch = bindGroup(blMarch, [cuBuf, baseV, detV, wxV, wyV, tg.distV, rep, ctx.linear]);
+  bgMarch = bindGroup(blMarch, [cuBuf, baseV, detV, wxV, wyV, tg.distV, rep, ctx.linear, stBuf]);
   const at = (v) => ({ view: v, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } });
   marchDesc = { colorAttachments: [at(clouds.view), at(clouds.reflView), at(clouds.distView)], timestampWrites: tsBoth(TS_CLOUDS) };
   return clouds.view;
@@ -145,9 +152,33 @@ export function draw(ctx, enc, view) {
     c.setPipeline(pWeather); c.setBindGroup(0, view.bg0); c.setBindGroup(1, clip.bg); c.setBindGroup(2, bgWeather);
     c.dispatchWorkgroups(WN / 8, WN / 8); c.end();
   }
+  const counting = CU[28] > 0 && view === ctx.views[0];
+  if (counting) enc.clearBuffer(stBuf);
   const p = enc.beginRenderPass(marchDesc);
   p.setPipeline(pMarch);
   p.setBindGroup(0, view.bg0); p.setBindGroup(1, clip.bg); p.setBindGroup(2, bgMarch);
   p.draw(3); p.end();
+  if (counting && !stBusy && (++stFrame & 3) === 0) { enc.copyBufferToBuffer(stBuf, 0, stRead, 0, NST * 4); stBusy = true; pendingRead = 1; }
   return wx;
+}
+
+// after the frame's submit (main.js): map the copy made this frame; instrumentation only (it allocates)
+let pendingRead = 0;
+export function afterSubmit() {
+  if (!pendingRead) return;
+  pendingRead = 0;
+  stRead.mapAsync(GPUMapMode.READ).then(() => {
+    const a = new Uint32Array(stRead.getMappedRange());
+    for (let i = 0; i < NST; i++) STEPS[i] += a[i];
+    stRead.unmap(); stBusy = false;
+  }, () => { stBusy = false; });
+}
+
+// bench JSON: average evaluations per ray by kind and the percentiles of the per-ray total (steps=1 only)
+export function stepReport() {
+  if (!(CU[28] > 0) || STEPS[0] === 0) return null;
+  const n = STEPS[0], r = (i) => Math.round(STEPS[i] / n * 10) / 10;
+  const pct = (q) => { let c = 0; for (let b = 0; b < 64; b++) { c += STEPS[8 + b]; if (c >= q * n) return b * 16 + 16; } return 1024; };
+  return { rays: n, perRay: { mainIter: r(1), dense: r(2), light: r(3), veil: r(4), precip: r(5), mirror: r(6), total: r(7) },
+    totalP50: pct(0.5), totalP90: pct(0.9), totalP99: pct(0.99), hist16: Array.from(STEPS.subarray(8, 72)) };
 }

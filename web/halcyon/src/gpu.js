@@ -133,6 +133,7 @@ export function bgl(spec, label) {
     if (c === 'u') e.buffer = { type: 'uniform' };
     else if (c === 'r') e.buffer = { type: 'read-only-storage' };
     else if (c === 'b') e.buffer = { type: 'storage' };
+    else if (c === 'B') e.buffer = { type: 'storage' }; // writable in fragment shaders too (instrumentation)
     else if (c === 'f') e.texture = { sampleType: 'float', viewDimension: '2d' };
     else if (c === 'a') e.texture = { sampleType: 'float', viewDimension: '2d-array' };
     else if (c === 'n') e.texture = { sampleType: 'unfilterable-float', viewDimension: '2d' };
@@ -142,6 +143,7 @@ export function bgl(spec, label) {
     else if (c === 'S') e.sampler = { type: 'non-filtering' };
     else if (c === 'w') e.storageTexture = { access: 'write-only', format: 'rgba8unorm', viewDimension: '3d' };
     if (c === 'w' || c === 'b') e.visibility = GPUShaderStage.COMPUTE;
+    if (c === 'B') e.visibility = GPUShaderStage.FRAGMENT;
     entries.push(e);
   }
   return G.device.createBindGroupLayout({ entries, label });

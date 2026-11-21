@@ -582,7 +582,7 @@ function renderFrame(bakeAll) {
   perf.frameEnd(enc, slot);
   CMD[0] = enc.finish();
   G.queue.submit(CMD);
-  perf.afterSubmit();
+  perf.afterSubmit(); clouds.afterSubmit(); // clouds: march-cost readback (steps=1 only)
   if (MAX_INFLIGHT > 0) { FL.n++; G.queue.onSubmittedWorkDone().then(FL.done, FL.done); }
   frameNo++;
   H.frame = frameNo;
@@ -809,7 +809,7 @@ async function finishBench() {
     resolution: P.benchFixed ? 'fixed 1920x1080 canvas (bench default), internal = 1920x1080 x dynres scale' : 'w=' + P.w + ' h=' + P.h + ' from the URL',
     off: H.off, offBits: OFF, split: !!splitDesc, msaa: ctx.msaa, gpu: G.paths, canvasFormat: G.canvasFormat, hdr: G.hdr,
     quality: ['low', 'normal', 'high'][P.quality], stereo: nViews === 2, adapter: adapterInfo(), stride: P.stride,
-    inflight: MAX_INFLIGHT, present: !OFFSCREEN, bakes: bakeReport(),
+    inflight: MAX_INFLIGHT, present: !OFFSCREEN, bakes: bakeReport(), cloudSteps: clouds.stepReport(),
     route: 'Home Fjords rings, boost transit, Stone Forest rings, Lumen Deep rings, FPV (fixed dt 1/' + P.fps + ')',
   });
   H.bench = r;

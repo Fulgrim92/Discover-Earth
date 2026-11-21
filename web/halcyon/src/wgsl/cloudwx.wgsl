@@ -39,7 +39,7 @@ fn sat(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }
   cov *= mix(mix(0.3, 0.0, moonR), 1.0, own);
   // squalls close the sky in any realm (also on the horizon), denser so the base is dark
   // the cell's edge is eroded by the cloud field (towers and gaps), its core is closed
-  let fe = cloudField(xz * 1.3 + 300.0, 0.0);
+  let fe = f; // the realm field already evaluated here (a second cloudField per texel cost 0.3 ms)
   cov = max(cov, sstep(0.05, 0.35, wst * 1.25 - 0.75 * (1.0 - fe)) * mix(0.7, 1.0, fe));
   textureStore(outWx, id.xy, vec4f(cov, base, max(top, base + 60.0), c0.w * (1.0 + 1.6 * wst)));
   // the sea's own top and density are normalised by its weight, so the layer does not sag at realm borders

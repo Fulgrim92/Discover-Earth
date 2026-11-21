@@ -274,6 +274,7 @@ struct CloudU {
   camId: vec4f, // realm ids blended at the camera (-1 = none)
   camW: vec4f,  // their weights
   bolt: vec4f,  // lightning: x, z, intensity (0 none), seconds into the flash (weather.js)
+  dbg: vec4f,   // x: 1 = count march steps into the stats buffer (URL steps=1, fx/clouds.js)
 }
 
 // Sun transmittance through the clouds at world point p: one fetch of the baked cloud-shadow map (fx/atmo.js) at
