@@ -597,25 +597,93 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   if (wHome > 0.01) {
     // basalt flows (only evaluated where there is rock: grass pixels skip all of this)
     if (rockW > 0.01) {
-    // flows wander in height along the face and each has its own tone; the contacts between flows show only on some
-    // flows and break along the contour; columnar joints cross them, so no flow line reads as a contour
+    // Faroese lava pile: flows 5-22 m thick (hashed per flow, three to a 38 m cycle), each a dark massive basalt
+    // with a browner rubbly top, separated by a thin red-brown tuff/scoria bed that weathers back into a shadowed
+    // recess; grass holds on the ledge the recess leaves. Columnar joints only in the thick flows. The contacts wander
+    // in height along the face so no flow line reads as a contour.
     let lay = h + 3.0 * vn(p.xz * (1.0 / 140.0), 32u) + 1.6 * vn(vec2f(u * (1.0 / 40.0), h * (1.0 / 17.0)), 246u);
-    let lk = floor(lay / 4.3);
-    let flowT = 0.72 + 0.42 * hf(i32(lk), 5, 244u);
-    let lp = (h + 4.0 * vn(p.xz * (1.0 / 90.0), 32u) + 2.5 * vn(vec2f(u * (1.0 / 55.0), 7.0), 247u)) / max(T3v.w, 1.0);
-    let led = fract(lp) * select(0.0, 1.0, hf(i32(floor(lp)), 9, 248u) < 0.6);
-    let tread = sstep(0.5, 0.3, slope) * rockMask * sstep(4.0, 1.0, tx);
-    let ledge = clamp(sstep(0.62, 0.8, led) * T3v.z * 6.0 + tread * 0.6, 0.0, 1.0);
-    let broken = sstep(-0.25, 0.35, vn(vec2f(u * (1.0 / 9.0), h * 0.1), 245u) + 0.3 * nS);
-    let ledgeG = sstep(0.45, 0.6, ledge + 0.3 * (gH - 0.5) + 0.2 * nS) * broken;
+    let cy = lay * (1.0 / 38.0);
+    let ck = floor(cy); let cf = cy - ck; let cki = i32(ck);
+    let f1 = 0.15 + 0.3 * hf(cki, 1, 244u);
+    let f2 = min(f1 + 0.15 + 0.35 * hf(cki, 2, 244u), 0.9);
+    var lo = 0.0; var hi = f1; var fid = 0;
+    if (cf > f1) { lo = f1; hi = f2; fid = 1; }
+    if (cf > f2) { lo = f2; hi = 1.0; fid = 2; }
+    let thick = (hi - lo) * 38.0;               // this flow's thickness (m)
+    let z = (cf - lo) * 38.0;                   // height above its base (m)
+    let flowT = 0.75 + 0.4 * hf(cki * 3 + fid, 5, 248u);
+    let tb = 0.8 + 1.2 * hf(cki * 3 + fid, 6, 249u); // tuff bed at the base
+    let aaH = max(fwhv, 0.15);
+    let tuff = sstep(tb + aaH, tb - aaH * 0.5, z);
+    let topR = sstep(thick - 2.5, thick - 0.6, z);  // rubbly, browner flow top
     var bas = M1v.rgb * flowT * rd.x * vec3f(0.92, 0.95, 1.02);
-    let joint = (1.0 - sstep(0.0, 0.06, abs(lay / 4.3 - lk - 0.5) - 0.41)) * select(0.0, 1.0, hf(i32(lk), 8, 249u) < 0.45)
-              * sstep(-0.2, 0.25, vn(vec2f(u * (1.0 / 16.0), lk * 1.7), 253u));
-    bas = mix(bas, bas * 0.62, joint * bl(1.0, fp) * 0.5);
-    let wcol = bl(2.0, fp);
-    if (wcol > 0.0) { bas *= 1.0 + 0.16 * vn(vec2f(u * (1.0 / 1.9), lay * (1.0 / 7.0)), 254u) * wcol; } // columns
+    bas = mix(bas, bas * vec3f(1.25, 1.08, 0.9), topR * 0.6);
+    bas = mix(bas, vec3f(0.085, 0.055, 0.045) * (0.8 + 0.4 * rd.x), tuff * 0.8);
+    // the recess: the face of the tuff bed is set back and shadowed; its top edge throws a dark line
+    bas *= 1.0 - 0.35 * tuff * sstep(0.3, 0.6, slope);
+    dg += vec3f(down.x, 0.0, down.y) * (tuff * 0.6 - topR * 0.25) * sstep(0.3, 0.6, slope) * bl(1.5, fp);
+    // columns: vertical joints in flows thicker than 9 m
+    let wcol = bl(2.0, fp) * sstep(8.0, 12.0, thick) * (1.0 - tuff) * (1.0 - topR);
+    if (wcol > 0.0) {
+      let cj = vn(vec2f(u * (1.0 / 1.9), (ck * 3.0 + f32(fid)) * 1.7), 254u);
+      bas *= 1.0 + 0.18 * cj * wcol;
+      bas = mix(bas, bas * 0.6, (1.0 - sstep(0.0, 0.12, abs(cj) - 0.02)) * wcol * 0.6);
+    }
+    // ledges: grass on the flow tops above each tuff recess and on gentle treads
+    let tread = sstep(0.5, 0.3, slope) * rockMask * sstep(4.0, 1.0, tx);
+    let onTop = sstep(1.6, 0.4, z) * sstep(0.75, 0.45, slope);
+    let broken = sstep(-0.25, 0.35, vn(vec2f(u * (1.0 / 9.0), h * 0.1), 245u) + 0.3 * nS);
+    let ledgeG = clamp(sstep(0.35, 0.6, onTop * T3v.z * 6.0 + tread * 0.6 + 0.3 * (gH - 0.5) + 0.2 * nS) * broken, 0.0, 1.0);
     let homeRock = mix(bas, M0v.rgb * (0.65 + 0.4 * nS + 0.2 * gd.x), ledgeG * 0.9);
     alb = mix(alb, homeRock, rockW * wHome);
+    }
+    // talus: grey basalt scree in cones and aprons at the cliff foot (moderate slope, concave ground below the faces),
+    // patchy, grassing over at its edges; pebble grain close up
+    let apron = sstep(0.15, 0.24, slope) * sstep(0.5, 0.36, slope) * sstep(-0.02, 0.1, conc + 0.04 * nM) * sstep(3.0, 10.0, h);
+    let tal = apron * sstep(-0.15, 0.25, 0.6 * nM + 0.4 * nS + 0.25) * wHome;
+    if (tal > 0.01) {
+      var talus = M1v.rgb * 1.55 * (0.85 + 0.3 * gd.x + 0.15 * nS);
+      if (fp < 0.15) {
+        let pb = pebbles(p.xz, 0.4);
+        let pw = bl(0.4, fp);
+        talus *= 1.0 + (0.5 * pb.w - 0.15) * pw;
+        dg += vec3f(pb.y, 0.0, pb.z) * 0.5 * pw * tal;
+      }
+      alb = mix(alb, talus, tal * 0.85);
+      screeW = max(screeW, tal);
+    }
+    // the plateau at 5-80 m (not a smooth lawn): lush and dry swards, heather on the exposed rises, moss and peat in
+    // the shallow hollows with a stream thread winding through some, low lichen-grey outcrops on the knolls. All on
+    // rotated domains with soft edges (no axis-aligned value noise, no hard thresholds).
+    let flatH = sstep(0.24, 0.1, slope) * (1.0 - rockW) * wHome;
+    if (flatH > 0.01) {
+      let q1 = rotq(p.xz * (1.0 / 55.0));
+      let m1 = vn(q1, 261u) + 0.5 * vn(rotq(q1 * 2.6 + vec2f(3.1, 7.7)), 262u);
+      let w9 = bl(9.0, fp);
+      let m2 = vn(rotq(rotq(p.xz * (1.0 / 9.0))), 263u) * w9;
+      // swards: lush deep green vs dry yellow-green
+      let dry = sstep(-0.3, 0.5, m1 + 0.35 * m2 - 0.6 * conc);
+      var g2 = mix(alb * vec3f(0.9, 0.97, 0.88), alb * vec3f(1.12, 1.1, 0.84), dry);
+      // heather and crowberry on the exposed rises
+      let hth = sstep(0.55, 0.9, m1 - 1.2 * conc + 0.3 * m2) * 0.3;
+      g2 = mix(g2, mix(g2 * 0.5, vec3f(0.075, 0.055, 0.05), 0.5), hth);
+      // moss and peat in the hollows, wetter
+      let bog = sstep(0.08, 0.25, conc + 0.05 * m2);
+      g2 = mix(g2, g2 * vec3f(0.62, 0.72, 0.5), bog * 0.45);
+      wet = max(wet, bog * 0.3 * flatH);
+      // stream threads: a winding line along the hollows (1-2 m wide), dark wet sedge with a glint of water
+      let ws = bl(2.5, fp);
+      if (ws > 0.0) {
+        let sl = abs(vn(rotq(p.xz * (1.0 / 70.0) + vec2f(1.3, 0.4)), 264u) + 0.25 * vn(rotq(p.xz * (1.0 / 13.0)), 265u));
+        let thread = sstep(0.035, 0.012, sl) * sstep(0.0, 0.08, conc + 0.03) * ws;
+        g2 = mix(g2, vec3f(0.03, 0.045, 0.035), thread * 0.8);
+        wet = max(wet, thread * flatH);
+      }
+      // low outcrops on the knolls: lichen-grey basalt breaking the turf
+      let oc = sstep(0.55, 0.8, vn(rotq(p.xz * (1.0 / 16.0) + vec2f(5.5, 2.2)), 266u) * bl(16.0, fp) + 0.25 * m2 - 0.6 * conc) * sstep(0.0, 0.5, m1);
+      g2 = mix(g2, vec3f(0.11, 0.11, 0.1) * (0.85 + 0.3 * gd.x), oc * 0.75); // lichen-grey
+      rockW = max(rockW, oc * 0.7 * flatH);
+      alb = mix(alb, g2, flatH);
     }
     // thread-thin waterfalls on steep concave faces (coverage-preserving: thin threads stay visible far away)
     let steep = sstep(0.35, 0.6, slope);
