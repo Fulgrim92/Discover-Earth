@@ -160,6 +160,14 @@ fn widthAt(k: u32, j: u32) -> f32 {
   var s = f32(j) / 3.0;
   var wj = widthAt(kind, j) * W;
   if (j == 3u) { wj = select(0.0, W * 0.8, kind == K_TUFT || kind == K_TUSSOCK); }
+  let dryC = kind == K_TUFT && I.x < 0.0;                         // Painted Range: sage shrub (-1) or bunch grass (-2)
+  if (dryC) {
+    let sage = I.x > -1.5;
+    let pr = select(vec4f(0.35, 0.7, 0.9, 1.0), vec4f(0.55, 1.0, 0.9, 0.5), sage);
+    W = select(0.3 + 0.12 * r3, 0.45 + 0.2 * r3, sage) * min(max(1.0, I.d / 28.0), 2.4) * sizeF;
+    H = select(0.32 + 0.2 * r4, 0.32 + 0.25 * r4, sage) * min(max(1.0, I.d / 28.0), 2.4) * sizeF;
+    wj = pr[j] * W;
+  }
   var y = 0.0;
   var hz = vec2f(0.0);
   var shp = vec4f(0.0);
@@ -197,7 +205,7 @@ fn widthAt(k: u32, j: u32) -> f32 {
   }
   if (kind == K_TUSSOCK) { a2 = mix(alb * 0.6, alb * vec3f(1.15, 1.1, 1.0), s); }
   if (kind == K_TUFT) {
-    a2 = mix(alb * 0.72, alb * select(vec3f(1.25, 1.2, 0.75), vec3f(1.3, 1.25, 1.1), I.x < 0.0), s);
+    a2 = mix(alb * 0.72, alb * select(vec3f(1.25, 1.2, 0.75), vec3f(1.08, 1.06, 1.02), I.x < 0.0), s);
     if (I.x >= 1.0 && b == 0u) {
       // a flower drift seen from afar: blossom colour on the tips of one card
       let code = floor(I.x);
@@ -227,11 +235,15 @@ fn widthAt(k: u32, j: u32) -> f32 {
   o.emis = emis;
   o.wp = pos;
   o.loc = vec2f(wj * 0.5 * sgn, y);
-  if (kind != K_STALK) { o.shp = vec4f(H, W, f32(b), r1); }
+  if (kind != K_STALK) { o.shp = vec4f(H, W, f32(b) + select(0.0, 100.0, dryC && I.x > -1.5), r1); }
   // ambient occlusion low in the sward; tufts deep in a meadow are darker at the root
   // self-shadowing in the sward: the root sits in the shade of its neighbours, more so in dense tall grass
   let ao = mix(select(0.55, 0.3, kind == K_GRASS || kind == K_TUFT), 1.0, sstep(0.0, 0.85, s));
-  o.prm = vec4f(I.sh, ao, tr, I.fade);
+  // on a slope facing away from the sun the ground itself hides it: whatever stands low on it is in shade
+  // (and where the sun only grazes the slope, the neighbours and the ground's own relief shade the plant too)
+  let gshade = sstep(0.0, 0.3, dot(gn, FR.sun.xyz));
+  o.prm = vec4f(I.sh * gshade, ao * select(1.0, 0.85, dryC), select(tr, 0.12, dryC), I.fade);
+  if (dryC && I.x < -1.5) { o.kind = K_TUSSOCK; }                 // bunch grass: the fan of fine blades
   o.pos = VW.vp * vec4f(pos - cam, 1.0);
   return o;
 }
@@ -352,6 +364,8 @@ fn lathePt(kind: u32, k: u32, a: f32, H: f32, R: f32, h: u32) -> vec3f {
       let pc = lathePt(I.kind, ring, a + 0.3, H, R, I.h);
       nn = normalize(cross(pb - pa, pc - pk));
       if (ring == 8u) { nn = vec3f(0.0, 1.0, 0.0); }
+      // foliage reads as a soft volume: bend the facet normal toward the crown's centre-out direction
+      nn = normalize(mix(nn, normalize(pk - vec3f(0.0, 0.5 * H, 0.0)), 0.6));
     }
     // sway grows with height
     let sw = sin(t * 0.5 + r1 * 9.0) * 0.04 * H * (pk.y / H) * (pk.y / H) * select(1.0, 0.25, I.x > 0.5 && isM);
@@ -480,9 +494,18 @@ struct FOut { @location(0) c: vec4f, @location(1) d: vec4f }
       let w = 0.42 * (1.0 - yv / top);
       alpha = aaStep(abs(f - 0.5) - w) * aaStep(yv - top) * aaStep(abs(u) - 0.5);
     } else {
-      let sp = abs(sin(u * 3.1416 * 6.0 + in.shp.w * 20.0)) * 0.6 + abs(sin(u * 3.1416 * 13.0 + in.shp.w * 7.0)) * 0.4;
-      let top = 0.35 + 0.6 * pow(sp, 0.7);
-      alpha = aaStep(yv - top) * aaStep(abs(u) - 0.5 * (1.0 - 0.35 * yv));
+      if (in.shp.z >= 100.0) {
+        // sage shrub: a rounded dome with a scalloped, leafy edge and a few gaps between the twigs
+        let q = vec2f(u * 2.0, (yv - 0.42) / 0.58);
+        let a = atan2(q.y, q.x);
+        let edge = 1.0 - 0.09 * abs(sin(a * 7.0 + in.shp.w * 9.0)) - 0.06 * abs(sin(a * 17.0 + in.shp.w * 3.0));
+        let gap = vn(vec2f(u * 9.0, yv * 7.0) + in.shp.w * 13.0, 977u);
+        alpha = aaStep(length(q) - edge) * aaStep(gap - 0.55) * aaStep(-yv);
+      } else {
+        let sp = abs(sin(u * 3.1416 * 6.0 + in.shp.w * 20.0)) * 0.6 + abs(sin(u * 3.1416 * 13.0 + in.shp.w * 7.0)) * 0.4;
+        let top = 0.35 + 0.6 * pow(sp, 0.7);
+        alpha = aaStep(yv - top) * aaStep(abs(u) - 0.5 * (1.0 - 0.35 * yv));
+      }
     }
   } else if (kind == K_FERN || kind == K_VINE) {
     // pinnae: comb of leaflets along the frond
@@ -531,16 +554,27 @@ struct FOut { @location(0) c: vec4f, @location(1) d: vec4f }
   } else if (kind == K_CROWN) {
     // leaf clusters: high-frequency normal noise and dark gaps
     // (trig lumps, not value noise: the fragment stays cheap)
+    // leaf clusters at two scales (the finer one only near), holes only toward the silhouette: a soft leafy edge
+    // and a closed, lit volume inside (no see-through gaps)
     let lp = in.wp * 2.2;
     let g = sin(lp * vec3f(1.7, 2.3, 1.9) + 2.0 * sin(lp.zxy * vec3f(1.3, 1.1, 1.7)));
+    let nearF = sstep(40.0, 8.0, dist);
+    // near: leaf clusters as value-noise bumps on two planes (no trig worms), clumps darker between
+    let pw = in.wp * 4.0;
+    let na = vnoised(pw.xz + 0.37 * pw.y, 861u);
+    let nb = vnoised(pw.xy + 0.37 * pw.z, 862u);
+    let G = vec3f(na.y + nb.y, nb.z, na.z);
     let edge = 1.0 - abs(dot(n, V));
-    n = normalize(n + g * 0.6);
+    n = normalize(n + g * 0.35 * (1.0 - nearF) - G * 0.12 * nearF);
     let q = in.wp * 3.1;
     let gap = 0.6 * sin(q.x * 1.3 + 2.0 * sin(q.z * 1.1) + q.y) * cos(q.z * 1.4 - 1.5 * sin(q.y * 1.2 + q.x)) + 0.4 * g.x * g.y;
-    alpha = sstep(-0.05, 0.12, gap + 0.62 - edge * 1.1); // ragged leafy silhouette
-    alb *= 0.65 + 0.5 * sstep(-0.4, 0.5, gap);
-    alb = mix(vec3f(luma(alb)), alb, 0.7);
-    ao = mix(0.5, 1.0, sstep(2.0, 6.5, in.loc.y)) * (0.7 + 0.3 * sstep(-0.5, 0.3, gap));
+    let fine = mix(gap, 0.6 * na.x + 0.4 * nb.x, nearF);
+    let rim = sstep(0.35, 0.8, edge);
+    alpha = sstep(-0.05, 0.12, fine * rim + 0.75 - rim * 0.95); // ragged leafy silhouette, solid inside
+    alb *= 0.78 + 0.35 * sstep(-0.4, 0.5, fine);
+    alb *= mix(1.0, mix(0.4, 1.12, sstep(-0.55, 0.45, na.x + 0.5 * nb.x)), nearF); // deep gaps between leaf clusters
+    alb = mix(vec3f(luma(alb)), alb, 0.75);
+    ao = mix(0.62, 1.0, sstep(2.0, 6.5, in.loc.y)) * (0.8 + 0.2 * sstep(-0.5, 0.3, fine));
     alb *= mix(0.85, 1.12, sstep(0.55, 1.0, in.prm.y));                // outer leaves on the sub-crowns lighter, younger
   } else if (kind == K_CRYSTAL || kind == K_SHARD) {
     n = normalize(cross(dpdx(in.wp), dpdy(in.wp)));

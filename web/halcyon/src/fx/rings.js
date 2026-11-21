@@ -10,6 +10,7 @@ import SKY from '../wgsl/sky.wgsl';
 import FXU from '../wgsl/fxu.wgsl';
 import FXW from '../wgsl/fx.wgsl';
 import { CLK, C_TIME } from '../clock.js';
+import { info as RINFO } from '../sim/rings.js'; // direct binding: no namespace getter call per frame
 
 export const RING_MAX = 64, RING_FLOATS = 12, MAX_COURSE = 4096, SPARKS = 72;
 // FxU layout (floats), see fxu.wgsl
@@ -49,8 +50,8 @@ export function bind(ctx, tg) {
 // per frame, after sim.step: ring instances and the spark trail
 export function update(sim) {
   const timeS = CLK[C_TIME];
-  const R = sim._dbg.R, rs = sim.rings, n = sim.ringCount, next = sim.ringNextSlot;
-  const wstart = R.info[2], passed = R.info[4], last = R.info[5];
+  const rs = sim.rings, n = sim.ringCount, next = sim.ringNextSlot;
+  const wstart = RINFO[2], passed = RINFO[4], last = RINFO[5];
   if (S[0] < 0) S[0] = passed;
   if (passed !== S[0]) { S[0] = passed; if (last >= 0 && last < MAX_COURSE) burstT[last] = timeS; }
   for (let k = 0; k < RING_MAX; k++) {

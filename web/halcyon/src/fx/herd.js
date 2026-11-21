@@ -10,7 +10,7 @@
 // Caps: 49 herds x 16 animals + 4 giants, 2496 vertices per animal (13 ellipsoids); only herds that exist are drawn.
 import { G, shader, pipeline, bgl, bindGroup, buffer, FO } from '../gpu.js';
 import { W_IN, W_ID, W_W, realmWeightsA } from '../realms.js';
-import { heightBatch } from '../world.js';
+import { heightBatch, heightAt } from '../world.js';
 import { p as DP, v as DV } from '../sim/drone.js';
 import { clip } from './clipmap.js';
 import CLIP from '../wgsl/clip.wgsl';
@@ -19,6 +19,7 @@ import LIFE from '../wgsl/life.wgsl';
 import FLORA from '../wgsl/flora.wgsl';
 import HERD from '../wgsl/herd.wgsl';
 import HERDM from '../wgsl/herdm.wgsl';
+import HERDSKIN from '../wgsl/herdskin.wgsl';
 import { ENC, DIR } from './lifefx.js';
 
 const CELL = 320, NS = 7, NH = NS * NS, NGI = 4, NG = NH + NGI, GCELL = 4000;
@@ -44,6 +45,120 @@ let pipe, pNear, pMirror, pMurm, bg, ubuf;
 const H_NEAR = 8640, LOD_NEAR = 100; // near herds (< 100 m): 12 x 8 quads per part instead of 8 x 4
 const DBG = typeof location !== 'undefined' && /[?&]fstat=1/.test(location.search); // debug: log herd homes
 
+
+// ---- skinned quadrupeds (herdskin.wgsl): the shape tables, generated once at startup ----
+// Per species, in metres for an adult (scaled per animal). The spine is a tube swept along s (0 tail root, 1 croup,
+// 2 girth, 3 neck base, 5 poll, 6 muzzle); every key ring is [s, half width, top radius, bottom radius, egg (wider
+// low than high), ridge (spine, withers, crest), side bump (eyes), section exponent (<1 boxier)], so sections are
+// not circles. Legs are fore and hind key rings [u, radius across, radius in front, radius behind] along
+// u (0 top inside the body, 1 knee or hock, 2 fetlock, 3 hoof). The rig: spine control points (x forward, y up from
+// the ground), [neck, head, tail, ear] lengths, per leg pair [x, top height, half track, hoof x offset] and
+// [upper bone, lower bone, fetlock height, pastern slope], [tail radius, tail depth ratio, poll half width, neck lift],
+// [dock height, head drop, fleece lump, 0].
+//
+// Horse proportions follow the conformation fractions of a 1.5 m wither height H: body (point of shoulder to buttock)
+// 1.0 H, chest 0.45 H deep at the girth and 0.36 H at the flank, barrel 0.3 H wide, croup a little below the withers,
+// neck 0.6 H, head 0.4 H with a 0.2 H jaw and a 0.1 H muzzle, ears 0.1 H, a strong gaskin and a hock set behind.
+const SKIN = [
+  { // Faroese sheep: a lumpy fleece barrel 1.4 times longer than tall, a short neck and a real head out of the wool
+    q: [-0.6, 0.5, -0.3, 0.5, 0.14, 0.5, 0.36, 0.52], len: [0.3, 0.26, 0.15, 0.1],
+    fa: [0.16, 0.4, 0.1, 0.02], fb: [0.2, 0.15, 0.06, 0.4], ha: [-0.26, 0.42, 0.1, -0.06], hb: [0.2, 0.21, 0.06, 0.4],
+    tail: [0.04, 0.8, 0.055, 0.35], ext: [0.14, 1.6, 0.024, 0.1],
+    ring: [[0, 0, 0, 0, 0, 0, 0, 1], [0.05, 0.07, 0.08, 0.08, 0, 0, 0, 1], [0.2, 0.14, 0.15, 0.15, 0.03, 0, 0, 1],
+      [0.45, 0.19, 0.19, 0.19, 0.05, 0, 0, 0.8], [0.85, 0.215, 0.21, 0.2, 0.05, 0, 0, 0.65], [1.6, 0.22, 0.21, 0.2, 0.06, 0, 0, 0.62],
+      [2.2, 0.215, 0.21, 0.2, 0.05, 0, 0, 0.65], [2.6, 0.18, 0.19, 0.18, 0.03, 0, 0, 0.8], [2.85, 0.14, 0.15, 0.12, 0, 0, 0, 0.95],
+      [3.05, 0.1, 0.11, 0.085, 0, 0, 0, 1], [3.3, 0.075, 0.08, 0.07, 0, 0, 0, 1], [3.8, 0.06, 0.066, 0.06, 0, 0, 0, 1],
+      [4.5, 0.06, 0.064, 0.06, 0, 0, 0, 1], [4.95, 0.055, 0.056, 0.068, 0.1, 0, 0, 1], [5.15, 0.062, 0.056, 0.078, 0.2, 0, 0, 0.95],
+      [5.4, 0.056, 0.052, 0.066, 0.12, 0, 0.012, 0.95], [5.7, 0.044, 0.046, 0.05, 0.05, 0, 0, 1], [5.9, 0.036, 0.038, 0.042, 0, 0, 0, 1],
+      [5.97, 0.026, 0.028, 0.03, 0, 0, 0, 1], [6, 0, 0, 0, 0, 0, 0, 1]],
+    fleg: [[0, 0.06, 0.07, 0.07], [0.4, 0.03, 0.03, 0.032], [0.8, 0.021, 0.021, 0.022], [1, 0.026, 0.028, 0.026], [1.2, 0.018, 0.017, 0.019],
+      [1.6, 0.016, 0.015, 0.018], [1.95, 0.02, 0.02, 0.022], [2.1, 0.019, 0.019, 0.02], [2.5, 0.015, 0.015, 0.015],
+      [2.75, 0.018, 0.019, 0.016], [2.97, 0.022, 0.024, 0.02], [3, 0, 0, 0]],
+    hleg: [[0, 0.07, 0.08, 0.09], [0.4, 0.04, 0.035, 0.05], [0.85, 0.022, 0.02, 0.026], [1, 0.024, 0.02, 0.034], [1.2, 0.018, 0.016, 0.022],
+      [1.6, 0.016, 0.015, 0.018], [1.95, 0.02, 0.02, 0.022], [2.1, 0.019, 0.019, 0.02], [2.5, 0.015, 0.015, 0.015],
+      [2.75, 0.018, 0.019, 0.016], [2.97, 0.022, 0.024, 0.02], [3, 0, 0, 0]],
+  },
+  { // wild horse (Przewalski-like), H = 1.5 m at the withers
+    q: [-0.8, 1.12, -0.45, 1.14, 0.28, 1.12, 0.62, 1.18], len: [0.85, 0.6, 0.85, 0.15],
+    fa: [0.38, 1.0, 0.14, 0.02], fb: [0.56, 0.28, 0.17, 0.6], ha: [-0.55, 1.0, 0.13, -0.125], hb: [0.505, 0.38, 0.17, 0.5],
+    tail: [0.085, 0.7, 0.1, 0.35], ext: [0.24, 1.6, 0, 0.04],
+    ring: [[0, 0, 0, 0, 0, 0, 0, 1], [0.05, 0.07, 0.1, 0.12, 0, 0, 0, 1], [0.15, 0.14, 0.18, 0.21, 0.03, 0, 0, 0.95],
+      [0.3, 0.19, 0.23, 0.26, 0.06, 0.005, 0, 0.9], [0.55, 0.22, 0.28, 0.29, 0.08, 0.01, 0, 0.85], [1, 0.23, 0.3, 0.28, 0.1, 0.015, 0, 0.85],
+      [1.5, 0.215, 0.29, 0.25, 0.12, 0.015, 0, 0.85], [2, 0.225, 0.33, 0.31, 0.12, 0.015, 0, 0.85], [2.4, 0.19, 0.37, 0.32, 0.1, 0.02, 0, 0.85],
+      [2.75, 0.17, 0.35, 0.33, 0.06, 0.02, 0, 0.9], [3, 0.15, 0.28, 0.29, 0, 0.015, 0, 0.95], [3.5, 0.12, 0.22, 0.19, -0.04, 0.015, 0, 1],
+      [4, 0.095, 0.17, 0.13, 0, 0.012, 0, 1], [4.6, 0.075, 0.12, 0.1, 0, 0.008, 0, 1], [4.95, 0.08, 0.1, 0.14, 0.1, 0, 0, 1],
+      [5.15, 0.1, 0.085, 0.19, 0.25, 0, 0, 0.95], [5.35, 0.095, 0.085, 0.165, 0.2, 0, 0.03, 0.95], [5.6, 0.072, 0.075, 0.1, 0.05, 0, 0, 1],
+      [5.85, 0.065, 0.07, 0.085, 0, 0, 0, 1], [5.96, 0.055, 0.055, 0.065, 0, 0, 0, 1], [6, 0, 0, 0, 0, 0, 0, 1]],
+    fleg: [[0, 0.09, 0.11, 0.1], [0.35, 0.07, 0.08, 0.07], [0.75, 0.045, 0.05, 0.045], [1, 0.05, 0.055, 0.05], [1.15, 0.038, 0.035, 0.04],
+      [1.5, 0.032, 0.03, 0.04], [1.9, 0.04, 0.04, 0.05], [2.05, 0.042, 0.042, 0.055], [2.4, 0.033, 0.033, 0.033],
+      [2.65, 0.04, 0.042, 0.035], [2.97, 0.055, 0.06, 0.045], [3, 0, 0, 0]],
+    hleg: [[0, 0.11, 0.15, 0.15], [0.3, 0.085, 0.1, 0.1], [0.65, 0.06, 0.055, 0.07], [0.85, 0.045, 0.04, 0.055], [1, 0.05, 0.04, 0.075], [1.15, 0.04, 0.035, 0.05],
+      [1.5, 0.033, 0.03, 0.042], [1.9, 0.04, 0.04, 0.05], [2.05, 0.042, 0.042, 0.055], [2.4, 0.033, 0.033, 0.033],
+      [2.65, 0.04, 0.042, 0.035], [2.97, 0.055, 0.06, 0.045], [3, 0, 0, 0]],
+  },
+  { // arctic fox: low and long, a ruff at the neck, a pointed muzzle, a full brush
+    q: [-0.3, 0.3, -0.2, 0.27, 0.12, 0.27, 0.22, 0.31], len: [0.14, 0.17, 0.33, 0.06],
+    fa: [0.15, 0.22, 0.06, 0], fb: [0.1, 0.1, 0.03, 0.15], ha: [-0.18, 0.22, 0.06, -0.02], hb: [0.11, 0.1, 0.03, 0.2],
+    tail: [0.06, 1.0, 0.05, 0.75], ext: [0, 0.85, 0, 0],
+    ring: [[0, 0, 0, 0, 0, 0, 0, 0.95], [0.1, 0.07, 0.08, 0.08, 0, 0, 0, 0.95], [0.6, 0.1, 0.11, 0.11, 0.03, 0, 0, 0.9],
+      [1.5, 0.092, 0.095, 0.105, 0.05, 0, 0, 0.9], [2.3, 0.1, 0.105, 0.125, 0.05, 0, 0, 0.9], [2.8, 0.09, 0.11, 0.11, 0.03, 0, 0, 0.95],
+      [3.1, 0.088, 0.11, 0.09, 0, 0, 0, 1], [4, 0.075, 0.09, 0.08, 0, 0, 0, 1], [4.8, 0.062, 0.068, 0.068, 0, 0, 0, 1],
+      [5.1, 0.058, 0.053, 0.063, 0.1, 0, 0.006, 1], [5.5, 0.034, 0.024, 0.044, 0, 0, 0, 1], [5.85, 0.014, 0.006, 0.022, 0, 0, 0, 1],
+      [6, 0, 0, 0, 0, 0, 0, 1]],
+    fleg: [[0, 0.04, 0.05, 0.05], [0.5, 0.025, 0.03, 0.03], [1, 0.017, 0.02, 0.02], [1.5, 0.013, 0.015, 0.015], [2, 0.015, 0.017, 0.017],
+      [2.97, 0.019, 0.023, 0.023], [3, 0, 0, 0]],
+    hleg: [[0, 0.045, 0.05, 0.055], [0.5, 0.027, 0.028, 0.034], [1, 0.017, 0.016, 0.024], [1.5, 0.013, 0.015, 0.015], [2, 0.015, 0.017, 0.017],
+      [2.97, 0.019, 0.023, 0.023], [3, 0, 0, 0]],
+  },
+];
+// Catmull-Rom through key rows by key index, sampled at parameter x (column 0, increasing); radii never go negative
+function keyAt(rows, x, col, pos) {
+  let i = 0;
+  while (i < rows.length - 2 && rows[i + 1][0] <= x) i++;
+  const a = rows[Math.max(i - 1, 0)][col], b = rows[i][col], c = rows[i + 1][col], d = rows[Math.min(i + 2, rows.length - 1)][col];
+  const t = Math.min(Math.max((x - rows[i][0]) / Math.max(rows[i + 1][0] - rows[i][0], 1e-6), 0), 1);
+  const v = 0.5 * (2 * b + (c - a) * t + (2 * a - 5 * b + 4 * c - d) * t * t + (3 * b - a - 3 * c + d) * t * t * t);
+  return pos ? Math.max(v, 0) : v;
+}
+const f4 = (a, b, c, d) => 'vec4f(' + [a, b, c, d].map((x) => (+x).toFixed(4)).join(',') + ')';
+// leg ring positions per resolution: the knee, fetlock bulge, pastern, coronet and hoof each get a ring
+const LEG_U = { 8: [0, 0.45, 1, 1.5, 1.95, 2.45, 2.97, 3], 12: [0, 0.3, 0.65, 1, 1.2, 1.55, 1.9, 2.05, 2.4, 2.65, 2.97, 3] };
+// res: rings in torso / neck / head, sides around the spine, leg rings and sides, tail rings/sides, mane rings, ear sides
+export function skinTables(res) {
+  const { nT, nN, nH, NS, NL, LS, NT, TS, NM, ES } = res;
+  const ss = [0];
+  for (let i = 1; i <= nT; i++) ss.push(3 * Math.pow(i / nT, 1.3));   // denser at the rump, which is rounded
+  for (let i = 1; i <= nN; i++) ss.push(3 + 2 * i / nN);
+  for (let i = 1; i < nH; i++) ss.push(5 + 0.97 * i / (nH - 1));
+  ss.push(6);
+  const NR = ss.length;
+  const us = LEG_U[NL];
+  const R = [], D = [], L = [], Q = [];
+  for (const sp of SKIN) {
+    for (const x of ss) {
+      const end = x <= 0 || x >= 6;
+      const k = (c, p) => (end ? 0 : keyAt(sp.ring, x, c, p));
+      R.push(f4(x, k(1, 1), k(2, 1), k(3, 1)));
+      D.push(f4(k(4), k(5, 1), k(6, 1), end ? 1 : keyAt(sp.ring, x, 7, 1)));
+    }
+    for (const lg of [sp.fleg, sp.hleg]) for (const u of us) L.push(u >= 3 ? f4(u, 0, 0, 0) : f4(u, keyAt(lg, u, 1, 1), keyAt(lg, u, 2, 1), keyAt(lg, u, 3, 1)));
+    const q = sp.q;
+    Q.push(f4(q[0], q[1], q[2], q[3]), f4(q[4], q[5], q[6], q[7]), f4(...sp.len), f4(...sp.fa), f4(...sp.fb), f4(...sp.ha), f4(...sp.hb),
+      f4(...sp.tail), f4(...sp.ext));
+  }
+  const verts = (NR - 1) * NS * 6 + 4 * (NL - 1) * LS * 6 + (NT - 1) * TS * 6 + (NM - 1) * 4 * 6 + 2 * 2 * ES * 6 + SK_FL;
+  const src = 'const SK_NR=' + NR + 'u;const SK_NS=' + NS + 'u;const SK_NL=' + NL + 'u;const SK_LS=' + LS + 'u;const SK_NT=' + NT +
+    'u;const SK_TS=' + TS + 'u;const SK_NM=' + NM + 'u;const SK_ES=' + ES + 'u;\n' +
+    'const SKR=array<vec4f,' + R.length + '>(' + R.join(',') + ');\n' +
+    'const SKD=array<vec4f,' + D.length + '>(' + D.join(',') + ');\n' +
+    'const SKL=array<vec4f,' + L.length + '>(' + L.join(',') + ');\n' +
+    'const SKQ=array<vec4f,' + Q.length + '>(' + Q.join(',') + ');\n';
+  return { src, verts };
+}
+const SK_FL = 2 * 4 * 6;   // the forelock: two quad rings of four sides
+const SKIN_FAR = { nT: 9, nN: 4, nH: 5, NS: 12, NL: 8, LS: 6, NT: 6, TS: 6, NM: 7, ES: 6 };
+const SKIN_NEAR = { nT: 16, nN: 7, nH: 8, NS: 20, NL: 12, LS: 10, NT: 9, TS: 10, NM: 12, ES: 8 };
+
 export function init(ctx) {
   ubuf = buffer(TAB.byteLength, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'herd table');
   const lay = bgl('u', 'herd');
@@ -55,9 +170,11 @@ export function init(ctx) {
     .replace(/const\s*HP_VERTS\s*=\s*192u;/, 'const HP_VERTS=576u;').replace(/const\s*H_VERTS\s*=\s*2880u;/, 'const H_VERTS=8640u;');
   if (near === base) throw new Error('herd: near LOD constants not found');
   const mirror = '@group(2) @binding(0) var sceneDist: texture_2d<f32>;\n' + HERD.replace(/@group\(2\)\s*@binding\(0\)\s*var<uniform>\s*HG/, '@group(3) @binding(0) var<uniform> HG') + HERDM;
-  const mod = shader(CLIP + SKY + LIFE + FLORA + base, 'herd');
-  const modN = shader(CLIP + SKY + LIFE + FLORA + near, 'herd near');
-  const modM = shader(CLIP + SKY + LIFE + FLORA + mirror, 'herd mirror');
+  const skF = skinTables(SKIN_FAR), skN = skinTables(SKIN_NEAR);
+  if (skF.verts > H_VERTS || skN.verts > H_NEAR) throw new Error('herd: skinned mesh exceeds the vertex budget');
+  const mod = shader(CLIP + SKY + LIFE + FLORA + skF.src + HERDSKIN + base, 'herd');
+  const modN = shader(CLIP + SKY + LIFE + FLORA + skN.src + HERDSKIN + near, 'herd near');
+  const modM = shader(CLIP + SKY + LIFE + FLORA + skF.src + HERDSKIN + mirror, 'herd mirror');
   const opaque = { targets: [{ format: 'rgba16float' }, { format: 'rg16float' }], samples: ctx.msaa,
     depth: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' } };
   pipe = pipeline({ label: 'herd', module: mod, vs: 'vsHerd', fs: 'fsHerd', layouts: [ctx.bgl0, clip.bgl, lay], ...opaque });
@@ -209,6 +326,30 @@ export function update(ctx, view) {
   encounters();
   TAB[192 * 4] = DP[0]; TAB[192 * 4 + 1] = DP[1]; TAB[192 * 4 + 2] = DP[2]; TAB[192 * 4 + 3] = spd;
   G.queue.writeBuffer(ubuf, 0, TAB);
+}
+
+// shot cameras (main.js track=<species>,<distance>,<height>): the centre of the nearest herd of a species, the same
+// closed form as herd.wgsl animal() (home + slow wander + flee offset); the first herd found stays chosen
+export const AIM = new Float64Array(4); // x, ground y, z, found
+const SPREAD = new Float32Array([14, 10, 9, 26, 7, 22, 0]);
+const AIMK = new Int32Array([0x7fffffff, 0]);
+export function aim(sp, t, x, z) {
+  const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL);
+  if (S[1] > 1e8) { S[1] = cx; S[2] = cz; rebuild(cx, cz); CAMS[0] = x; CAMS[1] = z; } // a shot's first frame
+  let best = -1, bd = 1e30;
+  for (let g = 0; g < NH; g++) {
+    if (home[g * 4 + 2] !== sp || home[g * 4 + 3] < 1) continue;
+    if (key[g * 2] === AIMK[0] && key[g * 2 + 1] === AIMK[1]) { best = g; break; }
+    const dx = home[g * 4] - CAMS[0], dz = home[g * 4 + 1] - CAMS[1], d = dx * dx + dz * dz;
+    if (d < bd) { bd = d; best = g; }
+  }
+  if (best < 0) { AIM[3] = 0; return 0; }
+  AIMK[0] = key[best * 2]; AIMK[1] = key[best * 2 + 1];
+  const ph = Math.fround((key[best * 2] * 73856093) ^ (key[best * 2 + 1] * 19349663)) * 0.001, sz = SPREAD[sp] * 0.8;
+  AIM[0] = home[best * 4] + Math.sin(t * 0.0021 + ph) * sz + st[best * 6];
+  AIM[2] = home[best * 4 + 1] + Math.cos(t * 0.0017 + ph * 1.3) * sz + st[best * 6 + 1];
+  AIM[1] = heightAt(AIM[0], AIM[2]); AIM[3] = 1;
+  return 1;
 }
 
 export function draw(ctx, pass, view) {

@@ -41,7 +41,7 @@ fn spB(s: u32) -> vec4f {
   }
 }
 
-struct Ani { fly: f32, ok: bool, p: vec3f, f: vec3f, u: vec3f, s: vec3f, sp: u32, sc: f32, gait: f32, graze: f32, alarm: f32, h: u32, walk: f32, look: vec3f }
+struct Ani { fly: f32, ok: bool, p: vec3f, f: vec3f, u: vec3f, s: vec3f, sp: u32, sc: f32, gait: f32, graze: f32, alarm: f32, h: u32, walk: f32, look: vec3f, coat: f32 }
 
 fn hgnd(p: vec2f) -> f32 { return heightAny(p); }
 
@@ -53,7 +53,7 @@ fn actor(g: u32, k: u32) -> Ani {
   let ty = u32(G2.x); let rel = FR.time.x - G1.z;
   if (rel < 0.0 || rel > G1.w) { return A; }
   let dir = normalize(G1.xy + vec2f(1e-5, 0.0)); let sd2 = vec2f(-dir.y, dir.x);
-  A.h = hu(i32(g), i32(k), 0x5A1u); A.sc = 1.0; A.look = vec3f(0.0, 1.0, 0.0);
+  A.h = hu(i32(g), i32(k), 0x5A1u); A.sc = 1.0; A.look = vec3f(0.0, 1.0, 0.0); A.coat = lfRand(A.h, 5u);
   var pos: vec2f; var y = 0.0; var f3 = vec3f(dir.x, 0.0, dir.y); var swim = true;
   if (ty == 1u) {
     // orca pod travelling up the fjord, surfacing in turn (mirrored for ripples in lifefx.js)
@@ -139,16 +139,25 @@ fn animal(ii: u32) -> Ani {
   let h = hu(i32(G2.w), i32(k), 0x4E1u); A.h = h;
   let r1 = lfRand(h, 1u); let r2 = lfRand(h, 2u); let r3 = lfRand(h, 3u); let r4 = lfRand(h, 4u);
   A.sc = G2.z * (0.85 + 0.3 * r4);
+  // coat: horses are bay, chestnut or dark brown; at most one grey per herd (its first animal, in some herds)
+  A.coat = lfRand(h, 5u) * 0.999;
+  if (sp == 1u && k == 0u && lfRand(hu(i32(G2.w), 9, 0x6E1u), 1u) < 0.3) { A.coat = 1.5; }
   // herd centre wanders slowly; the flee offset is the CPU's integrated reaction to the drone
   let ph = G2.w * 0.001;
   let hc = G0.xy + vec2f(sin(t * 0.0021 + ph), cos(t * 0.0017 + ph * 1.3)) * sb.z * 0.8 + G1.xy;
-  let ofs = vec2f(cos(r1 * 6.2832), sin(r1 * 6.2832)) * sb.z * sqrt(r2);
+  // each member keeps its own ground: home spots on a sunflower spiral (nearest neighbours 1.546 c apart) and a
+  // personal walk circle of radius Rw <= 0.8 L around it, so two members are never closer than 1.3 body lengths
+  // (of the largest scale), never one inside the other
+  let L0 = sa.x * G2.z;
+  let c = max(3.1 * L0 / 1.546, sb.z / 3.94);
+  let ka = f32(k) * 2.39996 + G2.w * 0.37;
+  let ofs = vec2f(cos(ka), sin(ka)) * c * sqrt(f32(k) + 0.5);
   // own walk: arcs of radius Rw walked for Tw seconds out of every T, standing (grazing) in between
   let T = 9.0 + 9.0 * r3; let Tw = T * (0.25 + 0.2 * r4);
   let tt = t / T + r2;
   let kk = floor(tt); let fw = clamp(fract(tt) * T, 0.0, Tw);
-  let Rw = (2.5 + 3.0 * r1) * A.sc;
-  let om = sb.w / Rw * select(1.0, -1.0, r3 > 0.5);
+  let Rw = 0.8 * L0 * (0.75 + 0.25 * r1);
+  let om = sb.w * 0.5 / Rw * select(1.0, -1.0, r3 > 0.5);
   let th = om * (kk * Tw + fw) + r4 * 6.2832;
   let walking = fract(tt) * T < Tw;
   var pos = hc + ofs + vec2f(cos(th), sin(th)) * Rw;
@@ -162,16 +171,25 @@ fn animal(ii: u32) -> Ani {
   if (length(fd) > 0.01) { dir = normalize(mix(dir, normalize(fd), sstep(0.15, 0.5, G1.z))); }
   if (G1.z > 0.15) { A.graze = 0.0; A.walk = max(A.walk, sstep(0.15, 0.5, G1.z)); }
   if (sp == 4u) { A.walk = 0.0; A.graze = 0.0; dir = normalize(vec2f(cos(r3 * 6.2832), sin(r3 * 6.2832))); }
-  // body on the terrain: pitch from the ground under the shoulders and hips
+  // body on the terrain: pitch from the ground under the shoulders and hips, roll from the ground either side
   let L = sa.x * A.sc;
-  let gf = hgnd(pos + dir * L * 0.42); let gb = hgnd(pos - dir * L * 0.42);
-  let g0 = min(0.5 * (gf + gb), hgnd(pos)); // never above the ground under the belly
+  let gf = hgnd(pos + dir * L * 0.42); let gb = hgnd(pos - dir * L * 0.42); let gc = hgnd(pos);
+  let sd0 = vec2f(dir.y, -dir.x); let W = L * 0.25;
+  let gl = hgnd(pos + sd0 * W); let gr = hgnd(pos - sd0 * W);
+  // never above the ground under the belly, and never sunk into a bank or a terrace step: the body stays within
+  // reach of the highest ground under it (the legs take up the rest, each hoof on its own ground)
+  let gmax = max(max(gf, gb), max(gc, max(gl, gr)));
+  let g0 = max(min(0.5 * (gf + gb), gc), gmax - L * 0.16);
   if (sp == 2u) { if (g0 > 0.05 || g0 < -0.6) { return A; } }        // flamingos stand in the shallows
   else if (sp == 4u) { if (g0 < 0.05) { return A; } }
   else if (g0 < 0.2) { return A; }                                     // land animals keep out of the water
-  let fwd = normalize(vec3f(dir.x * L * 0.84, gf - gb, dir.y * L * 0.84));
-  let side = normalize(cross(fwd, vec3f(0.0, 1.0, 0.0)));
-  let up = cross(side, fwd);
+  let fwd = normalize(vec3f(dir.x * L * 0.84, clamp(gf - gb, -0.5 * L, 0.5 * L), dir.y * L * 0.84));
+  let side0 = normalize(cross(fwd, vec3f(0.0, 1.0, 0.0)));
+  // roll: half the cross slope
+  let gsl = dot(side0.xz, sd0) * (gl - gr) / (2.0 * W);
+  let sr = side0 + vec3f(0.0, 0.5 * clamp(gsl, -1.0, 1.0), 0.0);
+  let side = normalize(sr - fwd * dot(sr, fwd));
+  let up = normalize(cross(side, fwd));
   A.f = fwd; A.u = up; A.s = side;
   let gy = select(g0, max(g0, 0.0) - 0.02, sp == 2u);
   A.p = vec3f(pos.x, gy, pos.y);
@@ -207,6 +225,7 @@ fn herdVert(vi: u32, ii: u32) -> HV {
   var o: HV; o.pos = LF_DEAD;
   let A = animal(ii);
   if (!A.ok) { return o; }
+  if (isSkinned(A.sp)) { return skinVert(vi, A); }
   let part = vi / HP_VERTS; let pv = vi % HP_VERTS;
   let sa = spA(A.sp) * A.sc; let sb = spB(A.sp) * A.sc;
   let L = sa.x; let R = sa.y; let LL = sa.z;
@@ -362,7 +381,7 @@ fn herdVert(vi: u32, ii: u32) -> HV {
   o.wp = wp;
   o.loc = vec2f(-cos(thv), ph);
   o.part = part; o.sp = A.sp;
-  o.tint = vec4f(lfRand(A.h, 5u), lfRand(A.h, 6u), select(A.alarm, wmark, wmark > 0.0), f32(A.h & 1023u));
+  o.tint = vec4f(A.coat, lfRand(A.h, 6u), select(A.alarm, wmark, wmark > 0.0), f32(A.h & 1023u));
   o.pos = VW.vp * vec4f(wp - VW.cam.xyz, 1.0);
   return o;
 }
@@ -372,20 +391,45 @@ fn coat(sp: u32, part: u32, tint: vec4f, loc: vec2f, wp: vec3f) -> vec3f {
   switch sp {
     case 0u: {
       // Faroese sheep: mostly cream-white, some moorit brown and black; dark faces and legs on many
-      var w = mix(vec3f(0.55, 0.52, 0.45), vec3f(0.62, 0.6, 0.53), v2);
+      // white wool stays at or below 0.6 albedo, with the folds between the locks in occlusion
+      var w = mix(vec3f(0.47, 0.45, 0.39), vec3f(0.52, 0.5, 0.44), v2);
       if (v > 0.72) { w = vec3f(0.2, 0.13, 0.08); }
       if (v > 0.9) { w = vec3f(0.045, 0.04, 0.035); }
-      if (part >= 2u && part != 3u && v2 > 0.5) { w *= 0.35; }
-      return w * (0.85 + 0.25 * vn(wp.xz * 9.0 + wp.y * 7.0, 961u));
+      // face, ears and lower legs are short hair, not wool: black-faced, or a tan face on the white ones so the
+      // head reads against the fleece
+      let face = select(vec3f(0.3, 0.25, 0.19), vec3f(0.045, 0.038, 0.034), v2 > 0.5 || v > 0.9);
+      let bare = part == 2u || part == 12u || part == 13u || part == 14u || (part == 1u && loc.x > 0.2) ||
+        (part >= 4u && part <= 11u && loc.x > -0.45);
+      if (bare) { return face * (0.9 + 0.2 * vn(wp.xz * 20.0 + wp.y * 9.0, 962u)); }
+      let lk = vn(wp.xz * 9.0 + wp.y * 7.0, 961u);
+      return w * (0.82 + 0.22 * lk) * mix(0.62, 1.0, sstep(0.15, 0.55, vn(wp.xz * 17.0 - wp.y * 13.0, 963u)));
     }
     case 1u: {
-      // bay, chestnut, dun (Przewalski-like); dark points: legs, mane and tail; a paler muzzle
-      var w = mix(vec3f(0.13, 0.065, 0.03), vec3f(0.26, 0.13, 0.055), sstep(0.0, 0.6, v));
-      if (v > 0.6) { w = mix(vec3f(0.3, 0.22, 0.12), vec3f(0.36, 0.28, 0.16), v2); }
-      if (part == 1u && loc.y > 3.6 && loc.y < 5.8) { w = vec3f(0.03, 0.025, 0.02); }     // mane along the top of the neck
-      if (part == 12u) { w = mix(w, vec3f(0.3, 0.26, 0.2), 0.5); }
-      if (part >= 4u && part <= 11u) { w = mix(w, vec3f(0.03, 0.025, 0.02), sstep(0.0, 0.8, loc.x)); }
-      if (part == 3u) { w = vec3f(0.03, 0.025, 0.02); }
+      // bay (black points), chestnut, dark brown; one grey in some herds. Mane and tail dark, muzzle paler, hooves
+      let dark = vec3f(0.025, 0.02, 0.017);
+      var w = vec3f(0.13, 0.075, 0.045);                                 // bay
+      var pts = dark;
+      if (v >= 0.45 && v < 0.75) { w = vec3f(0.17, 0.09, 0.05); pts = vec3f(0.12, 0.06, 0.035); }   // chestnut
+      if (v >= 0.75 && v < 1.0) { w = vec3f(0.055, 0.036, 0.024); }      // dark brown
+      if (v >= 1.0) {                                                    // grey, dappled
+        w = vec3f(0.21, 0.2, 0.185) * (0.8 + 0.35 * sstep(0.45, 0.6, vn(wp.xz * 7.0 + wp.y * 5.0, 966u)));
+        pts = vec3f(0.12, 0.12, 0.12);
+      }
+      w *= 0.9 + 0.2 * v2;
+      if (part == 15u || part == 3u) { return pts * 0.9 + 0.01; }        // mane and tail
+      // lighter belly and lower flank (mealy), a darker dorsal line, a subtle dapple
+      if (part <= 2u) {
+        let sn = sin(loc.y);
+        w = mix(w, w * 1.45 + vec3f(0.03, 0.025, 0.015), sstep(-0.05, -0.75, sn) * select(0.7, 0.35, part == 2u));
+        w *= 1.0 - 0.3 * sstep(0.88, 0.99, sn) * select(1.0, 0.0, part == 2u);
+        w *= 0.92 + 0.16 * sstep(0.35, 0.65, vn(wp.xz * 6.0 + wp.y * 4.0, 967u));
+      }
+      if (part == 2u) { w = mix(w, pts, 0.25 * sstep(0.2, 1.0, loc.x)); }  // the face darkens toward the nose
+      if (part == 12u) { w = mix(w, vec3f(0.16, 0.12, 0.09), 0.55); }    // muzzle (pale, mealy)
+      if (part >= 4u && part <= 11u) {
+        w = mix(w, pts, sstep(-0.35, 0.3, loc.x));                       // points below the knee
+        if (loc.x > 0.78) { w = vec3f(0.05, 0.045, 0.04); }              // hoof
+      }
       return w;
     }
     case 2u: {
@@ -444,7 +488,7 @@ fn herdShade(in: HV) -> vec3f {
   var wrapK = 0.2; var shp = 30.0; var shs = 0.05; var fuzz = 0.1; var bmp = 0.0; var bsc = 6.0;
   switch in.sp {
     case 0u: { wrapK = 0.55; shp = 6.0; shs = 0.035; fuzz = 0.4; bmp = 0.45; bsc = 14.0; }   // wool
-    case 1u: { wrapK = 0.18; shp = 70.0; shs = 0.2; fuzz = 0.05; bmp = 0.05; bsc = 3.0; }    // short glossy coat
+    case 1u: { wrapK = 0.22; shp = 18.0; shs = 0.14; fuzz = 0.06; bmp = 0.05; bsc = 3.0; }   // short coat: broad soft sheen
     case 2u: { wrapK = 0.3; shp = 24.0; shs = 0.07; fuzz = 0.15; bmp = 0.15; bsc = 9.0; }    // feathers
     case 3u: { wrapK = 0.5; shp = 14.0; shs = 0.07; fuzz = 0.35; bmp = 0.3; bsc = 8.0; }     // thick winter fur
     case 4u: { wrapK = 0.15; shp = 60.0; shs = 0.25; fuzz = 0.04; }                          // wet seal
@@ -466,13 +510,21 @@ fn herdShade(in: HV) -> vec3f {
   // occlusion: belly and the insides of the legs, darker toward the hips
   var ao = 1.0;
   if (in.part == 0u) { ao = mix(0.5, 1.0, sstep(-0.9, 0.25, n.y)); }
+  // the sky lights the back, not the flanks and throat: form in the shade (a grey must not go flat)
+  if (in.part == 1u || in.part == 2u || in.part == 12u) { ao = mix(0.55, 1.0, sstep(-0.7, 0.6, n.y)); }
+  if (in.part == 0u && in.sp <= 1u) { ao *= mix(0.75, 1.0, sstep(-0.2, 0.7, n.y)); }
   if (isLeg) { ao = select(0.85, mix(0.45, 0.95, sstep(-1.0, 0.0, in.loc.x)), ((in.part - 4u) & 1u) == 0u); }
+  // the sky an animal sees is the sky the ground under it sees (baked visibility, as the terrain uses it)
+  ao *= lfSkyVis(in.wp.xz);
   var col = alb * (sc * sh * max((ndl + wrapK) / (1.0 + wrapK), 0.0) + lfAmb(n.y, alb) * ao);
   // sheen along the hair (Kajiya-Kay), tinted by the coat
   let H = normalize(L + V);
   let th = dot(T0, H);
   let kk = pow(sqrt(max(1.0 - th * th, 0.0)), shp);
   col += sc * sh * kk * shs * 0.25 * (alb * 2.0 + 0.04) * max(ndl, 0.0); // tinted by the coat, only on the lit side
+  if (in.sp == 1u && in.part != 15u && in.part != 3u) {
+    col += sc * sh * pow(max(dot(n, H), 0.0), 10.0) * 0.045 * max(ndl, 0.0);   // a broad soft lobe off the short coat
+  }
   // fuzzy rim: the sky in the hair at grazing angles, and the low sun shining through it from behind
   let rim = pow(1.0 - abs(dot(n, V)), 3.0);
   let back = pow(max(dot(-V, L), 0.0), 3.0);

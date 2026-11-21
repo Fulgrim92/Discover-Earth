@@ -106,11 +106,16 @@ export function setMuted(on) {
 }
 export function muted() { return S[S_MUTED] !== 0; }
 
-function noteFreq(realm, idx, octave) {
+// note frequencies, precomputed: FQ[noteIx(realm, idx, octave)] for octaves -2..2. noteIx is small-int maths only,
+// so a note costs nothing even when the code around it runs cold (interpreted code boxes every double it makes)
+const FQ = new Float64Array(6 * 8 * 5);
+for (let r = 0; r < 6; r++) for (let i = 0; i < 8; i++) for (let o = 0; o < 5; o++)
+  FQ[(r * 8 + i) * 5 + o] = SC[r * 8 + i] >= 0 ? ROOT[r] * Math.pow(2, SC[r * 8 + i] / 12 + o - 2) : 0;
+function noteIx(realm, idx, octave) {
   let n = 0;
   while (n < 8 && SC[realm * 8 + n] >= 0) n++;
-  const i = idx % n;
-  return ROOT[realm] * Math.pow(2, SC[realm * 8 + i] / 12 + octave);
+  const o = octave < -2 ? 0 : octave > 2 ? 4 : octave + 2;
+  return ((realm * 8 + idx % n) * 5 + o) | 0;
 }
 
 export const ARG = new Float64Array(2); // [dt, airspeed]
@@ -149,7 +154,7 @@ export function update(m, crashed, realm, five) {
     S[S_PADT] = 2.5 + 3.5 * hash1(nt, 71);
     const idx = (hash1(nt, 72) * 8) | 0;
     const oct = v === 0 ? -1 : v === 3 ? 1 : 0;
-    A.padO[v].frequency.setTargetAtTime(noteFreq(realm, v === 0 ? 0 : idx, oct), now, 1.2);
+    A.padO[v].frequency.setTargetAtTime(FQ[noteIx(realm, v === 0 ? 0 : idx, oct)], now, 1.2);
     A.padG[v].gain.setTargetAtTime(0.06 + 0.05 * hash1(nt, 73), now, 1.8);
     const vo = (v + 2) % NV; // let the opposite voice breathe out
     A.padG[vo].gain.setTargetAtTime(0.015, now, 3.0);
@@ -164,7 +169,7 @@ export function update(m, crashed, realm, five) {
       const gain = ph === 2 ? 0.12 : 0.07;
       for (let k = 0; k < 2; k++) {
         const v = S[S_CHV] = (S[S_CHV] + 1) % NC;
-        const f = noteFreq(realm, k * 4, oct);
+        const f = FQ[noteIx(realm, k * 4, oct)];
         A.chO[v].frequency.setValueAtTime(f, now); A.chO2[v].frequency.setValueAtTime(f * 1.5, now);
         const g = A.chG[v].gain;
         g.cancelScheduledValues(now); g.setValueAtTime(0.0001, now);
@@ -182,7 +187,7 @@ export function chime() {
   const v = S[S_CHV] = (S[S_CHV] + 1) % NC;
   const step = S[S_CHSTEP] = (S[S_CHSTEP] + 1) % 10;
   const realm = S[S_REALM] | 0;
-  const f = noteFreq(realm, step, 1 + (step >= 5 ? 1 : 0));
+  const f = FQ[noteIx(realm, step, 1 + (step >= 5 ? 1 : 0))];
   A.chO[v].frequency.setValueAtTime(f, now);
   A.chO2[v].frequency.setValueAtTime(f * 2.76, now);
   const g = A.chG[v].gain;

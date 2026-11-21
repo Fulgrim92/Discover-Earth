@@ -95,7 +95,7 @@ export function createSim(world, opts) {
     sim.flightMode = mode;
     M[M_MODE] = mode;
     D.setMode(mode);
-    if (D.st.landed) { F[F_TMP] = 0; IN.setKbThrottleFrom(F, F_TMP); } else IN.setKbThrottleFrom(D.st.af, D.A_HOVER);
+    if (D.st.landed) IN.setKbThrottleLow(); else IN.setKbThrottleFrom(D.st.af, D.A_HOVER);
   }
 
   // nearest curated cell to (F_TX, F_TZ); distance into F_CELLD
