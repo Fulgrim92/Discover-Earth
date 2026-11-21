@@ -93,7 +93,7 @@ export function init(ctx) {
   cpSrcB = { texture: tmpB, origin: { x: 1, y: 1, z: 0 } };
   cpSize = { width: N, height: N, depthOrArrayLayers: 1 };
 
-  rmap = tex(RM_N, RM_N, 'rgba8unorm', U.STORAGE_BINDING | U.TEXTURE_BINDING, { layers: 2, label: 'realmMap' });
+  rmap = tex(RM_N, RM_N, 'rgba8unorm', U.STORAGE_BINDING | U.TEXTURE_BINDING, { layers: 3, label: 'realmMap' }); // 12 realm slots
   rmBuf = buffer(16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'realmMapU');
   const rbl = d.createBindGroupLayout({ label: 'realm map', entries: [
     { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
@@ -219,19 +219,18 @@ export async function readLevel(ctx, i) {
 }
 
 // Harness: the realm skin weights the shaders see (clip.wgsl realmWeightsMap, from the baked realm map) at points
-// pts = [x, z, 0, 0, 0, 0, 0, 0, ...] (two vec4 per point); returns per point the weights of realms 0-3 and 4-7.
+// pts = [x, z, 0, ...] (three vec4 per point); returns per point the weights of realms 0-11.
 const PROBE_RM = `
 @group(2) @binding(0) var<storage, read_write> PR: array<vec4f>;
 @compute @workgroup_size(64) fn cs(@builtin(global_invocation_id) id: vec3u) {
-  if (id.x * 2u >= arrayLength(&PR)) { return; }
-  let r = realmWeightsMap(PR[id.x * 2u].xy);
-  var a = vec4f(0.0); var b = vec4f(0.0);
+  if (id.x * 3u >= arrayLength(&PR)) { return; }
+  let r = realmWeightsMap(PR[id.x * 3u].xy);
+  var w = array<vec4f, 3>(vec4f(0.0), vec4f(0.0), vec4f(0.0));
   for (var s = 0; s < 4; s++) {
     let k = r.id[s];
-    if (k >= 0 && k < 4) { a[k] += r.w[s]; }
-    if (k >= 4 && k < 8) { b[k - 4] += r.w[s]; }
+    if (k >= 0 && k < 12) { w[k >> 2][k & 3] += r.w[s]; }
   }
-  PR[id.x * 2u] = a; PR[id.x * 2u + 1u] = b;
+  PR[id.x * 3u] = w[0]; PR[id.x * 3u + 1u] = w[1]; PR[id.x * 3u + 2u] = w[2];
 }`;
 export async function probeRealm(ctx, pts) {
   const d = G.device;
@@ -243,7 +242,7 @@ export async function probeRealm(ctx, pts) {
   const enc = d.createCommandEncoder();
   const c = enc.beginComputePass();
   c.setPipeline(pp); c.setBindGroup(0, ctx.views[0].bg0); c.setBindGroup(1, clip.bg); c.setBindGroup(2, bindGroup(bl, [sb]));
-  c.dispatchWorkgroups(Math.ceil(pts.length / 8 / 64)); c.end();
+  c.dispatchWorkgroups(Math.ceil(pts.length / 12 / 64)); c.end();
   enc.copyBufferToBuffer(sb, 0, rb, 0, pts.byteLength);
   d.queue.submit([enc.finish()]);
   await rb.mapAsync(GPUMapMode.READ);

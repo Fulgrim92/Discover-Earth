@@ -105,6 +105,18 @@ fn crowns(p: vec2f) -> f32 {
   return m;
 }
 
+// Aurora Ice: the glacier's front field fb at p (the ice ends where it crosses 0), from scratch: the same lines as
+// terrainEval's, for the finite-difference slope of the front (world.js iceFB mirrors it)
+fn iceFB(p: vec2f, t: TP) -> f32 {
+  let freq = t.t0.x;
+  let wq = p * (freq * 0.5);
+  let qf = (p + t.t0.w * vec2f(vn(wq, 11u), vn(wq + vec2f(5.2, 1.3), 12u))) * freq;
+  let hl = mix(efbm(qf, 3, t.t1.y, 20u, 1.0 / freq) * 0.75 + 0.5, 0.32, t.t1.x);
+  let base = pow(max(clamp(hl, 0.0, 1.0), 1e-6), t.t1.w) * t.t0.y + t.t0.z;
+  let inl = sstep(0.15, 0.5, vn(p * (1.0 / 1500.0), 306u));
+  return base + 9.0 * vn(p * (1.0 / 340.0), 301u) + 2.0 - 75.0 * inl;
+}
+
 fn terrainEval(p: vec2f, t: TP, masks: bool) -> TerrOut {
   var o: TerrOut;
   o.mA = vec4f(0.0); o.mB = vec4f(0.0);
@@ -306,7 +318,17 @@ fn terrainEval(p: vec2f, t: TP, masks: bool) -> TerrOut {
     // the front is where fb crosses 0: at the sea in places (calving cliff), inland elsewhere (outwash plain below)
     let inl = sstep(0.15, 0.5, vn(p * (1.0 / 1500.0), 306u)); // 1: the tongue ends on land
     let fb = base + 9.0 * vn(p * (1.0 / 340.0), 301u) + 2.0 - 75.0 * inl;
-    let gF = sstep(-0.35, 0.35, fb) * t.t7.y;
+    // the front as a horizontal distance (fb over its slope): the ice wall spans 8 m (+ the footprint) whatever the
+    // slope of the land, so the terrain mesh (2 texels a quad) never draws a sub-quad step as a row of teeth
+    var gF = sstep(-0.35, 0.35, fb);
+    if (abs(fb) < 12.0) {
+      let gx = iceFB(p + vec2f(3.0, 0.0), t) - fb;
+      let gz = iceFB(p + vec2f(0.0, 3.0), t) - fb;
+      let fd = fb / max(sqrt(gx * gx + gz * gz) * (1.0 / 3.0), 0.02);
+      let fw = 4.0 + footprint();
+      gF = sstep(-fw, fw, fd);
+    }
+    gF *= t.t7.y;
     let thick = 24.0 + 10.0 * vn(p * (1.0 / 520.0), 302u) - 14.0 * sstep(0.1, 0.6, vn(p * (1.0 / 900.0), 304u));
     var iceS = max(base, 0.0) + thick + 0.02 * max(fb, 0.0);
     // outwash plain: low bare land compressed towards the sea

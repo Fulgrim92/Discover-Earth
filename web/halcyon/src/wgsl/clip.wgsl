@@ -8,7 +8,7 @@
 // clipH gathers the 2x2 texels once and blends them in f32 (exact bilinear, same result with or without the feature).
 @group(1) @binding(5) var clipHt: texture_2d_array<f32>;
 @group(1) @binding(6) var clipPt: sampler; // non-filtering, clamp-to-edge
-@group(1) @binding(7) var clipRM: texture_2d_array<f32>; // realm map: skin weight of realm 0-3 (layer 0), 4-7 (layer 1)
+@group(1) @binding(7) var clipRM: texture_2d_array<f32>; // realm map: skin weight of realm 0-3, 4-7, 8-11 (layers 0-2)
 fn clipSH(i: u32, p: vec2f) -> vec4f { return textureSampleLevel(clipSh, clipSm, clipUV(i, p), i, 0.0); }
 
 fn nLevels() -> u32 { return u32(FR.misc.x); }
@@ -168,18 +168,19 @@ fn groundWet() -> f32 { return FR.mc[1].w; }
 
 // ---- realm map (clipmap.js bakeRealm): the skin weights of every realm on 1024^2 texels of 64 m around (FR.mc[2].w, FR.mc[3].w),
 // recomputed when the camera has moved 8 km. Weights are linear in the realms, so bilinear filtering is exact up to
-// the 8-bit storage; 2 fetches replace the warped Voronoi per pixel (heights still use realmWeights at bake time).
+// the 8-bit storage; 3 fetches (12 fixed realm slots, realms.js MAX_REALM) replace the warped Voronoi per pixel
+// (heights still use realmWeights at bake time).
 const RM_SPAN: f32 = 65536.0; // 1024 texels x 64 m
 fn realmWeightsMap(p: vec2f) -> RWt {
   let uv = (p - vec2f(FR.mc[2].w, FR.mc[3].w)) * (1.0 / RM_SPAN) + 0.5;
   if (any(uv < vec2f(0.002)) || any(uv > vec2f(0.998))) { return realmWeights(p); }
-  let a = textureSampleLevel(clipRM, clipSm, uv, 0, 0.0);
-  let b = textureSampleLevel(clipRM, clipSm, uv, 1, 0.0);
+  let L = array<vec4f, 3>(textureSampleLevel(clipRM, clipSm, uv, 0, 0.0), textureSampleLevel(clipRM, clipSm, uv, 1, 0.0),
+    textureSampleLevel(clipRM, clipSm, uv, 2, 0.0));
   var r: RWt;
   r.id = vec4i(-1); r.w = vec4f(0.0); r.near = vec4f(0.0);
   var k = 0; var sum = 0.0;
-  for (var i = 0; i < 8; i++) {
-    let w = select(b[i & 3], a[i & 3], i < 4);
+  for (var i = 0; i < 12; i++) {
+    let w = L[i >> 2][i & 3];
     if (w > 0.003 && k < 4) { r.id[k] = i; r.w[k] = w; sum += w; k++; }
   }
   if (k == 0) { return realmWeights(p); }

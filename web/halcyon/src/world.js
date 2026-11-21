@@ -326,6 +326,19 @@ function sec32() {
 
 // glacier (terrfn.wgsl "Aurora Ice glacier"): needs the warped base point qf and freq from heightCore (GQ)
 const GQ = new Float64Array(3);
+// terrfn.wgsl iceFB: the front field at (IF[0], IF[1]) into IF[2], from scratch (the warp included)
+const IF = new Float64Array(3);
+function iceFB() {
+  const px = IF[0], py = IF[1], freq = T[0];
+  const wqx = px * (freq * 0.5), wqy = py * (freq * 0.5);
+  const qx = px + T[3] * (NI[0] = wqx, NI[1] = wqy, vnoised(11), N3[0]), qy = py + T[3] * (NI[0] = wqx + 5.2, NI[1] = wqy + 1.3, vnoised(12), N3[0]);
+  let hl = (NI[0] = qx * freq, NI[1] = qy * freq, FB[1] = T[5], FT[1] = 1 / freq, efbm(3, 20), FB[0]) * 0.75 + 0.5;
+  hl = hl * (1 - T[4]) + 0.32 * T[4];
+  hl = hl < 0 ? 0 : hl > 1 ? 1 : hl;
+  const base = Math.pow(Math.max(hl, 1e-6), T[7]) * T[1] + T[2];
+  const inl = (SX[2] = (NI[0] = px * (1 / 1500), NI[1] = py * (1 / 1500), vnoised(306), N3[0]), SX[0] = 0.15, SX[1] = 0.5, sstepA(), SX[3]);
+  IF[2] = base + 9 * (NI[0] = px * (1 / 340), NI[1] = py * (1 / 340), vnoised(301), N3[0]) + 2 - 75 * inl;
+}
 function sec28() {
   const px = HQ[0], py = HQ[1];
   let h = HQ[2];
@@ -337,7 +350,15 @@ function sec28() {
     const base = Math.pow(Math.max(hl, 1e-6), T[7]) * T[1] + T[2];
     const inl = (SX[2] = (NI[0] = px * (1 / 1500), NI[1] = py * (1 / 1500), vnoised(306), N3[0]), SX[0] = 0.15, SX[1] = 0.5, sstepA(), SX[3]);
     const fb = base + 9 * (NI[0] = px * (1 / 340), NI[1] = py * (1 / 340), vnoised(301), N3[0]) + 2 - 75 * inl;
-    const gF = (SX[2] = fb, SX[0] = -0.35, SX[1] = 0.35, sstepA(), SX[3]) * T[29];
+    let gF = (SX[2] = fb, SX[0] = -0.35, SX[1] = 0.35, sstepA(), SX[3]);
+    if (Math.abs(fb) < 12) {
+      IF[0] = px + 3; IF[1] = py; iceFB(); const gx = IF[2] - fb;
+      IF[0] = px; IF[1] = py + 3; iceFB(); const gz = IF[2] - fb;
+      const fd = fb / Math.max(Math.sqrt(gx * gx + gz * gz) * (1 / 3), 0.02);
+      const fw = 4 + FT[0];
+      gF = (SX[2] = fd, SX[0] = -fw, SX[1] = fw, sstepA(), SX[3]);
+    }
+    gF *= T[29];
     const thick = 24 + 10 * (NI[0] = px * (1 / 520), NI[1] = py * (1 / 520), vnoised(302), N3[0]) - 14 * (SX[2] = (NI[0] = px * (1 / 900), NI[1] = py * (1 / 900), vnoised(304), N3[0]), SX[0] = 0.1, SX[1] = 0.6, sstepA(), SX[3]);
     let iceS = Math.max(base, 0) + thick + 0.02 * Math.max(fb, 0);
     const ow = (SX[2] = h, SX[0] = -1, SX[1] = 3, sstepA(), SX[3]) * (SX[2] = h, SX[0] = 28, SX[1] = 12, sstepA(), SX[3]) * T[29] * (1 - gF);
