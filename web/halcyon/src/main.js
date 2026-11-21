@@ -499,7 +499,13 @@ function keyLightDir(fr, row) {
   k[2] = (row[s8] + drift * 0.25) * R; k[3] = (row[s8 + 1] + drift * 0.5) * R;
   k[4] = (0.2126 * row[s1] + 0.7152 * row[s1 + 1] + 0.0722 * row[s1 + 2]) * row[s0 + 2] * ss(-0.035, 0.06, Math.sin(k[0])) + 1e-5;
   k[5] = 1 / (Math.max(Math.sin(k[2]), 0) + 0.50572 * Math.pow(Math.max(k[2] / R + 6.07995, 0.3), -1.6364));
-  k[5] = 0.9493 * row[s8 + 2] * ss(-0.035, 0.06, Math.sin(k[2])) * Math.exp(-0.22 * k[5]);
+  k[5] = row[s8 + 2] * ss(-0.035, 0.06, Math.sin(k[2])) * Math.exp(-0.22 * k[5]); // moon colour scale (MOON_COL)
+  // the key light colour (sun + moon) for pixels of the camera's own pure realm: FR.mc[9].xyz (terrain.wgsl)
+  const kc = FO.mc + 36;
+  fr[kc] = row[s1] * row[s0 + 2] * ss(-0.035, 0.06, Math.sin(k[0])) + 0.94 * k[5];
+  fr[kc + 1] = row[s1 + 1] * row[s0 + 2] * ss(-0.035, 0.06, Math.sin(k[0])) + 0.95 * k[5];
+  fr[kc + 2] = row[s1 + 2] * row[s0 + 2] * ss(-0.035, 0.06, Math.sin(k[0])) + k[5];
+  k[5] *= 0.951484; // luma(MOON_COL), as common.wgsl keyLight weighs the moon
   fr[o] = Math.sin(k[1]) * Math.cos(k[0]) * k[4] + Math.sin(k[3]) * Math.cos(k[2]) * k[5];
   fr[o + 1] = Math.sin(k[0]) * k[4] + Math.sin(k[2]) * k[5];
   fr[o + 2] = -Math.cos(k[1]) * Math.cos(k[0]) * k[4] - Math.cos(k[3]) * Math.cos(k[2]) * k[5];
@@ -549,6 +555,7 @@ function prepareFrame() {
   const el = ((rowTmp[s0] + drift * 0.5) * Math.PI) / 180, az = ((rowTmp[s0 + 1] + drift) * Math.PI) / 180;
   fr[FO.sun] = Math.sin(az) * Math.cos(el); fr[FO.sun + 1] = Math.sin(el); fr[FO.sun + 2] = -Math.cos(az) * Math.cos(el); fr[FO.sun + 3] = drift;
   KLS[7] = drift; keyLightDir(fr, rowTmp); // the key light is the sun or the moon (common.wgsl keyLight), FR.sun its direction
+  fr[FO.mc + 39] = W_ID[1] < 0 && drift === 0 ? W_ID[0] : -1; // FR.mc[9].w: the camera's realm when it is pure (terrain.wgsl)
   fr[FO.time] = timeS; fr[FO.time + 1] = dt; fr[FO.time + 2] = frameNo; fr[FO.time + 3] = P.quality;
   fr[FO.flags] = OFF; fr[FO.mc + 19] = W_NEAR[2]; // FR.mc[4].w: the camera's nearest realm (trealm ablation)
   if (OFF & OFF_FAUNA) for (let i = 0; i < 4; i++) fr[FO.row + F.V2 * 4 + i] = 0; // no fauna anywhere (incl. jellies)

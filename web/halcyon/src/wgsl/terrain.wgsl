@@ -410,9 +410,10 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   }
   // baked occlusion: ring concavity at fixed coarse scales (4 m, 16 m, 64 m texels)
   let lb = clipLevel(p.xz, max(l0, 5u), 4.0);
-  let ca = concL(3u, l0, e, p.xz);
-  let cb = concL(5u, l0, e, p.xz);
+  // the three coincide once l0 reaches their levels (concL takes max(l0, lmin)): fetch each distinct level once
   let cc = concL(7u, l0, e, p.xz);
+  var cb = cc; if (l0 < 7u) { cb = concL(5u, l0, e, p.xz); }
+  var ca = cb; if (l0 < 5u) { ca = concL(3u, l0, e, p.xz); }
   // texel size at this pixel, continuous across the level fade
   var tx = FR.lv[l0].z;
   if (e > 0.0 && l0 + 1u < nLevels()) { tx = mix(tx, FR.lv[l0 + 1u].z, e); }
@@ -445,12 +446,19 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
     rwm.w /= max(sw, 1e-6);
   }
   let M4v = bfx(rwm, M4); let M5v = bfx(rwm, M5); let M6v = bfx(rwm, M6);
-  var S0v = bfx(rw, S0); var S1v = bfx(rw, S1); var S2v = bfx(rw, S2); var S3v = bfx(rw, S3);
-  var S5v = bfx(rw, S5); var S6v = bfx(rw, S6); var S7v = bfx(rw, S7);
+  // a pixel of the camera's own pure realm (main.js FR.mc[9].w) has the camera row's light: read once per frame from
+  // the uniform block, key light included (no per-pixel sun and moon trig)
+  let camP = rw.id[1] < 0 && f32(rw.id[0]) == FR.mc[9].w;
+  var S0v = FR.row[S0]; var S1v = FR.row[S1]; var S2v = FR.row[S2]; var S3v = FR.row[S3];
+  var S5v = FR.row[S5]; var S6v = FR.row[S6]; var S7v = FR.row[S7];
+  if (!camP) {
+    S0v = bfx(rw, S0); S1v = bfx(rw, S1); S2v = bfx(rw, S2); S3v = bfx(rw, S3);
+    S5v = bfx(rw, S5); S6v = bfx(rw, S6); S7v = bfx(rw, S7);
+  }
   // far ground takes the light of the sky the camera sees (the camera realm's row): a neighbour realm on the horizon
   // is not sunlit under this realm's night sky (no pale sunlit pillars on the Aurora Ice horizon)
   let fcam = sstep(1500.0, 4000.0, dist);
-  if (fcam > 0.0) {
+  if (fcam > 0.0 && !camP) {
     S0v = mix(S0v, FR.row[S0], fcam); S1v = mix(S1v, FR.row[S1], fcam); S2v = mix(S2v, FR.row[S2], fcam);
     S3v = mix(S3v, FR.row[S3], fcam); S5v = mix(S5v, FR.row[S5], fcam); S6v = mix(S6v, FR.row[S6], fcam);
     S7v = mix(S7v, FR.row[S7], fcam);
@@ -1087,7 +1095,8 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
 
   // ---- light ----
   // key light: the sun or the moon (common.wgsl keyLight; they set and rise across a Drift)
-  let KLv = keyLight(S0v, S1v, bfx(rw, S8), FR.sun.w);
+  var KLv: KL; KLv.dir = FR.sun.xyz; KLv.col = FR.mc[9].xyz;
+  if (!camP) { KLv = keyLight(S0v, S1v, bfx(rw, S8), FR.sun.w); gCost += 2.0; }
   let L = KLv.dir;
   let horizon = select(0.0, 1.0, max(KLv.col.r, max(KLv.col.g, KLv.col.b)) > 1e-4);
   let sunC = KLv.col;
@@ -1101,11 +1110,12 @@ fn terrainShade(p: vec3f, fragXY: vec2f, fwh: f32) -> FOut {
   let Lh = L.xz / max(length(L.xz), 1e-3);
   let nL1 = min(l0 + 2u, nLevels() - 1u); let nL2 = min(l0 + 4u, nLevels() - 1u);
   let sd1 = shadeL(2u, l0, e, p.xz + Lh * FR.lv[nL1].z);
-  let sd2 = shadeL(4u, l0, e, p.xz + Lh * FR.lv[nL2].z);
   var vis = sd0.y * mix(1.0, sd1.y, 0.7);
   if (isOff(OFF_TAO)) { vis = 1.0; }
   if (horizon > 0.0 && dot(gn, L) > -0.1) {
-    sh = min(sd0.x, min(sd1.x, sd2.x));
+    sh = min(sd0.x, sd1.x);
+    // the mountain-scale level only where the near two leave light (a min: a shadowed pixel stays shadowed)
+    if (sh > 0.0) { sh = min(sh, shadeL(4u, l0, e, p.xz + Lh * FR.lv[nL2].z).x); }
     if (isOff(OFF_TSHADOW)) { sh = 1.0; }
     sh *= cloudShadow(p, L, rw); // cloud shadows (common.wgsl, same coverage field as the cloud pass)
   }
